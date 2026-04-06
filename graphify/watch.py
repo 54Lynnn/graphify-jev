@@ -50,7 +50,7 @@ def _rebuild_code(watch_path: Path) -> bool:
         detection = {
             "files": {"code": [str(f) for f in code_files], "document": [], "paper": [], "image": []},
             "total_files": len(code_files),
-            "total_words": sum(len(f.read_text(errors="ignore").split()) for f in code_files),
+            "total_words": 0,  # not needed during watch rebuild
         }
 
         G = build_from_json(result)
@@ -118,7 +118,7 @@ def watch(watch_path: Path, debounce: float = 3.0) -> None:
 
     last_trigger: float = 0.0
     pending: bool = False
-    changed: list[Path] = []
+    changed: set[Path] = set()
 
     class Handler(FileSystemEventHandler):
         def on_any_event(self, event):
@@ -134,8 +134,7 @@ def watch(watch_path: Path, debounce: float = 3.0) -> None:
                 return
             last_trigger = time.monotonic()
             pending = True
-            if path not in changed:
-                changed.append(path)
+            changed.add(path)
 
     handler = Handler()
     observer = Observer()

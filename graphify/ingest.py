@@ -67,9 +67,7 @@ def _fetch_tweet(url: str, author: str | None, contributor: str | None) -> tuple
     oembed_url = url.replace("x.com", "twitter.com")
     oembed_api = f"https://publish.twitter.com/oembed?url={urllib.parse.quote(oembed_url)}&omit_script=true"
     try:
-        req = urllib.request.Request(oembed_api, headers={"User-Agent": "graphify/1.0"})
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read())
+        data = json.loads(safe_fetch_text(oembed_api))
         tweet_text = re.sub(r"<[^>]+>", "", data.get("html", "")).strip()
         tweet_author = data.get("author_name", "unknown")
     except Exception:

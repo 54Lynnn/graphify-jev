@@ -8,8 +8,13 @@ from pathlib import Path
 
 
 def file_hash(path: Path) -> str:
-    """SHA256 of file contents, hex digest."""
-    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    """SHA256 of file contents + resolved path. Prevents cache collisions on identical content."""
+    p = Path(path)
+    h = hashlib.sha256()
+    h.update(p.read_bytes())
+    h.update(b"\x00")
+    h.update(str(p.resolve()).encode())
+    return h.hexdigest()
 
 
 def cache_dir(root: Path = Path(".")) -> Path:

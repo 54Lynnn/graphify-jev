@@ -1,13 +1,15 @@
 # git hook integration - install/uninstall graphify post-commit and post-checkout hooks
 from __future__ import annotations
+import re
 from pathlib import Path
 
-_HOOK_MARKER = "# graphify-hook"
-_CHECKOUT_MARKER = "# graphify-checkout-hook"
+_HOOK_MARKER = "# graphify-hook-start"
+_HOOK_MARKER_END = "# graphify-hook-end"
+_CHECKOUT_MARKER = "# graphify-checkout-hook-start"
+_CHECKOUT_MARKER_END = "# graphify-checkout-hook-end"
 
 _HOOK_SCRIPT = """\
-#!/bin/bash
-# graphify-hook
+# graphify-hook-start
 # Auto-rebuilds the knowledge graph after each commit (code files only, no LLM needed).
 # Installed by: graphify hook install
 
@@ -42,12 +44,12 @@ except Exception as exc:
     print(f'[graphify hook] Rebuild failed: {exc}')
     sys.exit(1)
 "
+# graphify-hook-end
 """
 
 
 _CHECKOUT_SCRIPT = """\
-#!/bin/bash
-# graphify-checkout-hook
+# graphify-checkout-hook-start
 # Auto-rebuilds the knowledge graph (code only) when switching branches.
 # Installed by: graphify hook install
 
@@ -76,6 +78,7 @@ except Exception as exc:
     print(f'[graphify] Rebuild failed: {exc}')
     sys.exit(1)
 "
+# graphify-checkout-hook-end
 """
 
 
@@ -97,25 +100,29 @@ def _install_hook(hooks_dir: Path, name: str, script: str, marker: str) -> str:
             return f"already installed at {hook_path}"
         hook_path.write_text(content.rstrip() + "\n\n" + script)
         return f"appended to existing {name} hook at {hook_path}"
-    hook_path.write_text(script)
+    hook_path.write_text("#!/bin/bash\n" + script)
     hook_path.chmod(0o755)
     return f"installed at {hook_path}"
 
 
-def _uninstall_hook(hooks_dir: Path, name: str, marker: str) -> str:
-    """Remove graphify section from a git hook."""
+def _uninstall_hook(hooks_dir: Path, name: str, marker: str, marker_end: str) -> str:
+    """Remove graphify section from a git hook using start/end markers."""
     hook_path = hooks_dir / name
     if not hook_path.exists():
         return f"no {name} hook found - nothing to remove."
     content = hook_path.read_text()
     if marker not in content:
         return f"graphify hook not found in {name} - nothing to remove."
-    before = content.split(marker)[0].rstrip()
-    non_empty = [l for l in before.splitlines() if l.strip() and not l.startswith("#!")]
-    if not non_empty:
+    new_content = re.sub(
+        rf"{re.escape(marker)}.*?{re.escape(marker_end)}\n?",
+        "",
+        content,
+        flags=re.DOTALL,
+    ).strip()
+    if not new_content or new_content == "#!/bin/bash":
         hook_path.unlink()
         return f"removed {name} hook at {hook_path}"
-    hook_path.write_text(before + "\n")
+    hook_path.write_text(new_content + "\n")
     return f"graphify removed from {name} at {hook_path} (other hook content preserved)"
 
 
@@ -141,8 +148,8 @@ def uninstall(path: Path = Path(".")) -> str:
         raise RuntimeError(f"No git repository found at or above {path.resolve()}")
 
     hooks_dir = root / ".git" / "hooks"
-    commit_msg = _uninstall_hook(hooks_dir, "post-commit", _HOOK_MARKER)
-    checkout_msg = _uninstall_hook(hooks_dir, "post-checkout", _CHECKOUT_MARKER)
+    commit_msg = _uninstall_hook(hooks_dir, "post-commit", _HOOK_MARKER, _HOOK_MARKER_END)
+    checkout_msg = _uninstall_hook(hooks_dir, "post-checkout", _CHECKOUT_MARKER, _CHECKOUT_MARKER_END)
 
     return f"post-commit: {commit_msg}\npost-checkout: {checkout_msg}"
 
