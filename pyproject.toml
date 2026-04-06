@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "graphifyy"
-version = "0.2.2"
-description = "Claude Code skill - turn any folder of code, docs, papers, images, or tweets into a queryable knowledge graph"
+version = "0.3.0"
+description = "AI coding assistant skill (Claude Code, Codex, OpenCode, OpenClaw) - turn any folder of code, docs, papers, or images into a queryable knowledge graph"
 readme = "README.md"
-license = { text = "MIT" }
-keywords = ["claude", "claude-code", "knowledge-graph", "rag", "graphrag", "obsidian", "community-detection", "tree-sitter", "leiden", "llm"]
+license = { file = "LICENSE" }
+keywords = ["claude", "claude-code", "codex", "opencode", "knowledge-graph", "rag", "graphrag", "obsidian", "community-detection", "tree-sitter", "leiden", "llm"]
 requires-python = ">=3.10"
 dependencies = [
     "networkx",
