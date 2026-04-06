@@ -8,6 +8,7 @@ from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph
 from graphify.security import sanitize_label
+from graphify.analyze import _node_community_map
 
 COMMUNITY_COLORS = [
     "#4E79A7", "#F28E2B", "#E15759", "#76B7B2", "#59A14F",
@@ -15,11 +16,6 @@ COMMUNITY_COLORS = [
 ]
 
 MAX_NODES_FOR_VIZ = 5_000
-
-
-def _node_community_map(communities: dict[int, list[str]]) -> dict[str, int]:
-    """Invert communities dict: node_id -> community_id."""
-    return {n: cid for cid, nodes in communities.items() for n in nodes}
 
 
 def _html_styles() -> str:

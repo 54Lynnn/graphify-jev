@@ -40,7 +40,7 @@ try:
     _rebuild_code(Path('.'))
 except Exception as exc:
     print(f'[graphify hook] Rebuild failed: {exc}')
-    sys.exit(0)
+    sys.exit(1)
 "
 """
 
@@ -69,10 +69,12 @@ echo "[graphify] Branch switched - rebuilding knowledge graph (code files)..."
 python3 -c "
 from graphify.watch import _rebuild_code
 from pathlib import Path
+import sys
 try:
     _rebuild_code(Path('.'))
 except Exception as exc:
     print(f'[graphify] Rebuild failed: {exc}')
+    sys.exit(1)
 "
 """
 

@@ -266,9 +266,14 @@ def detect_incremental(root: Path, manifest_path: str = _MANIFEST_PATH) -> dict:
             else:
                 unchanged_files[ftype].append(f)
 
+    # Files in manifest that no longer exist - their cached nodes are now ghost nodes
+    current_files = {f for flist in full["files"].values() for f in flist}
+    deleted_files = [f for f in manifest if f not in current_files]
+
     new_total = sum(len(v) for v in new_files.values())
     full["incremental"] = True
     full["new_files"] = new_files
     full["unchanged_files"] = unchanged_files
     full["new_total"] = new_total
+    full["deleted_files"] = deleted_files
     return full

@@ -75,8 +75,8 @@ def _dfs(G: nx.Graph, start_nodes: list[str], depth: int) -> tuple[set[str], lis
 
 
 def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_budget: int = 2000) -> str:
-    """Render subgraph as text, cutting at token_budget (approx 4 chars/token)."""
-    char_budget = token_budget * 4
+    """Render subgraph as text, cutting at token_budget (approx 3 chars/token)."""
+    char_budget = token_budget * 3
     lines = []
     for nid in sorted(nodes, key=lambda n: G.degree(n), reverse=True):
         d = G.nodes[nid]

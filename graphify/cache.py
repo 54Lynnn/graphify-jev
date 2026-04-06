@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
 
@@ -46,7 +47,13 @@ def save_cached(path: Path, result: dict, root: Path = Path(".")) -> None:
     """
     h = file_hash(path)
     entry = cache_dir(root) / f"{h}.json"
-    entry.write_text(json.dumps(result))
+    tmp = entry.with_suffix(".tmp")
+    try:
+        tmp.write_text(json.dumps(result))
+        os.replace(tmp, entry)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def cached_files(root: Path = Path(".")) -> set[str]:

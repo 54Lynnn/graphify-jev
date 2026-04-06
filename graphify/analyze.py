@@ -16,12 +16,16 @@ def _is_file_node(G: nx.Graph, node_id: str) -> bool:
     These are synthetic nodes created by the AST extractor and should be excluded
     from god nodes, surprising connections, and knowledge gap reporting.
     """
-    label = G.nodes[node_id].get("label", "")
+    attrs = G.nodes[node_id]
+    label = attrs.get("label", "")
     if not label:
         return False
-    # File-level hub: label is a filename with a code extension
-    if label.split(".")[-1] in ("py", "ts", "js", "go", "rs", "java", "rb", "cpp", "c", "h"):
-        return True
+    # File-level hub: label matches the actual source filename (not just any label ending in .py)
+    source_file = attrs.get("source_file", "")
+    if source_file:
+        from pathlib import Path as _Path
+        if label == _Path(source_file).name:
+            return True
     # Method stub: AST extractor labels methods as '.method_name()'
     if label.startswith(".") and label.endswith("()"):
         return True
