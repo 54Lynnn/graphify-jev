@@ -73,6 +73,14 @@ After building a graph, run this once in your project:
 
 Uninstall with the matching uninstall command (e.g. `graphify claude uninstall`).
 
+**Always-on vs explicit trigger — what's the difference?**
+
+The always-on hook surfaces `GRAPH_REPORT.md` — a one-page summary of god nodes, communities, and surprising connections. Your assistant reads this before searching files, so it navigates by structure instead of keyword matching. That covers most everyday questions.
+
+`/graphify query`, `/graphify path`, and `/graphify explain` go deeper: they traverse the raw `graph.json` hop by hop, trace exact paths between nodes, and surface edge-level detail (relation type, confidence score, source location). Use them when you want a specific question answered from the graph rather than a general orientation.
+
+Think of it this way: the always-on hook gives your assistant a map. The `/graphify` commands let it navigate the map precisely.
+
 <details>
 <summary>Manual install (curl)</summary>
 
