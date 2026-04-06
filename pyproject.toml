@@ -27,6 +27,7 @@ dependencies = [
     "tree-sitter-scala",
     "tree-sitter-php",
     "tree-sitter-swift",
+    "tree-sitter-lua",
 ]
 
 [project.urls]

@@ -16,7 +16,7 @@ class FileType(str, Enum):
 
 _MANIFEST_PATH = "graphify-out/manifest.json"
 
-CODE_EXTENSIONS = {'.py', '.ts', '.js', '.tsx', '.go', '.rs', '.java', '.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', '.rb', '.swift', '.kt', '.kts', '.cs', '.scala', '.php'}
+CODE_EXTENSIONS = {'.py', '.ts', '.js', '.tsx', '.go', '.rs', '.java', '.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', '.rb', '.swift', '.kt', '.kts', '.cs', '.scala', '.php', '.lua', '.toc'}
 DOC_EXTENSIONS = {'.md', '.txt', '.rst'}
 PAPER_EXTENSIONS = {'.pdf'}
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'}
