@@ -37,7 +37,18 @@ pip install graphifyy && graphify install
 
 > The PyPI package is temporarily named `graphifyy` while the `graphify` name is being reclaimed. The CLI and skill command are still `graphify`.
 
-Then open Claude Code in any directory and type:
+### Platform support
+
+| Platform | Install command |
+|----------|----------------|
+| Claude Code | `graphify install` |
+| Codex | `graphify install --platform codex` |
+| OpenCode | `graphify install --platform opencode` |
+| OpenClaw | `graphify install --platform claw` |
+
+Codex users also need `multi_agent = true` under `[features]` in `~/.codex/config.toml` for parallel extraction. OpenClaw uses sequential extraction (parallel agent support is still early on that platform).
+
+Then open your AI coding assistant and type:
 
 ```
 /graphify .
@@ -131,7 +142,7 @@ Works with any mix of file types:
 
 **Hyperedges** - group relationships connecting 3+ nodes that pairwise edges can't express. All classes implementing a shared protocol, all functions in an auth flow, all concepts from a paper section forming one idea.
 
-**Token benchmark** - printed automatically after every run. On a mixed corpus (Karpathy repos + papers + images): **71.5x** fewer tokens per query vs reading raw files.
+**Token benchmark** - printed automatically after every run. On a mixed corpus (Karpathy repos + papers + images): **71.5x** fewer tokens per query vs reading raw files. The first run extracts and builds the graph (this costs tokens). Every subsequent query reads the compact graph instead of raw files — that's where the savings compound. The SHA256 cache means re-runs only re-process changed files.
 
 **Auto-sync** (`--watch`) - run in a background terminal and the graph updates itself as your codebase changes. Code file saves trigger an instant rebuild (AST only, no LLM). Doc/image changes notify you to run `--update` for the LLM re-pass.
 

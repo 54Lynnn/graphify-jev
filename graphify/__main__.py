@@ -29,39 +29,66 @@ _SKILL_REGISTRATION = (
 )
 
 
-def _bundled_skill() -> Path:
-    """Path to the skill.md bundled with this package."""
-    return Path(__file__).parent / "skill.md"
+_PLATFORM_CONFIG: dict[str, dict] = {
+    "claude": {
+        "skill_file": "skill.md",
+        "skill_dst": Path(".claude") / "skills" / "graphify" / "SKILL.md",
+        "claude_md": True,
+    },
+    "codex": {
+        "skill_file": "skill-codex.md",
+        "skill_dst": Path(".agents") / "skills" / "graphify" / "SKILL.md",
+        "claude_md": False,
+    },
+    "opencode": {
+        "skill_file": "skill-opencode.md",
+        "skill_dst": Path(".config") / "opencode" / "skills" / "graphify" / "SKILL.md",
+        "claude_md": False,
+    },
+    "claw": {
+        "skill_file": "skill-claw.md",
+        "skill_dst": Path(".claw") / "skills" / "graphify" / "SKILL.md",
+        "claude_md": False,
+    },
+}
 
 
-def install() -> None:
-    skill_src = _bundled_skill()
-    if not skill_src.exists():
-        print("error: skill.md not found in package - reinstall graphify", file=sys.stderr)
+def install(platform: str = "claude") -> None:
+    if platform not in _PLATFORM_CONFIG:
+        print(
+            f"error: unknown platform '{platform}'. Choose from: {', '.join(_PLATFORM_CONFIG)}",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
-    # Copy skill to ~/.claude/skills/graphify/SKILL.md
-    skill_dst = Path.home() / ".claude" / "skills" / "graphify" / "SKILL.md"
+    cfg = _PLATFORM_CONFIG[platform]
+    skill_src = Path(__file__).parent / cfg["skill_file"]
+    if not skill_src.exists():
+        print(f"error: {cfg['skill_file']} not found in package - reinstall graphify", file=sys.stderr)
+        sys.exit(1)
+
+    skill_dst = Path.home() / cfg["skill_dst"]
     skill_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(skill_src, skill_dst)
     print(f"  skill installed  →  {skill_dst}")
 
-    # Register in ~/.claude/CLAUDE.md
-    claude_md = Path.home() / ".claude" / "CLAUDE.md"
-    if claude_md.exists():
-        content = claude_md.read_text()
-        if "graphify" in content:
-            print(f"  CLAUDE.md        →  already registered (no change)")
+    if cfg["claude_md"]:
+        # Register in ~/.claude/CLAUDE.md (Claude Code only)
+        claude_md = Path.home() / ".claude" / "CLAUDE.md"
+        if claude_md.exists():
+            content = claude_md.read_text()
+            if "graphify" in content:
+                print(f"  CLAUDE.md        →  already registered (no change)")
+            else:
+                claude_md.write_text(content.rstrip() + _SKILL_REGISTRATION)
+                print(f"  CLAUDE.md        →  skill registered in {claude_md}")
         else:
-            claude_md.write_text(content.rstrip() + _SKILL_REGISTRATION)
-            print(f"  CLAUDE.md        →  skill registered in {claude_md}")
-    else:
-        claude_md.parent.mkdir(parents=True, exist_ok=True)
-        claude_md.write_text(_SKILL_REGISTRATION.lstrip())
-        print(f"  CLAUDE.md        →  created at {claude_md}")
+            claude_md.parent.mkdir(parents=True, exist_ok=True)
+            claude_md.write_text(_SKILL_REGISTRATION.lstrip())
+            print(f"  CLAUDE.md        →  created at {claude_md}")
 
     print()
-    print("Done. Open Claude Code in any directory and type:")
+    print("Done. Open your AI coding assistant and type:")
     print()
     print("  /graphify .")
     print()
@@ -184,7 +211,7 @@ def main() -> None:
         print("Usage: graphify <command>")
         print()
         print("Commands:")
-        print("  install                 copy skill to ~/.claude/skills/ and register in CLAUDE.md")
+        print("  install [--platform P]  copy skill to platform config dir (claude|codex|opencode|claw)")
         print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
         print("  hook install            install post-commit git hook (auto-rebuilds graph on commit)")
         print("  hook uninstall          remove post-commit git hook")
@@ -196,7 +223,19 @@ def main() -> None:
 
     cmd = sys.argv[1]
     if cmd == "install":
-        install()
+        platform = "claude"
+        args = sys.argv[2:]
+        i = 0
+        while i < len(args):
+            if args[i].startswith("--platform="):
+                platform = args[i].split("=", 1)[1]
+                i += 1
+            elif args[i] == "--platform" and i + 1 < len(args):
+                platform = args[i + 1]
+                i += 2
+            else:
+                i += 1
+        install(platform=platform)
     elif cmd == "claude":
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
         if subcmd == "install":
