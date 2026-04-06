@@ -33,10 +33,11 @@ def build_from_json(extraction: dict) -> nx.Graph:
 
 def build(extractions: list[dict]) -> nx.Graph:
     """Merge multiple extraction results into one graph."""
-    combined: dict = {"nodes": [], "edges": [], "input_tokens": 0, "output_tokens": 0}
+    combined: dict = {"nodes": [], "edges": [], "hyperedges": [], "input_tokens": 0, "output_tokens": 0}
     for ext in extractions:
         combined["nodes"].extend(ext.get("nodes", []))
         combined["edges"].extend(ext.get("edges", []))
+        combined["hyperedges"].extend(ext.get("hyperedges", []))
         combined["input_tokens"] += ext.get("input_tokens", 0)
         combined["output_tokens"] += ext.get("output_tokens", 0)
     return build_from_json(combined)
