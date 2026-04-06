@@ -60,7 +60,8 @@ def test_collect_files_from_dir():
     files = collect_files(FIXTURES)
     supported = {".py", ".js", ".ts", ".tsx", ".go", ".rs",
                  ".java", ".c", ".cpp", ".cc", ".cxx", ".rb",
-                 ".cs", ".kt", ".kts", ".scala", ".php", ".h", ".hpp"}
+                 ".cs", ".kt", ".kts", ".scala", ".php", ".h", ".hpp",
+                 ".swift"}
     assert all(f.suffix in supported for f in files)
     assert len(files) > 0
 

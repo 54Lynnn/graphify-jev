@@ -26,6 +26,7 @@ dependencies = [
     "tree-sitter-kotlin",
     "tree-sitter-scala",
     "tree-sitter-php",
+    "tree-sitter-swift",
 ]
 
 [project.urls]

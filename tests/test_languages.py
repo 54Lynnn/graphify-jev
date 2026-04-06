@@ -1,10 +1,11 @@
-"""Tests for the 8 new language extractors: Java, C, C++, Ruby, C#, Kotlin, Scala, PHP."""
+"""Tests for language extractors: Java, C, C++, Ruby, C#, Kotlin, Scala, PHP, Swift."""
 from __future__ import annotations
 from pathlib import Path
 import pytest
 from graphify.extract import (
     extract_java, extract_c, extract_cpp, extract_ruby,
     extract_csharp, extract_kotlin, extract_scala, extract_php,
+    extract_swift,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -217,3 +218,122 @@ def test_php_finds_function():
 def test_php_finds_imports():
     r = extract_php(FIXTURES / "sample.php")
     assert "imports" in _relations(r)
+
+
+# ── Swift ────────────────────────────────────────────────────────────────────
+
+def test_swift_no_error():
+    r = extract_swift(FIXTURES / "sample.swift")
+    assert "error" not in r
+
+def test_swift_finds_class():
+    r = extract_swift(FIXTURES / "sample.swift")
+    assert any("DataProcessor" in l for l in _labels(r))
+
+def test_swift_finds_protocol():
+    r = extract_swift(FIXTURES / "sample.swift")
+    assert any("Processor" in l for l in _labels(r))
+
+def test_swift_finds_struct():
+    r = extract_swift(FIXTURES / "sample.swift")
+    assert any("Config" in l for l in _labels(r))
+
+def test_swift_finds_methods():
+    r = extract_swift(FIXTURES / "sample.swift")
+    labels = _labels(r)
+    assert any("addItem" in l for l in labels)
+    assert any("process" in l for l in labels)
+
+def test_swift_finds_function():
+    r = extract_swift(FIXTURES / "sample.swift")
+    assert any("createProcessor" in l for l in _labels(r))
+
+def test_swift_finds_imports():
+    r = extract_swift(FIXTURES / "sample.swift")
+    assert "imports" in _relations(r)
+
+def test_swift_no_dangling_edges():
+    r = extract_swift(FIXTURES / "sample.swift")
+    node_ids = {n["id"] for n in r["nodes"]}
+    for e in r["edges"]:
+        assert e["source"] in node_ids
+
+def test_swift_finds_actor():
+    r = extract_swift(FIXTURES / "sample.swift")
+    assert any("CacheManager" in l for l in _labels(r))
+
+def test_swift_finds_enum():
+    r = extract_swift(FIXTURES / "sample.swift")
+    assert any("NetworkError" in l for l in _labels(r))
+
+def test_swift_finds_enum_methods():
+    r = extract_swift(FIXTURES / "sample.swift")
+    assert any("describe" in l for l in _labels(r))
+
+def test_swift_finds_enum_cases():
+    r = extract_swift(FIXTURES / "sample.swift")
+    labels = _labels(r)
+    assert any("timeout" in l for l in labels)
+    assert any("connectionFailed" in l for l in labels)
+
+def test_swift_enum_cases_have_case_of_edge():
+    r = extract_swift(FIXTURES / "sample.swift")
+    case_edges = [e for e in r["edges"] if e["relation"] == "case_of"]
+    assert len(case_edges) >= 2
+
+def test_swift_finds_deinit():
+    r = extract_swift(FIXTURES / "sample.swift")
+    assert any("deinit" in l for l in _labels(r))
+
+def test_swift_finds_subscript():
+    r = extract_swift(FIXTURES / "sample.swift")
+    assert any("subscript" in l for l in _labels(r))
+
+def test_swift_extension_methods_attach_to_type():
+    r = extract_swift(FIXTURES / "sample.swift")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    method_edges = [e for e in r["edges"] if e["relation"] == "method"]
+    found = False
+    for e in method_edges:
+        src_label = node_by_id.get(e["source"], "")
+        tgt_label = node_by_id.get(e["target"], "")
+        if "Config" in src_label and "isValid" in tgt_label:
+            found = True
+            break
+    assert found, "extension method isValid should attach to Config"
+
+def test_swift_extension_does_not_duplicate_type_node():
+    r = extract_swift(FIXTURES / "sample.swift")
+    config_nodes = [n for n in r["nodes"] if n["label"] == "Config"]
+    assert len(config_nodes) == 1, f"Config should appear once, got {len(config_nodes)}"
+
+def test_swift_conformance_edge():
+    r = extract_swift(FIXTURES / "sample.swift")
+    inherits_edges = [e for e in r["edges"] if e["relation"] == "inherits"]
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    found = False
+    for e in inherits_edges:
+        src_label = node_by_id.get(e["source"], "")
+        tgt_label = node_by_id.get(e["target"], "")
+        if "DataProcessor" in src_label and "Processor" in tgt_label:
+            found = True
+            break
+    assert found, "DataProcessor should have inherits edge to Processor"
+
+def test_swift_extension_conformance_edge():
+    r = extract_swift(FIXTURES / "sample.swift")
+    inherits_edges = [e for e in r["edges"] if e["relation"] == "inherits"]
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    found = False
+    for e in inherits_edges:
+        src_label = node_by_id.get(e["source"], "")
+        tgt_label = node_by_id.get(e["target"], "")
+        if "DataProcessor" in src_label and "Loggable" in tgt_label:
+            found = True
+            break
+    assert found, "extension should add conformance edge DataProcessor -> Loggable"
+
+def test_swift_emits_calls():
+    r = extract_swift(FIXTURES / "sample.swift")
+    calls = _calls(r)
+    assert any("process" in src and "validate" in tgt for src, tgt in calls)
