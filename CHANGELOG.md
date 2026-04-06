@@ -1,5 +1,28 @@
 # Changelog
 
+Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
+
+## 0.3.0 (2026-04-06)
+
+- Add: multi-platform support — Codex (`skill-codex.md`), OpenCode (`skill-opencode.md`), OpenClaw (`skill-claw.md`)
+- Add: `graphify install --platform <codex|opencode|claw>` routes skill to correct config directory
+- Add: `graphify codex install` / `opencode install` / `claw install` — writes AGENTS.md for always-on graph-first behaviour
+- Add: `graphify claude uninstall` / `codex uninstall` / `opencode uninstall` / `claw uninstall`
+- Add: MIT license
+- Fix: `build()` was silently dropping hyperedges when merging multiple extractions
+- Refactor: `extract.py` 2527 → 1588 lines — replaced 12 copy-pasted language extractors with `LanguageConfig` dataclass + `_extract_generic()`
+- Docs: clustering is graph-topology-based (no embeddings) — explained in README
+- Docs: all missing flags documented (`--cluster-only`, `--no-viz`, `--neo4j-push`, `query --dfs`, `query --budget`, `add --author`, `add --contributor`)
+
+## 0.2.2 (2026-04-06)
+
+- Add: `graphify claude install` — writes graphify section to local CLAUDE.md + PreToolUse hook in `.claude/settings.json`
+- Add: `graphify claude uninstall` — removes section and hook
+- Add: `graphify hook install` — installs post-commit and post-checkout git hooks (platform-agnostic)
+- Add: `graphify hook uninstall` / `hook status`
+- Add: `graphify benchmark` CLI command
+- Fix: node deduplication documented at all three layers
+
 ## 0.1.8 (2026-04-05)
 
 - Fix: follow-up questions now check for wiki first (graphify-out/wiki/index.md) before falling back to graph.json

@@ -107,6 +107,71 @@ Rules:
 
 _CLAUDE_MD_MARKER = "## graphify"
 
+# AGENTS.md section for Codex, OpenCode, and OpenClaw.
+# All three platforms read AGENTS.md in the project root for persistent instructions.
+_AGENTS_MD_SECTION = """\
+## graphify
+
+This project has a graphify knowledge graph at graphify-out/.
+
+Rules:
+- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- After modifying code files in this session, run `python3 -c "from graphify.watch import _rebuild_code; from pathlib import Path; _rebuild_code(Path('.'))"` to keep the graph current
+"""
+
+_AGENTS_MD_MARKER = "## graphify"
+
+
+def _agents_install(project_dir: Path, platform: str) -> None:
+    """Write the graphify section to the local AGENTS.md (Codex/OpenCode/OpenClaw)."""
+    target = (project_dir or Path(".")) / "AGENTS.md"
+
+    if target.exists():
+        content = target.read_text()
+        if _AGENTS_MD_MARKER in content:
+            print(f"graphify already configured in AGENTS.md")
+            return
+        new_content = content.rstrip() + "\n\n" + _AGENTS_MD_SECTION
+    else:
+        new_content = _AGENTS_MD_SECTION
+
+    target.write_text(new_content)
+    print(f"graphify section written to {target.resolve()}")
+    print()
+    print(f"{platform.capitalize()} will now check the knowledge graph before answering")
+    print("codebase questions and rebuild it after code changes.")
+    print()
+    print("Note: unlike Claude Code, there is no PreToolUse hook equivalent for")
+    print(f"{platform.capitalize()} — the AGENTS.md rules are the always-on mechanism.")
+
+
+def _agents_uninstall(project_dir: Path) -> None:
+    """Remove the graphify section from the local AGENTS.md."""
+    target = (project_dir or Path(".")) / "AGENTS.md"
+
+    if not target.exists():
+        print("No AGENTS.md found in current directory - nothing to do")
+        return
+
+    content = target.read_text()
+    if _AGENTS_MD_MARKER not in content:
+        print("graphify section not found in AGENTS.md - nothing to do")
+        return
+
+    cleaned = re.sub(
+        r"\n*## graphify\n.*?(?=\n## |\Z)",
+        "",
+        content,
+        flags=re.DOTALL,
+    ).rstrip()
+    if cleaned:
+        target.write_text(cleaned + "\n")
+        print(f"graphify section removed from {target.resolve()}")
+    else:
+        target.unlink()
+        print(f"AGENTS.md was empty after removal - deleted {target.resolve()}")
+
 
 def claude_install(project_dir: Path | None = None) -> None:
     """Write the graphify section to the local CLAUDE.md."""
@@ -213,11 +278,17 @@ def main() -> None:
         print("Commands:")
         print("  install [--platform P]  copy skill to platform config dir (claude|codex|opencode|claw)")
         print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
-        print("  hook install            install post-commit git hook (auto-rebuilds graph on commit)")
-        print("  hook uninstall          remove post-commit git hook")
-        print("  hook status             check if hook is installed")
-        print("  claude install          write graphify section to local CLAUDE.md")
-        print("  claude uninstall        remove graphify section from local CLAUDE.md")
+        print("  hook install            install post-commit/post-checkout git hooks (all platforms)")
+        print("  hook uninstall          remove git hooks")
+        print("  hook status             check if git hooks are installed")
+        print("  claude install          write graphify section to CLAUDE.md + PreToolUse hook (Claude Code)")
+        print("  claude uninstall        remove graphify section from CLAUDE.md + PreToolUse hook")
+        print("  codex install           write graphify section to AGENTS.md (Codex)")
+        print("  codex uninstall         remove graphify section from AGENTS.md")
+        print("  opencode install        write graphify section to AGENTS.md (OpenCode)")
+        print("  opencode uninstall      remove graphify section from AGENTS.md")
+        print("  claw install            write graphify section to AGENTS.md (OpenClaw)")
+        print("  claw uninstall          remove graphify section from AGENTS.md")
         print()
         return
 
@@ -244,6 +315,15 @@ def main() -> None:
             claude_uninstall()
         else:
             print("Usage: graphify claude [install|uninstall]", file=sys.stderr)
+            sys.exit(1)
+    elif cmd in ("codex", "opencode", "claw"):
+        subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
+        if subcmd == "install":
+            _agents_install(Path("."), cmd)
+        elif subcmd == "uninstall":
+            _agents_uninstall(Path("."))
+        else:
+            print(f"Usage: graphify {cmd} [install|uninstall]", file=sys.stderr)
             sys.exit(1)
     elif cmd == "hook":
         from graphify.hooks import install as hook_install, uninstall as hook_uninstall, status as hook_status
