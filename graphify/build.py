@@ -1,4 +1,25 @@
 # assemble node+edge dicts into a NetworkX graph, preserving edge direction
+#
+# Node deduplication — three layers:
+#
+# 1. Within a file (AST): each extractor tracks a `seen_ids` set. A node ID is
+#    emitted at most once per file, so duplicate class/function definitions in
+#    the same source file are collapsed to the first occurrence.
+#
+# 2. Between files (build): NetworkX G.add_node() is idempotent — calling it
+#    twice with the same ID overwrites the attributes with the second call's
+#    values. Nodes are added in extraction order (AST first, then semantic),
+#    so if the same entity is extracted by both passes the semantic node
+#    silently overwrites the AST node. This is intentional: semantic nodes
+#    carry richer labels and cross-file context, while AST nodes have precise
+#    source_location. If you need to change the priority, reorder extractions
+#    passed to build().
+#
+# 3. Semantic merge (skill): before calling build(), the skill merges cached
+#    and new semantic results using an explicit `seen` set keyed on node["id"],
+#    so duplicates across cache hits and new extractions are resolved there
+#    before any graph construction happens.
+#
 from __future__ import annotations
 import sys
 import networkx as nx
@@ -32,7 +53,13 @@ def build_from_json(extraction: dict) -> nx.Graph:
 
 
 def build(extractions: list[dict]) -> nx.Graph:
-    """Merge multiple extraction results into one graph."""
+    """Merge multiple extraction results into one graph.
+
+    Extractions are merged in order. For nodes with the same ID, the last
+    extraction's attributes win (NetworkX add_node overwrites). Pass AST
+    results before semantic results so semantic labels take precedence, or
+    reverse the order if you prefer AST source_location precision to win.
+    """
     combined: dict = {"nodes": [], "edges": [], "hyperedges": [], "input_tokens": 0, "output_tokens": 0}
     for ext in extractions:
         combined["nodes"].extend(ext.get("nodes", []))
