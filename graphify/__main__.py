@@ -50,6 +50,11 @@ _PLATFORM_CONFIG: dict[str, dict] = {
         "skill_dst": Path(".claw") / "skills" / "graphify" / "SKILL.md",
         "claude_md": False,
     },
+    "droid": {
+        "skill_file": "skill-droid.md",
+        "skill_dst": Path(".factory") / "skills" / "graphify" / "SKILL.md",
+        "claude_md": False,
+    },
 }
 
 
@@ -276,7 +281,7 @@ def main() -> None:
         print("Usage: graphify <command>")
         print()
         print("Commands:")
-        print("  install [--platform P]  copy skill to platform config dir (claude|codex|opencode|claw)")
+        print("  install [--platform P]  copy skill to platform config dir (claude|codex|opencode|claw|droid)")
         print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
         print("  hook install            install post-commit/post-checkout git hooks (all platforms)")
         print("  hook uninstall          remove git hooks")
@@ -289,6 +294,8 @@ def main() -> None:
         print("  opencode uninstall      remove graphify section from AGENTS.md")
         print("  claw install            write graphify section to AGENTS.md (OpenClaw)")
         print("  claw uninstall          remove graphify section from AGENTS.md")
+        print("  droid install           write graphify section to AGENTS.md (Factory Droid)")
+        print("  droid uninstall         remove graphify section from AGENTS.md")
         print()
         return
 
@@ -316,7 +323,7 @@ def main() -> None:
         else:
             print("Usage: graphify claude [install|uninstall]", file=sys.stderr)
             sys.exit(1)
-    elif cmd in ("codex", "opencode", "claw"):
+    elif cmd in ("codex", "opencode", "claw", "droid"):
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
         if subcmd == "install":
             _agents_install(Path("."), cmd)
