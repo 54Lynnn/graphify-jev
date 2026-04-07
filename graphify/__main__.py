@@ -1,6 +1,7 @@
 """graphify CLI - `graphify install` sets up the Claude Code skill."""
 from __future__ import annotations
 import json
+import platform
 import re
 import shutil
 import sys
@@ -54,6 +55,11 @@ _PLATFORM_CONFIG: dict[str, dict] = {
         "skill_file": "skill-droid.md",
         "skill_dst": Path(".factory") / "skills" / "graphify" / "SKILL.md",
         "claude_md": False,
+    },
+    "windows": {
+        "skill_file": "skill-windows.md",
+        "skill_dst": Path(".claude") / "skills" / "graphify" / "SKILL.md",
+        "claude_md": True,
     },
 }
 
@@ -281,7 +287,7 @@ def main() -> None:
         print("Usage: graphify <command>")
         print()
         print("Commands:")
-        print("  install [--platform P]  copy skill to platform config dir (claude|codex|opencode|claw|droid)")
+        print("  install [--platform P]  copy skill to platform config dir (claude|windows|codex|opencode|claw|droid)")
         print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
         print("  hook install            install post-commit/post-checkout git hooks (all platforms)")
         print("  hook uninstall          remove git hooks")
@@ -301,19 +307,21 @@ def main() -> None:
 
     cmd = sys.argv[1]
     if cmd == "install":
-        platform = "claude"
+        # Default to windows platform on Windows, claude elsewhere
+        default_platform = "windows" if platform.system() == "Windows" else "claude"
+        chosen_platform = default_platform
         args = sys.argv[2:]
         i = 0
         while i < len(args):
             if args[i].startswith("--platform="):
-                platform = args[i].split("=", 1)[1]
+                chosen_platform = args[i].split("=", 1)[1]
                 i += 1
             elif args[i] == "--platform" and i + 1 < len(args):
-                platform = args[i + 1]
+                chosen_platform = args[i + 1]
                 i += 2
             else:
                 i += 1
-        install(platform=platform)
+        install(platform=chosen_platform)
     elif cmd == "claude":
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
         if subcmd == "install":

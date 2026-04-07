@@ -58,7 +58,8 @@ pip install graphifyy && graphify install
 
 | Platform | Install command |
 |----------|----------------|
-| Claude Code | `graphify install` |
+| Claude Code (Linux/Mac) | `graphify install` |
+| Claude Code (Windows) | `graphify install` (auto-detected) or `graphify install --platform windows` |
 | Codex | `graphify install --platform codex` |
 | OpenCode | `graphify install --platform opencode` |
 | OpenClaw | `graphify install --platform claw` |
