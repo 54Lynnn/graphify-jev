@@ -21,6 +21,7 @@ CODE_EXTENSIONS = {'.py', '.ts', '.js', '.tsx', '.go', '.rs', '.java', '.cpp', '
 DOC_EXTENSIONS = {'.md', '.txt', '.rst'}
 PAPER_EXTENSIONS = {'.pdf'}
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'}
+OFFICE_EXTENSIONS = {'.docx', '.xlsx'}
 
 CORPUS_WARN_THRESHOLD = 50_000    # words - below this, warn "you may not need a graph"
 CORPUS_UPPER_THRESHOLD = 500_000  # words - above this, warn about token cost
@@ -86,6 +87,8 @@ def classify_file(path: Path) -> FileType | None:
         if _looks_like_paper(path):
             return FileType.PAPER
         return FileType.DOCUMENT
+    if ext in OFFICE_EXTENSIONS:
+        return FileType.DOCUMENT
     return None
 
 
@@ -104,10 +107,115 @@ def extract_pdf_text(path: Path) -> str:
         return ""
 
 
+def docx_to_markdown(path: Path) -> str:
+    """Convert a .docx file to markdown text using python-docx."""
+    try:
+        from docx import Document
+        from docx.oxml.ns import qn
+        doc = Document(str(path))
+        lines = []
+        for para in doc.paragraphs:
+            style = para.style.name if para.style else ""
+            text = para.text.strip()
+            if not text:
+                lines.append("")
+                continue
+            if style.startswith("Heading 1"):
+                lines.append(f"# {text}")
+            elif style.startswith("Heading 2"):
+                lines.append(f"## {text}")
+            elif style.startswith("Heading 3"):
+                lines.append(f"### {text}")
+            elif style.startswith("List"):
+                lines.append(f"- {text}")
+            else:
+                lines.append(text)
+        # Tables
+        for table in doc.tables:
+            rows = [[cell.text.strip() for cell in row.cells] for row in table.rows]
+            if not rows:
+                continue
+            header = "| " + " | ".join(rows[0]) + " |"
+            sep = "| " + " | ".join("---" for _ in rows[0]) + " |"
+            lines.extend([header, sep])
+            for row in rows[1:]:
+                lines.append("| " + " | ".join(row) + " |")
+        return "\n".join(lines)
+    except ImportError:
+        return ""
+    except Exception:
+        return ""
+
+
+def xlsx_to_markdown(path: Path) -> str:
+    """Convert an .xlsx file to markdown text using openpyxl."""
+    try:
+        import openpyxl
+        wb = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+        sections = []
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                # Skip entirely empty rows
+                if all(cell is None for cell in row):
+                    continue
+                rows.append([str(cell) if cell is not None else "" for cell in row])
+            if not rows:
+                continue
+            sections.append(f"## Sheet: {sheet_name}")
+            if len(rows) >= 1:
+                header = "| " + " | ".join(rows[0]) + " |"
+                sep = "| " + " | ".join("---" for _ in rows[0]) + " |"
+                sections.extend([header, sep])
+                for row in rows[1:]:
+                    sections.append("| " + " | ".join(row) + " |")
+        wb.close()
+        return "\n".join(sections)
+    except ImportError:
+        return ""
+    except Exception:
+        return ""
+
+
+def convert_office_file(path: Path, out_dir: Path) -> Path | None:
+    """Convert a .docx or .xlsx to a markdown sidecar in out_dir.
+
+    Returns the path of the converted .md file, or None if conversion failed
+    or the required library is not installed.
+    """
+    ext = path.suffix.lower()
+    if ext == ".docx":
+        text = docx_to_markdown(path)
+    elif ext == ".xlsx":
+        text = xlsx_to_markdown(path)
+    else:
+        return None
+
+    if not text.strip():
+        return None
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    # Use a stable name derived from the original path to avoid collisions
+    import hashlib
+    name_hash = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:8]
+    out_path = out_dir / f"{path.stem}_{name_hash}.md"
+    out_path.write_text(
+        f"<!-- converted from {path.name} -->\n\n{text}",
+        encoding="utf-8",
+    )
+    return out_path
+
+
 def count_words(path: Path) -> int:
     try:
-        if path.suffix.lower() == ".pdf":
+        ext = path.suffix.lower()
+        if ext == ".pdf":
             return len(extract_pdf_text(path).split())
+        if ext == ".docx":
+            return len(docx_to_markdown(path).split())
+        if ext == ".xlsx":
+            return len(xlsx_to_markdown(path).split())
         return len(path.read_text(errors="ignore").split())
     except Exception:
         return 0
@@ -224,6 +332,8 @@ def detect(root: Path) -> dict:
                     seen.add(p)
                     all_files.append(p)
 
+    converted_dir = root / "graphify-out" / "converted"
+
     for p in all_files:
         # For memory dir files, skip hidden/noise filtering
         in_memory = memory_dir.exists() and str(p).startswith(str(memory_dir))
@@ -232,6 +342,9 @@ def detect(root: Path) -> dict:
             # but catch hidden files at the root level
             if p.name.startswith("."):
                 continue
+            # Skip files inside our own converted/ dir (avoid re-processing sidecars)
+            if str(p).startswith(str(converted_dir)):
+                continue
         if _is_ignored(p, root, ignore_patterns):
             continue
         if _is_sensitive(p):
@@ -239,6 +352,16 @@ def detect(root: Path) -> dict:
             continue
         ftype = classify_file(p)
         if ftype:
+            # Office files: convert to markdown sidecar so subagents can read them
+            if p.suffix.lower() in OFFICE_EXTENSIONS:
+                md_path = convert_office_file(p, converted_dir)
+                if md_path:
+                    files[ftype].append(str(md_path))
+                    total_words += count_words(md_path)
+                else:
+                    # Conversion failed (library not installed) - skip with note
+                    skipped_sensitive.append(str(p) + " [office conversion failed - pip install graphifyy[office]]")
+                continue
             files[ftype].append(str(p))
             total_words += count_words(p)
 
