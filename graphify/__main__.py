@@ -87,15 +87,15 @@ def install(platform: str = "claude") -> None:
         # Register in ~/.claude/CLAUDE.md (Claude Code only)
         claude_md = Path.home() / ".claude" / "CLAUDE.md"
         if claude_md.exists():
-            content = claude_md.read_text()
+            content = claude_md.read_text(encoding="utf-8")
             if "graphify" in content:
                 print(f"  CLAUDE.md        →  already registered (no change)")
             else:
-                claude_md.write_text(content.rstrip() + _SKILL_REGISTRATION)
+                claude_md.write_text(content.rstrip() + _SKILL_REGISTRATION, encoding="utf-8")
                 print(f"  CLAUDE.md        →  skill registered in {claude_md}")
         else:
             claude_md.parent.mkdir(parents=True, exist_ok=True)
-            claude_md.write_text(_SKILL_REGISTRATION.lstrip())
+            claude_md.write_text(_SKILL_REGISTRATION.lstrip(), encoding="utf-8")
             print(f"  CLAUDE.md        →  created at {claude_md}")
 
     print()
@@ -139,7 +139,7 @@ def _agents_install(project_dir: Path, platform: str) -> None:
     target = (project_dir or Path(".")) / "AGENTS.md"
 
     if target.exists():
-        content = target.read_text()
+        content = target.read_text(encoding="utf-8")
         if _AGENTS_MD_MARKER in content:
             print(f"graphify already configured in AGENTS.md")
             return
@@ -147,7 +147,7 @@ def _agents_install(project_dir: Path, platform: str) -> None:
     else:
         new_content = _AGENTS_MD_SECTION
 
-    target.write_text(new_content)
+    target.write_text(new_content, encoding="utf-8")
     print(f"graphify section written to {target.resolve()}")
     print()
     print(f"{platform.capitalize()} will now check the knowledge graph before answering")
@@ -165,7 +165,7 @@ def _agents_uninstall(project_dir: Path) -> None:
         print("No AGENTS.md found in current directory - nothing to do")
         return
 
-    content = target.read_text()
+    content = target.read_text(encoding="utf-8")
     if _AGENTS_MD_MARKER not in content:
         print("graphify section not found in AGENTS.md - nothing to do")
         return
@@ -177,7 +177,7 @@ def _agents_uninstall(project_dir: Path) -> None:
         flags=re.DOTALL,
     ).rstrip()
     if cleaned:
-        target.write_text(cleaned + "\n")
+        target.write_text(cleaned + "\n", encoding="utf-8")
         print(f"graphify section removed from {target.resolve()}")
     else:
         target.unlink()
@@ -189,7 +189,7 @@ def claude_install(project_dir: Path | None = None) -> None:
     target = (project_dir or Path(".")) / "CLAUDE.md"
 
     if target.exists():
-        content = target.read_text()
+        content = target.read_text(encoding="utf-8")
         if _CLAUDE_MD_MARKER in content:
             print("graphify already configured in CLAUDE.md")
             return
@@ -197,7 +197,7 @@ def claude_install(project_dir: Path | None = None) -> None:
     else:
         new_content = _CLAUDE_MD_SECTION
 
-    target.write_text(new_content)
+    target.write_text(new_content, encoding="utf-8")
     print(f"graphify section written to {target.resolve()}")
 
     # Also write Claude Code PreToolUse hook to .claude/settings.json
@@ -215,7 +215,7 @@ def _install_claude_hook(project_dir: Path) -> None:
 
     if settings_path.exists():
         try:
-            settings = json.loads(settings_path.read_text())
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             settings = {}
     else:
@@ -230,7 +230,7 @@ def _install_claude_hook(project_dir: Path) -> None:
         return
 
     pre_tool.append(_SETTINGS_HOOK)
-    settings_path.write_text(json.dumps(settings, indent=2))
+    settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     print(f"  .claude/settings.json  →  PreToolUse hook registered")
 
 
@@ -240,7 +240,7 @@ def _uninstall_claude_hook(project_dir: Path) -> None:
     if not settings_path.exists():
         return
     try:
-        settings = json.loads(settings_path.read_text())
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return
     pre_tool = settings.get("hooks", {}).get("PreToolUse", [])
@@ -248,7 +248,7 @@ def _uninstall_claude_hook(project_dir: Path) -> None:
     if len(filtered) == len(pre_tool):
         return
     settings["hooks"]["PreToolUse"] = filtered
-    settings_path.write_text(json.dumps(settings, indent=2))
+    settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     print(f"  .claude/settings.json  →  PreToolUse hook removed")
 
 
@@ -260,7 +260,7 @@ def claude_uninstall(project_dir: Path | None = None) -> None:
         print("No CLAUDE.md found in current directory - nothing to do")
         return
 
-    content = target.read_text()
+    content = target.read_text(encoding="utf-8")
     if _CLAUDE_MD_MARKER not in content:
         print("graphify section not found in CLAUDE.md - nothing to do")
         return
@@ -273,7 +273,7 @@ def claude_uninstall(project_dir: Path | None = None) -> None:
         flags=re.DOTALL,
     ).rstrip()
     if cleaned:
-        target.write_text(cleaned + "\n")
+        target.write_text(cleaned + "\n", encoding="utf-8")
         print(f"graphify section removed from {target.resolve()}")
     else:
         target.unlink()
@@ -360,7 +360,7 @@ def main() -> None:
         detect_path = Path(".graphify_detect.json")
         if detect_path.exists():
             try:
-                detect_data = json.loads(detect_path.read_text())
+                detect_data = json.loads(detect_path.read_text(encoding="utf-8"))
                 corpus_words = detect_data.get("total_words")
             except Exception:
                 pass
