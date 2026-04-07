@@ -1,5 +1,6 @@
 # file discovery, type classification, and corpus health checks
 from __future__ import annotations
+import fnmatch
 import json
 import os
 import re
@@ -134,6 +135,56 @@ def _is_noise_dir(part: str) -> bool:
     return False
 
 
+def _load_graphifyignore(root: Path) -> list[str]:
+    """Read .graphifyignore from root and return a list of patterns.
+
+    Lines starting with # are comments. Blank lines are ignored.
+    Patterns follow gitignore semantics: glob matched against the path
+    relative to root. A leading slash anchors to root. A trailing slash
+    matches directories only (we match both dir and file for simplicity).
+    """
+    ignore_file = root / ".graphifyignore"
+    if not ignore_file.exists():
+        return []
+    patterns = []
+    for line in ignore_file.read_text(errors="ignore").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            patterns.append(line)
+    return patterns
+
+
+def _is_ignored(path: Path, root: Path, patterns: list[str]) -> bool:
+    """Return True if path matches any .graphifyignore pattern."""
+    if not patterns:
+        return False
+    try:
+        rel = str(path.relative_to(root))
+    except ValueError:
+        return False
+    rel = rel.replace(os.sep, "/")
+    parts = rel.split("/")
+    for pattern in patterns:
+        # Normalize: strip leading/trailing slashes for matching purposes
+        p = pattern.strip("/")
+        if not p:
+            continue
+        # Match against full relative path
+        if fnmatch.fnmatch(rel, p):
+            return True
+        # Match against filename alone
+        if fnmatch.fnmatch(path.name, p):
+            return True
+        # Match against any path segment or prefix
+        # e.g. "vendor" or "vendor/" should match "vendor/lib.py"
+        for i, part in enumerate(parts):
+            if fnmatch.fnmatch(part, p):
+                return True
+            if fnmatch.fnmatch("/".join(parts[:i + 1]), p):
+                return True
+    return False
+
+
 def detect(root: Path) -> dict:
     files: dict[FileType, list[str]] = {
         FileType.CODE: [],
@@ -144,6 +195,7 @@ def detect(root: Path) -> dict:
     total_words = 0
 
     skipped_sensitive: list[str] = []
+    ignore_patterns = _load_graphifyignore(root)
 
     # Always include graphify-out/memory/ - query results filed back into the graph
     memory_dir = root / "graphify-out" / "memory"
@@ -162,7 +214,9 @@ def detect(root: Path) -> dict:
                 # Prune noise dirs in-place so os.walk never descends into them
                 dirnames[:] = [
                     d for d in dirnames
-                    if not d.startswith(".") and not _is_noise_dir(d)
+                    if not d.startswith(".")
+                    and not _is_noise_dir(d)
+                    and not _is_ignored(dp / d, root, ignore_patterns)
                 ]
             for fname in filenames:
                 p = dp / fname
@@ -178,6 +232,8 @@ def detect(root: Path) -> dict:
             # but catch hidden files at the root level
             if p.name.startswith("."):
                 continue
+        if _is_ignored(p, root, ignore_patterns):
+            continue
         if _is_sensitive(p):
             skipped_sensitive.append(str(p))
             continue
@@ -210,6 +266,7 @@ def detect(root: Path) -> dict:
         "needs_graph": needs_graph,
         "warning": warning,
         "skipped_sensitive": skipped_sensitive,
+        "graphifyignore_patterns": len(ignore_patterns),
     }
 
 

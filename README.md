@@ -23,6 +23,18 @@ graphify-out/
 └── cache/           SHA256 cache - re-runs only process changed files
 ```
 
+Add a `.graphifyignore` file to exclude folders you don't want in the graph:
+
+```
+# .graphifyignore
+vendor/
+node_modules/
+dist/
+*.generated.py
+```
+
+Same syntax as `.gitignore`. Patterns match against file paths relative to the folder you run graphify on.
+
 ## How it works
 
 graphify runs in two passes. First, a deterministic AST pass extracts structure from code files (classes, functions, imports, call graphs, docstrings, rationale comments) with no LLM needed. Second, Claude subagents run in parallel over docs, papers, and images to extract concepts, relationships, and design rationale. The results are merged into a NetworkX graph, clustered with Leiden community detection, and exported as interactive HTML, queryable JSON, and a plain-language audit report.

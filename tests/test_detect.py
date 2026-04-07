@@ -1,5 +1,5 @@
 from pathlib import Path
-from graphify.detect import classify_file, count_words, detect, FileType, _looks_like_paper
+from graphify.detect import classify_file, count_words, detect, FileType, _looks_like_paper, _is_ignored, _load_graphifyignore
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -69,3 +69,37 @@ def test_classify_attention_paper():
     if paper_path.exists():
         result = classify_file(paper_path)
         assert result == FileType.PAPER
+
+
+def test_graphifyignore_excludes_file(tmp_path):
+    """Files matching .graphifyignore patterns are excluded from detect()."""
+    (tmp_path / ".graphifyignore").write_text("vendor/\n*.generated.py\n")
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    (vendor / "lib.py").write_text("x = 1")
+    (tmp_path / "main.py").write_text("print('hi')")
+    (tmp_path / "schema.generated.py").write_text("x = 1")
+
+    result = detect(tmp_path)
+    file_list = result["files"]["code"]
+    assert any("main.py" in f for f in file_list)
+    assert not any("vendor" in f for f in file_list)
+    assert not any("generated" in f for f in file_list)
+    assert result["graphifyignore_patterns"] == 2
+
+
+def test_graphifyignore_missing_is_fine(tmp_path):
+    """No .graphifyignore is not an error."""
+    (tmp_path / "main.py").write_text("x = 1")
+    result = detect(tmp_path)
+    assert result["graphifyignore_patterns"] == 0
+
+
+def test_graphifyignore_comments_ignored(tmp_path):
+    """Comment lines in .graphifyignore are not treated as patterns."""
+    (tmp_path / ".graphifyignore").write_text("# this is a comment\n\nmain.py\n")
+    (tmp_path / "main.py").write_text("x = 1")
+    (tmp_path / "other.py").write_text("x = 2")
+    result = detect(tmp_path)
+    assert not any("main.py" in f for f in result["files"]["code"])
+    assert any("other.py" in f for f in result["files"]["code"])
