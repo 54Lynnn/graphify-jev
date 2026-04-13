@@ -97,6 +97,11 @@ _PLATFORM_CONFIG: dict[str, dict] = {
         "skill_dst": Path(".hermes") / "skills" / "graphify" / "SKILL.md",
         "claude_md": False,
     },
+    "kiro": {
+        "skill_file": "skill-kiro.md",
+        "skill_dst": Path(".kiro") / "skills" / "graphify" / "SKILL.md",
+        "claude_md": False,
+    },
     "antigravity": {
         "skill_file": "skill.md",
         "skill_dst": Path(".agent") / "skills" / "graphify" / "SKILL.md",
@@ -333,6 +338,69 @@ Follow the graphify skill installed at ~/.agent/skills/graphify/SKILL.md to run 
 
 If no path argument is given, use `.` (current directory).
 """
+
+
+_KIRO_STEERING = """\
+---
+inclusion: always
+---
+
+graphify: A knowledge graph of this project lives in `graphify-out/`. \
+If `graphify-out/GRAPH_REPORT.md` exists, read it before answering architecture questions, \
+tracing dependencies, or searching files — it contains god nodes, community structure, \
+and surprising connections the graph found. Navigate by graph structure instead of grepping raw files.
+"""
+
+_KIRO_STEERING_MARKER = "graphify: A knowledge graph of this project"
+
+
+def _kiro_install(project_dir: Path) -> None:
+    """Write graphify skill + steering file for Kiro IDE/CLI."""
+    project_dir = project_dir or Path(".")
+
+    # Skill file → .kiro/skills/graphify/SKILL.md
+    skill_src = Path(__file__).parent / "skill-kiro.md"
+    skill_dst = project_dir / ".kiro" / "skills" / "graphify" / "SKILL.md"
+    skill_dst.parent.mkdir(parents=True, exist_ok=True)
+    skill_dst.write_text(skill_src.read_text(encoding="utf-8"), encoding="utf-8")
+    print(f"  {skill_dst.relative_to(project_dir)}  ->  /graphify skill")
+
+    # Steering file → .kiro/steering/graphify.md (always-on)
+    steering_dir = project_dir / ".kiro" / "steering"
+    steering_dir.mkdir(parents=True, exist_ok=True)
+    steering_dst = steering_dir / "graphify.md"
+    if steering_dst.exists() and _KIRO_STEERING_MARKER in steering_dst.read_text(encoding="utf-8"):
+        print(f"  .kiro/steering/graphify.md  ->  already configured")
+    else:
+        steering_dst.write_text(_KIRO_STEERING, encoding="utf-8")
+        print(f"  .kiro/steering/graphify.md  ->  always-on steering written")
+
+    print()
+    print("Kiro will now read the knowledge graph before every conversation.")
+    print("Use /graphify to build or update the graph.")
+
+
+def _kiro_uninstall(project_dir: Path) -> None:
+    """Remove graphify skill + steering file for Kiro."""
+    project_dir = project_dir or Path(".")
+    removed = []
+
+    skill_dst = project_dir / ".kiro" / "skills" / "graphify" / "SKILL.md"
+    if skill_dst.exists():
+        skill_dst.unlink()
+        removed.append(str(skill_dst.relative_to(project_dir)))
+        # Remove parent dir if empty
+        try:
+            skill_dst.parent.rmdir()
+        except OSError:
+            pass
+
+    steering_dst = project_dir / ".kiro" / "steering" / "graphify.md"
+    if steering_dst.exists():
+        steering_dst.unlink()
+        removed.append(str(steering_dst.relative_to(project_dir)))
+
+    print("Removed: " + (", ".join(removed) if removed else "nothing to remove"))
 
 
 def _antigravity_install(project_dir: Path) -> None:
@@ -750,7 +818,7 @@ def main() -> None:
         print("Usage: graphify <command>")
         print()
         print("Commands:")
-        print("  install [--platform P]  copy skill to platform config dir (claude|windows|codex|opencode|aider|claw|droid|trae|trae-cn|gemini|cursor|antigravity|hermes)")
+        print("  install [--platform P]  copy skill to platform config dir (claude|windows|codex|opencode|aider|claw|droid|trae|trae-cn|gemini|cursor|antigravity|hermes|kiro)")
         print("  path \"A\" \"B\"            shortest path between two nodes in graph.json")
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
         print("  explain \"X\"             plain-language explanation of a node and its neighbors")
@@ -802,6 +870,8 @@ def main() -> None:
         print("  antigravity uninstall   remove .agent/rules, .agent/workflows, and skill")
         print("  hermes install          write skill to ~/.hermes/skills/graphify/ (Hermes)")
         print("  hermes uninstall        remove skill from ~/.hermes/skills/graphify/")
+        print("  kiro install            write skill to .kiro/skills/graphify/ + steering file (Kiro IDE/CLI)")
+        print("  kiro uninstall          remove skill + steering file")
         print()
         return
 
@@ -870,6 +940,15 @@ def main() -> None:
             print("; ".join(removed) if removed else "nothing to remove")
         else:
             print("Usage: graphify copilot [install|uninstall]", file=sys.stderr)
+            sys.exit(1)
+    elif cmd == "kiro":
+        subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
+        if subcmd == "install":
+            _kiro_install(Path("."))
+        elif subcmd == "uninstall":
+            _kiro_uninstall(Path("."))
+        else:
+            print("Usage: graphify kiro [install|uninstall]", file=sys.stderr)
             sys.exit(1)
     elif cmd in ("aider", "codex", "opencode", "claw", "droid", "trae", "trae-cn", "hermes"):
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""

@@ -17,8 +17,12 @@ def _body_content(content: bytes) -> bytes:
     return content
 
 
-def file_hash(path: Path) -> str:
-    """SHA256 of file contents + resolved path. Prevents cache collisions on identical content.
+def file_hash(path: Path, root: Path = Path(".")) -> str:
+    """SHA256 of file contents + path relative to root.
+
+    Using a relative path (not absolute) makes cache entries portable across
+    machines and checkout directories, so shared caches and CI work correctly.
+    Falls back to the resolved absolute path if the file is outside root.
 
     For Markdown files (.md), only the body below the YAML frontmatter is hashed,
     so metadata-only changes (e.g. reviewed, status, tags) do not invalidate the cache.
@@ -29,7 +33,11 @@ def file_hash(path: Path) -> str:
     h = hashlib.sha256()
     h.update(content)
     h.update(b"\x00")
-    h.update(str(p.resolve()).encode())
+    try:
+        rel = p.resolve().relative_to(Path(root).resolve())
+        h.update(str(rel).encode())
+    except ValueError:
+        h.update(str(p.resolve()).encode())
     return h.hexdigest()
 
 
@@ -48,7 +56,7 @@ def load_cached(path: Path, root: Path = Path(".")) -> dict | None:
     Returns None if no cache entry or file has changed.
     """
     try:
-        h = file_hash(path)
+        h = file_hash(path, root)
     except OSError:
         return None
     entry = cache_dir(root) / f"{h}.json"
@@ -66,7 +74,7 @@ def save_cached(path: Path, result: dict, root: Path = Path(".")) -> None:
     Stores as graphify-out/cache/{hash}.json where hash = SHA256 of current file contents.
     result should be a dict with 'nodes' and 'edges' lists.
     """
-    h = file_hash(path)
+    h = file_hash(path, root)
     entry = cache_dir(root) / f"{h}.json"
     tmp = entry.with_suffix(".tmp")
     try:
