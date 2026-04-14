@@ -2,6 +2,13 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.4.13 (2026-04-14)
+
+- Add: Verilog/SystemVerilog support — `.v` and `.sv` files extracted via tree-sitter-verilog (modules, functions, tasks, package imports, module instantiations with `instantiates` edges) (#325)
+- Fix: hyperedge polygons render correctly on HiDPI/Retina displays — `afterDrawing` callback ctx is now used directly (already in network coordinate space), removing the double-applied transform and incorrect `canvas.width/2` DPR anchor (#334)
+- Fix: AGENTS.md and GEMINI.md rebuild rule now uses `graphify update .` instead of hardcoded `python3 -c "..."` — correct Python is resolved through the graphify binary, no more interpreter mismatches in Nix/pipx/uv environments (#324)
+- Fix: `graphify query` and `graphify explain` no longer crash with `AttributeError` when a node has `label: null` — all `.get("label", "")` calls guarded with `or ""` to handle explicit null values (#323)
+
 ## 0.4.12 (2026-04-13)
 
 - Add: Kiro IDE/CLI support — `graphify kiro install` writes `.kiro/skills/graphify/SKILL.md` (invoked via `/graphify`) and `.kiro/steering/graphify.md` (`inclusion: always` — always-on context before every conversation) (#319, #321)

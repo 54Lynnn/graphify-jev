@@ -62,32 +62,24 @@ def _hyperedge_script(hyperedges_json: str) -> str:
     return f"""<script>
 // Render hyperedges as shaded regions
 const hyperedges = {hyperedges_json};
-function drawHyperedges() {{
-    const canvas = network.canvas.frame.canvas;
-    const ctx = canvas.getContext('2d');
+// afterDrawing passes ctx already transformed to network coordinate space.
+// Draw node positions raw — no manual pan/zoom/DPR math needed.
+network.on('afterDrawing', function(ctx) {{
     hyperedges.forEach(h => {{
         const positions = h.nodes
             .map(nid => network.getPositions([nid])[nid])
             .filter(p => p !== undefined);
         if (positions.length < 2) return;
-        // Draw convex hull as filled polygon
         ctx.save();
         ctx.globalAlpha = 0.12;
         ctx.fillStyle = '#6366f1';
         ctx.strokeStyle = '#6366f1';
         ctx.lineWidth = 2;
         ctx.beginPath();
-        const scale = network.getScale();
-        const offset = network.getViewPosition();
-        const toCanvas = (p) => ({{
-            x: (p.x - offset.x) * scale + canvas.width / 2,
-            y: (p.y - offset.y) * scale + canvas.height / 2
-        }});
-        const pts = positions.map(toCanvas);
-        // Expand hull slightly
-        const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-        const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-        const expanded = pts.map(p => ({{
+        // Centroid and expanded hull in network coordinates
+        const cx = positions.reduce((s, p) => s + p.x, 0) / positions.length;
+        const cy = positions.reduce((s, p) => s + p.y, 0) / positions.length;
+        const expanded = positions.map(p => ({{
             x: cx + (p.x - cx) * 1.15,
             y: cy + (p.y - cy) * 1.15
         }}));
@@ -105,8 +97,7 @@ function drawHyperedges() {{
         ctx.fillText(h.label, cx, cy - 5);
         ctx.restore();
     }});
-}}
-network.on('afterDrawing', drawHyperedges);
+}});
 </script>"""
 
 

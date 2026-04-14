@@ -49,7 +49,7 @@ def _score_nodes(G: nx.Graph, terms: list[str]) -> list[tuple[float, str]]:
     scored = []
     norm_terms = [_strip_diacritics(t).lower() for t in terms]
     for nid, data in G.nodes(data=True):
-        norm_label = data.get("norm_label") or _strip_diacritics(data.get("label", "")).lower()
+        norm_label = data.get("norm_label") or _strip_diacritics(data.get("label") or "").lower()
         source = (data.get("source_file") or "").lower()
         score = sum(1 for t in norm_terms if t in norm_label) + sum(0.5 for t in norm_terms if t in source)
         if score > 0:
@@ -113,7 +113,7 @@ def _find_node(G: nx.Graph, label: str) -> list[str]:
     """Return node IDs whose label or ID matches the search term (diacritic-insensitive)."""
     term = _strip_diacritics(label).lower()
     return [nid for nid, d in G.nodes(data=True)
-            if term in (d.get("norm_label") or _strip_diacritics(d.get("label", "")).lower())
+            if term in (d.get("norm_label") or _strip_diacritics(d.get("label") or "").lower())
             or term == nid.lower()]
 
 
@@ -251,7 +251,7 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
     def _tool_get_node(arguments: dict) -> str:
         label = arguments["label"].lower()
         matches = [(nid, d) for nid, d in G.nodes(data=True)
-                   if label in d.get("label", "").lower() or label == nid.lower()]
+                   if label in (d.get("label") or "").lower() or label == nid.lower()]
         if not matches:
             return f"No node matching '{label}' found."
         nid, d = matches[0]
