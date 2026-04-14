@@ -2,6 +2,19 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.4.14 (2026-04-15)
+
+- Fix: cross-file call edges now emitted for all languages (Swift, Go, Rust, Java, C#, Kotlin, Scala, Ruby, PHP, and others) — previously only Python had cross-file resolution; unresolved call sites are now saved per file and resolved against a global label map in a post-pass (#348)
+- Fix: PHP extractor now handles `scoped_call_expression` (static method calls like `Helper::format()`) and `class_constant_access_expression` (enum/constant references like `Status::ACTIVE`) — both were silently dropped before (#230, #232)
+- Fix: `--wiki` flag now runs `to_wiki()` as Step 6b in the skill pipeline before the cleanup step — community labels are available and the wiki is written to `graphify-out/wiki/` (#229, #354)
+- Fix: `graphify install --platform opencode` now also installs the `.opencode/plugins/graphify.js` plugin, matching what `graphify opencode install` does (#356)
+- Fix: `extract()` accepts explicit `cache_root` parameter so subdirectory runs no longer write cache to `<subdir>/graphify-out/cache/` (#350)
+- Fix: `os.replace` in cache writer falls back to `shutil.copy2` on `PermissionError` (Windows WinError 5) (#287)
+- Fix: `graphify update` exits with code 1 on rebuild failure instead of silently returning (#287)
+- Fix: `CLAUDE.md`, Cursor, and Antigravity templates now use `graphify update .` instead of hardcoded `python3 -c` invocation (#287)
+- Fix: `skill-kiro.md` added to `pyproject.toml` package-data — `graphify kiro install` was failing on fresh pip installs (#352)
+- Fix: `betweenness_centrality` in `suggest_questions` uses `k=100` approximate sampling for graphs over 1000 nodes; `edge_betweenness_centrality` returns early for graphs over 5000 nodes (#341)
+
 ## 0.4.13 (2026-04-14)
 
 - Add: Verilog/SystemVerilog support — `.v` and `.sv` files extracted via tree-sitter-verilog (modules, functions, tasks, package imports, module instantiations with `instantiates` edges) (#325)
