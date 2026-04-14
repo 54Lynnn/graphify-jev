@@ -563,7 +563,7 @@ _PHP_CONFIG = LanguageConfig(
     class_types=frozenset({"class_declaration"}),
     function_types=frozenset({"function_definition", "method_declaration"}),
     import_types=frozenset({"namespace_use_clause"}),
-    call_types=frozenset({"function_call_expression", "member_call_expression"}),
+    call_types=frozenset({"function_call_expression", "member_call_expression", "scoped_call_expression", "class_constant_access_expression"}),
     static_prop_types=frozenset({"scoped_property_access_expression"}),
     helper_fn_names=frozenset({"config"}),
     container_bind_methods=frozenset({"bind", "singleton", "scoped", "instance"}),
@@ -936,6 +936,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
     seen_static_ref_pairs: set[tuple[str, str, str]] = set()
     seen_helper_ref_pairs: set[tuple[str, str, str]] = set()
     seen_bind_pairs: set[tuple[str, str, str]] = set()
+    raw_calls: list[dict] = []  # unresolved calls for cross-file resolution in extract()
 
     def _php_class_const_scope(n) -> str | None:
         scope = n.child_by_field_name("scope")
@@ -1009,11 +1010,16 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                                 callee_name = raw
                             break
             elif config.ts_module == "tree_sitter_php":
-                # PHP: distinguish function_call_expression vs member_call_expression
+                # PHP: distinguish call expression subtypes
                 if node.type == "function_call_expression":
                     func_node = node.child_by_field_name("function")
                     if func_node:
                         callee_name = _read_text(func_node, source)
+                elif node.type == "scoped_call_expression":
+                    # Static method call: Helper::format() → callee = "Helper"
+                    scope_node = node.child_by_field_name("scope")
+                    if scope_node:
+                        callee_name = _read_text(scope_node, source)
                 else:
                     name_node = node.child_by_field_name("name")
                     if name_node:
@@ -1059,6 +1065,14 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                             "source_location": f"L{line}",
                             "weight": 1.0,
                         })
+                elif callee_name and not tgt_nid:
+                    # Callee not in this file — save for cross-file resolution in extract()
+                    raw_calls.append({
+                        "caller_nid": caller_nid,
+                        "callee": callee_name,
+                        "source_file": str_path,
+                        "source_location": f"L{node.start_point[0] + 1}",
+                    })
 
             # Helper function calls: config('foo.bar') → uses_config edge to "foo"
             if (callee_name and callee_name in config.helper_fn_names):
@@ -1163,6 +1177,27 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                             "weight": 1.0,
                         })
 
+        # PHP class constant access: Foo::BAR → references_constant edge
+        if config.ts_module == "tree_sitter_php" and node.type == "class_constant_access_expression":
+            class_name = _php_class_const_scope(node)
+            if class_name:
+                tgt_nid = label_to_nid.get(class_name.lower())
+                if tgt_nid and tgt_nid != caller_nid:
+                    pair3 = (caller_nid, tgt_nid, "references_constant")
+                    if pair3 not in seen_static_ref_pairs:
+                        seen_static_ref_pairs.add(pair3)
+                        line = node.start_point[0] + 1
+                        edges.append({
+                            "source": caller_nid,
+                            "target": tgt_nid,
+                            "relation": "references_constant",
+                            "confidence": "EXTRACTED",
+                            "confidence_score": 1.0,
+                            "source_file": str_path,
+                            "source_location": f"L{line}",
+                            "weight": 1.0,
+                        })
+
         for child in node.children:
             walk_calls(child, caller_nid)
 
@@ -1199,7 +1234,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
         if src in valid_ids and (tgt in valid_ids or edge["relation"] in ("imports", "imports_from")):
             clean_edges.append(edge)
 
-    return {"nodes": nodes, "edges": clean_edges}
+    return {"nodes": nodes, "edges": clean_edges, "raw_calls": raw_calls}
 
 
 # ── Python rationale extraction ───────────────────────────────────────────────
@@ -2992,13 +3027,19 @@ def _check_tree_sitter_version() -> None:
         )
 
 
-def extract(paths: list[Path]) -> dict:
+def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
     """Extract AST nodes and edges from a list of code files.
 
     Two-pass process:
     1. Per-file structural extraction (classes, functions, imports)
     2. Cross-file import resolution: turns file-level imports into
        class-level INFERRED edges (DigestAuth --uses--> Response)
+
+    Args:
+        paths: files to extract from
+        cache_root: explicit root for graphify-out/cache/ (overrides the
+            inferred common path prefix). Pass Path('.') when running on a
+            subdirectory so the cache stays at ./graphify-out/cache/.
     """
     _check_tree_sitter_version()
     per_file: list[dict] = []
@@ -3068,13 +3109,13 @@ def extract(paths: list[Path]) -> dict:
             extractor = _DISPATCH.get(path.suffix)
         if extractor is None:
             continue
-        cached = load_cached(path, root)
+        cached = load_cached(path, cache_root or root)
         if cached is not None:
             per_file.append(cached)
             continue
         result = extractor(path)
         if "error" not in result:
-            save_cached(path, result, root)
+            save_cached(path, result, cache_root or root)
         per_file.append(result)
     if total >= _PROGRESS_INTERVAL:
         print(f"  AST extraction: {total}/{total} files (100%)", flush=True)
@@ -3095,6 +3136,37 @@ def extract(paths: list[Path]) -> dict:
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("Cross-file import resolution failed, skipping: %s", exc)
+
+    # Cross-file call resolution for all languages
+    # Each extractor saved unresolved calls in raw_calls. Now that we have all
+    # nodes from all files, resolve any callee that exists in another file.
+    global_label_to_nid: dict[str, str] = {}
+    for n in all_nodes:
+        raw = n.get("label", "")
+        normalised = raw.strip("()").lstrip(".")
+        if normalised:
+            global_label_to_nid[normalised.lower()] = n["id"]
+
+    existing_pairs = {(e["source"], e["target"]) for e in all_edges}
+    for result in per_file:
+        for rc in result.get("raw_calls", []):
+            callee = rc.get("callee", "")
+            if not callee:
+                continue
+            tgt = global_label_to_nid.get(callee.lower())
+            caller = rc["caller_nid"]
+            if tgt and tgt != caller and (caller, tgt) not in existing_pairs:
+                existing_pairs.add((caller, tgt))
+                all_edges.append({
+                    "source": caller,
+                    "target": tgt,
+                    "relation": "calls",
+                    "confidence": "INFERRED",
+                    "confidence_score": 0.8,
+                    "source_file": rc.get("source_file", ""),
+                    "source_location": rc.get("source_location"),
+                    "weight": 1.0,
+                })
 
     return {
         "nodes": all_nodes,

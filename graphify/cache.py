@@ -79,7 +79,14 @@ def save_cached(path: Path, result: dict, root: Path = Path(".")) -> None:
     tmp = entry.with_suffix(".tmp")
     try:
         tmp.write_text(json.dumps(result), encoding="utf-8")
-        os.replace(tmp, entry)
+        try:
+            os.replace(tmp, entry)
+        except PermissionError:
+            # Windows: os.replace can fail with WinError 5 if the target is
+            # briefly locked. Fall back to copy-then-delete.
+            import shutil
+            shutil.copy2(tmp, entry)
+            tmp.unlink(missing_ok=True)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise

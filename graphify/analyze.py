@@ -262,6 +262,8 @@ def _cross_community_surprises(
         # No community info - use edge betweenness centrality
         if G.number_of_edges() == 0:
             return []
+        if G.number_of_nodes() > 5000:
+            return []
         betweenness = nx.edge_betweenness_centrality(G)
         top_edges = sorted(betweenness.items(), key=lambda x: x[1], reverse=True)[:top_n]
         result = []
@@ -360,7 +362,8 @@ def suggest_questions(
 
     # 2. Bridge nodes (high betweenness) → cross-cutting concern questions
     if G.number_of_edges() > 0:
-        betweenness = nx.betweenness_centrality(G)
+        k = min(100, G.number_of_nodes()) if G.number_of_nodes() > 1000 else None
+        betweenness = nx.betweenness_centrality(G, k=k)
         # Top bridge nodes that are NOT file-level hubs
         bridges = sorted(
             [(n, s) for n, s in betweenness.items()
