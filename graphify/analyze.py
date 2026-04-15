@@ -51,7 +51,7 @@ def god_nodes(G: nx.Graph, top_n: int = 10) -> list[dict]:
         result.append({
             "id": node_id,
             "label": G.nodes[node_id].get("label", node_id),
-            "edges": deg,
+            "degree": deg,
         })
         if len(result) >= top_n:
             break

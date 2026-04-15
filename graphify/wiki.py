@@ -154,7 +154,7 @@ def _index_md(
     if god_nodes_data:
         lines += ["## God Nodes", "(most connected concepts — the load-bearing abstractions)", ""]
         for node in god_nodes_data:
-            lines.append(f"- [[{node['label']}]] — {node['edges']} connections")
+            lines.append(f"- [[{node['label']}]] — {node['degree']} connections")
         lines.append("")
 
     lines += [
