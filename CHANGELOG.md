@@ -2,6 +2,12 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.4.16 (2026-04-16)
+
+- Fix: graphify watch crashed on all platforms with NameError because import sys was missing from watch.py (#386, #394)
+- Fix: .mjs files were detected but produced 0 nodes — added .mjs to the AST extractor dispatch table (#387)
+- Fix: llm.py excluded from the published wheel (local benchmarking file, not part of the public API) (#391)
+
 ## 0.4.15 (2026-04-15)
 
 - Feat: VS Code Copilot Chat support — `graphify vscode install` installs a Python-only skill (works on Windows PowerShell) and writes `.github/copilot-instructions.md` for always-on graph context (#206)

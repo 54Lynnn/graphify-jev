@@ -3063,6 +3063,7 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
         ".py": extract_python,
         ".js": extract_js,
         ".jsx": extract_js,
+        ".mjs": extract_js,
         ".ts": extract_js,
         ".tsx": extract_js,
         ".go": extract_go,
