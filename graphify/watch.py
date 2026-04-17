@@ -17,6 +17,7 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
 
     Returns True on success, False on error.
     """
+    watch_path = watch_path.resolve()
     try:
         from graphify.extract import extract
         from graphify.detect import detect

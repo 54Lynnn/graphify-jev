@@ -1,6 +1,7 @@
 # git hook integration - install/uninstall graphify post-commit and post-checkout hooks
 from __future__ import annotations
 import re
+import subprocess
 from pathlib import Path
 
 _HOOK_MARKER = "# graphify-hook-start"
@@ -117,6 +118,28 @@ def _git_root(path: Path) -> Path | None:
     return None
 
 
+def _hooks_dir(root: Path) -> Path:
+    """Return the git hooks directory, respecting core.hooksPath if set (e.g. Husky)."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "config", "core.hooksPath"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            custom = result.stdout.strip()
+            if custom:
+                p = Path(custom)
+                if not p.is_absolute():
+                    p = root / p
+                p.mkdir(parents=True, exist_ok=True)
+                return p
+    except (OSError, FileNotFoundError):
+        pass
+    d = root / ".git" / "hooks"
+    d.mkdir(exist_ok=True)
+    return d
+
+
 def _install_hook(hooks_dir: Path, name: str, script: str, marker: str) -> str:
     """Install a single git hook, appending if an existing hook is present."""
     hook_path = hooks_dir / name
@@ -158,8 +181,7 @@ def install(path: Path = Path(".")) -> str:
     if root is None:
         raise RuntimeError(f"No git repository found at or above {path.resolve()}")
 
-    hooks_dir = root / ".git" / "hooks"
-    hooks_dir.mkdir(exist_ok=True)
+    hooks_dir = _hooks_dir(root)
 
     commit_msg = _install_hook(hooks_dir, "post-commit", _HOOK_SCRIPT, _HOOK_MARKER)
     checkout_msg = _install_hook(hooks_dir, "post-checkout", _CHECKOUT_SCRIPT, _CHECKOUT_MARKER)
@@ -173,7 +195,7 @@ def uninstall(path: Path = Path(".")) -> str:
     if root is None:
         raise RuntimeError(f"No git repository found at or above {path.resolve()}")
 
-    hooks_dir = root / ".git" / "hooks"
+    hooks_dir = _hooks_dir(root)
     commit_msg = _uninstall_hook(hooks_dir, "post-commit", _HOOK_MARKER, _HOOK_MARKER_END)
     checkout_msg = _uninstall_hook(hooks_dir, "post-checkout", _CHECKOUT_MARKER, _CHECKOUT_MARKER_END)
 
@@ -185,7 +207,7 @@ def status(path: Path = Path(".")) -> str:
     root = _git_root(path)
     if root is None:
         return "Not in a git repository."
-    hooks_dir = root / ".git" / "hooks"
+    hooks_dir = _hooks_dir(root)
 
     def _check(name: str, marker: str) -> str:
         p = hooks_dir / name
