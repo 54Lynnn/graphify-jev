@@ -20,7 +20,7 @@ Fully multimodal. Drop in code, PDFs, markdown, screenshots, diagrams, whiteboar
 
 ```
 graphify-out/
-├── graph.html       interactive graph - click nodes, search, filter by community
+├── graph.html       interactive graph - open in any browser, click nodes, search, filter by community
 ├── GRAPH_REPORT.md  god nodes, surprising connections, suggested questions
 ├── graph.json       persistent graph - query weeks later without re-reading
 └── cache/           SHA256 cache - re-runs only process changed files
