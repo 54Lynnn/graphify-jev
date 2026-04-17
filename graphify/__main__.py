@@ -1308,7 +1308,8 @@ def main() -> None:
         questions = suggest_questions(G, communities, labels)
         tokens = {"input": 0, "output": 0}
         report = generate(G, communities, cohesion, labels, gods, surprises,
-                          {}, tokens, str(watch_path), suggested_questions=questions)
+                          {"warning": "cluster-only mode — file stats not available"},
+                          tokens, str(watch_path), suggested_questions=questions)
         out = watch_path / "graphify-out"
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
         to_json(G, communities, str(out / "graph.json"))
