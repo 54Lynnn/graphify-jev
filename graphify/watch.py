@@ -25,7 +25,7 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
         from graphify.cluster import cluster, score_all
         from graphify.analyze import god_nodes, surprising_connections, suggest_questions
         from graphify.report import generate
-        from graphify.export import to_json
+        from graphify.export import to_json, to_html
 
         detected = detect(watch_path, follow_symlinks=follow_symlinks)
         code_files = [Path(f) for f in detected['files']['code']]
@@ -78,6 +78,7 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
                           {"input": 0, "output": 0}, str(watch_path), suggested_questions=questions)
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
         to_json(G, communities, str(out / "graph.json"))
+        to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
 
         # clear stale needs_update flag if present
         flag = out / "needs_update"
@@ -86,7 +87,7 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
 
         print(f"[graphify watch] Rebuilt: {G.number_of_nodes()} nodes, "
               f"{G.number_of_edges()} edges, {len(communities)} communities")
-        print(f"[graphify watch] graph.json and GRAPH_REPORT.md updated in {out}")
+        print(f"[graphify watch] graph.json, graph.html and GRAPH_REPORT.md updated in {out}")
         return True
 
     except Exception as exc:

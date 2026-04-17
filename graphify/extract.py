@@ -147,7 +147,8 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                 break
             if raw.startswith("."):
                 # Relative import - resolve to full path so IDs match file node IDs
-                resolved = Path(str_path).parent / raw
+                # normpath removes ".." segments so the ID matches the target file's own node ID
+                resolved = Path(os.path.normpath(Path(str_path).parent / raw))
                 # TypeScript ESM: imports written as .js but actual file is .ts/.tsx
                 if resolved.suffix == ".js":
                     resolved = resolved.with_suffix(".ts")
