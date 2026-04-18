@@ -1947,15 +1947,15 @@ def extract_go(path: Path) -> dict:
                             path_node = spec.child_by_field_name("path")
                             if path_node:
                                 raw = _read_text(path_node, source).strip('"')
-                                module_name = raw.split("/")[-1]
-                                tgt_nid = _make_id(module_name)
+                                # Prefix with go_pkg_ so stdlib names (e.g. "context")
+                                # don't collide with local files of the same basename.
+                                tgt_nid = _make_id("go", "pkg", raw)
                                 add_edge(file_nid, tgt_nid, "imports_from", spec.start_point[0] + 1)
                 elif child.type == "import_spec":
                     path_node = child.child_by_field_name("path")
                     if path_node:
                         raw = _read_text(path_node, source).strip('"')
-                        module_name = raw.split("/")[-1]
-                        tgt_nid = _make_id(module_name)
+                        tgt_nid = _make_id("go", "pkg", raw)
                         add_edge(file_nid, tgt_nid, "imports_from", child.start_point[0] + 1)
             return
 

@@ -78,7 +78,18 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
                           {"input": 0, "output": 0}, str(watch_path), suggested_questions=questions)
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
         to_json(G, communities, str(out / "graph.json"))
-        to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
+
+        # to_html raises ValueError for graphs > MAX_NODES_FOR_VIZ (5000).
+        # Wrap so core outputs (graph.json + GRAPH_REPORT.md) always land.
+        html_written = False
+        try:
+            to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
+            html_written = True
+        except ValueError as viz_err:
+            print(f"[graphify watch] Skipped graph.html: {viz_err}")
+            stale = out / "graph.html"
+            if stale.exists():
+                stale.unlink()
 
         # clear stale needs_update flag if present
         flag = out / "needs_update"
@@ -87,7 +98,8 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
 
         print(f"[graphify watch] Rebuilt: {G.number_of_nodes()} nodes, "
               f"{G.number_of_edges()} edges, {len(communities)} communities")
-        print(f"[graphify watch] graph.json, graph.html and GRAPH_REPORT.md updated in {out}")
+        products = "graph.json" + (", graph.html" if html_written else "") + " and GRAPH_REPORT.md"
+        print(f"[graphify watch] {products} updated in {out}")
         return True
 
     except Exception as exc:
