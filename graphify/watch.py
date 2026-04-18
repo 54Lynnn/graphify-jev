@@ -34,7 +34,7 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
             print("[graphify watch] No code files found - nothing to rebuild.")
             return False
 
-        result = extract(code_files)
+        result = extract(code_files, cache_root=watch_path)
 
         # Preserve semantic nodes/edges from a previous full run.
         # AST-only rebuild replaces code nodes; doc/paper/image nodes are kept.
