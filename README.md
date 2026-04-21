@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.ja-JP.md">日本語</a> | <a href="README.ko-KR.md">한국어</a>
+  <a href="README.md">English</a> | <a href="README.zh-CN.md">简体中文</a> | <a href="README.ja-JP.md">日本語</a> | <a href="README.ko-KR.md">한국어</a> | <a href="README.de-DE.md">Deutsch</a> | <a href="README.fr-FR.md">Français</a> | <a href="README.es-ES.md">Español</a> | <a href="README.hi-IN.md">हिन्दी</a> | <a href="README.pt-BR.md">Português</a> | <a href="README.ru-RU.md">Русский</a> | <a href="README.ar-SA.md">العربية</a>
 </p>
 
 <p align="center">
@@ -136,7 +136,7 @@ After building a graph, run this once in your project:
 
 **Kiro IDE/CLI** writes the skill to `.kiro/skills/graphify/SKILL.md` (invoked via `/graphify`) and a steering file to `.kiro/steering/graphify.md` with `inclusion: always` — Kiro injects this into every conversation automatically, no hook needed.
 
-**Google Antigravity** writes `.agent/rules/graphify.md` (always-on rules) and `.agent/workflows/graphify.md` (registers `/graphify` as a slash command). No hook equivalent exists in Antigravity — rules are the always-on mechanism.
+**Google Antigravity** writes `.agents/rules/graphify.md` (always-on rules) and `.agents/workflows/graphify.md` (registers `/graphify` as a slash command). No hook equivalent exists in Antigravity — rules are the always-on mechanism.
 
 **GitHub Copilot CLI** copies the skill to `~/.copilot/skills/graphify/SKILL.md`. Run `graphify copilot install` to set it up.
 
@@ -294,7 +294,7 @@ graphify hermes install             # AGENTS.md + ~/.hermes/skills/ (Hermes)
 graphify hermes uninstall
 graphify kiro install               # .kiro/skills/ + .kiro/steering/graphify.md (Kiro IDE/CLI)
 graphify kiro uninstall
-graphify antigravity install       # .agent/rules + .agent/workflows (Google Antigravity)
+graphify antigravity install       # .agents/rules + .agents/workflows (Google Antigravity)
 graphify antigravity uninstall
 
 # query and navigate the graph directly from the terminal (no AI assistant needed)
