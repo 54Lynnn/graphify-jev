@@ -75,8 +75,15 @@ def save_cached(path: Path, result: dict, root: Path = Path(".")) -> None:
 
     Stores as graphify-out/cache/{hash}.json where hash = SHA256 of current file contents.
     result should be a dict with 'nodes' and 'edges' lists.
+
+    No-ops if `path` is not a regular file. Subagent-produced semantic fragments
+    occasionally carry a directory path in `source_file`; skipping them prevents
+    IsADirectoryError from aborting the whole batch.
     """
-    h = file_hash(path, root)
+    p = Path(path)
+    if not p.is_file():
+        return
+    h = file_hash(p, root)
     entry = cache_dir(root) / f"{h}.json"
     tmp = entry.with_suffix(".tmp")
     try:
