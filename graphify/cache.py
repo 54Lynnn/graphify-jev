@@ -28,6 +28,8 @@ def file_hash(path: Path, root: Path = Path(".")) -> str:
     so metadata-only changes (e.g. reviewed, status, tags) do not invalidate the cache.
     """
     p = Path(path)
+    if not p.is_file():
+        raise IsADirectoryError(f"file_hash requires a file, got: {p}")
     raw = p.read_bytes()
     content = _body_content(raw) if p.suffix.lower() == ".md" else raw
     h = hashlib.sha256()
@@ -163,7 +165,7 @@ def save_semantic_cache(
         p = Path(fpath)
         if not p.is_absolute():
             p = Path(root) / p
-        if p.exists():
+        if p.is_file():
             save_cached(p, result, root)
             saved += 1
     return saved
