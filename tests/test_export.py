@@ -127,6 +127,17 @@ def test_to_html_contains_nodes_and_edges():
         assert "RAW_EDGES" in content
 
 
+def test_to_html_member_counts_accepted():
+    """to_html accepts member_counts without raising."""
+    G = make_graph()
+    communities = cluster(G)
+    member_counts = {cid: len(members) for cid, members in communities.items()}
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "graph.html"
+        to_html(G, communities, str(out), member_counts=member_counts)
+        assert out.exists()
+
+
 def test_to_canvas_file_paths_relative_to_vault():
     """Node file paths in canvas must be vault-root-relative (just fname.md), not hardcoded."""
     G = make_graph()
