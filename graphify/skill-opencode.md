@@ -72,6 +72,8 @@ fi
 # Write interpreter path for all subsequent steps
 mkdir -p graphify-out
 "$PYTHON" -c "import sys; open('graphify-out/.graphify_python', 'w').write(sys.executable)"
+# Force UTF-8 I/O on Windows (prevents garbled CJK/non-ASCII output)
+export PYTHONUTF8=1
 ```
 
 If the import succeeds, print nothing and move straight to Step 2.
