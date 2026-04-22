@@ -164,8 +164,10 @@ Think of it this way: the always-on hook gives your assistant a map. The `/graph
 
 **Recommended `.gitignore` additions:**
 ```
-# commit graph outputs, ignore the extraction cache
-graphify-out/cache/
+# keep graph outputs, skip heavy/local-only files
+graphify-out/cache/            # optional: commit for shared extraction speed, skip to keep repo small
+graphify-out/manifest.json     # mtime-based, invalid after git clone — always gitignore this
+graphify-out/cost.json         # local token tracking, not useful to share
 ```
 
 **Shared setup:**
@@ -175,6 +177,16 @@ graphify-out/cache/
 4. For doc/paper changes, whoever edits the files runs `/graphify --update` to refresh semantic nodes.
 
 **Excluding paths** — create `.graphifyignore` in your project root (same syntax as `.gitignore`). Files matching those patterns are skipped during detection and extraction.
+
+```
+# .graphifyignore example
+AGENTS.md          # graphify install files — don't extract your own instructions as knowledge
+CLAUDE.md
+GEMINI.md
+.gemini/
+.opencode/
+docs/translations/ # generated content you don't want in the graph
+```
 
 ## Using `graph.json` with an LLM
 

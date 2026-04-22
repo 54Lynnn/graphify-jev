@@ -334,6 +334,7 @@ def _is_ignored(path: Path, root: Path, patterns: list[tuple[Path, str]]) -> boo
 
 
 def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
+    root = root.resolve()
     files: dict[FileType, list[str]] = {
         FileType.CODE: [],
         FileType.DOCUMENT: [],
