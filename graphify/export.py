@@ -831,7 +831,7 @@ def to_canvas(
             canvas_nodes.append({
                 "id": f"n_{node_id}",
                 "type": "file",
-                "file": f"graphify/obsidian/{fname}.md",
+                "file": f"{fname}.md",
                 "x": nx_x,
                 "y": nx_y,
                 "width": 180,
