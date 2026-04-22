@@ -643,7 +643,7 @@ export const GraphifyPlugin = async ({ directory }) => {
 """
 
 _OPENCODE_PLUGIN_PATH = Path(".opencode") / "plugins" / "graphify.js"
-_OPENCODE_CONFIG_PATH = Path("opencode.json")
+_OPENCODE_CONFIG_PATH = Path(".opencode") / "opencode.json"
 
 
 def _install_opencode_plugin(project_dir: Path) -> None:
