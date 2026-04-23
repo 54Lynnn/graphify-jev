@@ -24,6 +24,10 @@ def _confidences(result):
     return {e["confidence"] for e in result["edges"]}
 
 
+def _edges_with_relation(result, *relations):
+    return [e for e in result["edges"] if e["relation"] in relations]
+
+
 # ── TypeScript ────────────────────────────────────────────────────────────────
 
 def test_ts_finds_class():
@@ -52,6 +56,20 @@ def test_ts_calls_are_extracted():
     for e in r["edges"]:
         if e["relation"] == "calls":
             assert e["confidence"] == "EXTRACTED"
+
+
+def test_ts_import_edges_have_import_context():
+    r = extract_js(FIXTURES / "sample.ts")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
+
+
+def test_ts_call_edges_have_call_context():
+    r = extract_js(FIXTURES / "sample.ts")
+    call_edges = _edges_with_relation(r, "calls")
+    assert call_edges
+    assert all(e.get("context") == "call" for e in call_edges)
 
 def test_ts_no_dangling_edges():
     r = extract_js(FIXTURES / "sample.ts")
@@ -86,6 +104,20 @@ def test_go_emits_calls():
 def test_go_has_extracted_calls():
     r = extract_go(FIXTURES / "sample.go")
     assert "EXTRACTED" in _confidences(r)
+
+
+def test_go_import_edges_have_import_context():
+    r = extract_go(FIXTURES / "sample.go")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
+
+
+def test_go_call_edges_have_call_context():
+    r = extract_go(FIXTURES / "sample.go")
+    call_edges = _edges_with_relation(r, "calls")
+    assert call_edges
+    assert all(e.get("context") == "call" for e in call_edges)
 
 def test_go_no_dangling_edges():
     r = extract_go(FIXTURES / "sample.go")
@@ -122,6 +154,20 @@ def test_rust_calls_are_extracted():
     for e in r["edges"]:
         if e["relation"] == "calls":
             assert e["confidence"] == "EXTRACTED"
+
+
+def test_rust_import_edges_have_import_context():
+    r = extract_rust(FIXTURES / "sample.rs")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
+
+
+def test_rust_call_edges_have_call_context():
+    r = extract_rust(FIXTURES / "sample.rs")
+    call_edges = _edges_with_relation(r, "calls")
+    assert call_edges
+    assert all(e.get("context") == "call" for e in call_edges)
 
 def test_rust_no_dangling_edges():
     r = extract_rust(FIXTURES / "sample.rs")
