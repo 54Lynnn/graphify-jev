@@ -15,6 +15,7 @@ Turn any folder of files into a navigable knowledge graph with community detecti
 /graphify <path>                                      # full pipeline on specific path
 /graphify https://github.com/<owner>/<repo>           # clone repo then run full pipeline on it
 /graphify https://github.com/<owner>/<repo> --branch <branch>  # clone a specific branch
+/graphify <url1> <url2> ...                           # clone multiple repos, build each, merge into one cross-repo graph
 /graphify <path> --mode deep                          # thorough extraction, richer INFERRED edges
 /graphify <path> --update                             # incremental - re-extract only new/changed files
 /graphify <path> --directed                            # build directed graph (preserves edge direction: source→target)
@@ -63,15 +64,28 @@ If the path argument starts with `https://github.com/` or `http://github.com/`, 
 
 Follow these steps in order. Do not skip steps.
 
-### Step 0 - Clone GitHub repo (only if a GitHub URL was given)
+### Step 0 - Clone GitHub repo(s) (only if a GitHub URL was given)
 
+**Single repo:**
 ```bash
-# Clone the repo (or pull if already cloned) and capture the local path
 LOCAL_PATH=$(graphify clone <github-url> [--branch <branch>])
 # Use LOCAL_PATH as the target for all subsequent steps
 ```
 
-Graphify clones into `~/.graphify/repos/<owner>/<repo>` so repeated calls on the same URL reuse the existing clone. Print the resolved path to the user before continuing. If `--branch` was specified, pass it through.
+**Multiple repos (cross-repo graph):**
+```bash
+# Clone each repo, run the full pipeline on each, then merge
+graphify clone <url1>   # → ~/.graphify/repos/<owner1>/<repo1>
+graphify clone <url2>   # → ~/.graphify/repos/<owner2>/<repo2>
+# Run /graphify on each local path to produce their graph.json files
+# Then merge:
+graphify merge-graphs \
+  ~/.graphify/repos/<owner1>/<repo1>/graphify-out/graph.json \
+  ~/.graphify/repos/<owner2>/<repo2>/graphify-out/graph.json \
+  --out graphify-out/cross-repo-graph.json
+```
+
+Graphify clones into `~/.graphify/repos/<owner>/<repo>` and reuses existing clones on repeat runs. Each node in the merged graph carries a `repo` attribute so you can filter by origin.
 
 ### Step 1 - Ensure graphify is installed
 

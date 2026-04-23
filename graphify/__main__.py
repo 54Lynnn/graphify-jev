@@ -148,7 +148,12 @@ def install(platform: str = "claude") -> None:
         print(f"error: {cfg['skill_file']} not found in package - reinstall graphify", file=sys.stderr)
         sys.exit(1)
 
-    skill_dst = Path.home() / cfg["skill_dst"]
+    import os as _os
+    if platform in ("claude", "windows") and _os.environ.get("CLAUDE_CONFIG_DIR"):
+        _claude_base = Path(_os.environ["CLAUDE_CONFIG_DIR"])
+        skill_dst = _claude_base / "skills" / "graphify" / "SKILL.md"
+    else:
+        skill_dst = Path.home() / cfg["skill_dst"]
     skill_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(skill_src, skill_dst)
     (skill_dst.parent / ".graphify_version").write_text(__version__, encoding="utf-8")
@@ -977,6 +982,8 @@ def main() -> None:
         print("  explain \"X\"             plain-language explanation of a node and its neighbors")
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
         print("  clone <github-url>      clone a GitHub repo locally and print its path for /graphify")
+        print("  merge-graphs <g1> <g2>  merge two or more graph.json files into one cross-repo graph")
+        print("    --out <path>            output path (default: graphify-out/merged-graph.json)")
         print("    --branch <branch>       checkout a specific branch (default: repo default)")
         print("    --out <dir>             clone to a custom directory (default: ~/.graphify/repos/<owner>/<repo>)")
         print("  add <url>               fetch a URL and save it to ./raw, then update the graph")
@@ -1415,6 +1422,47 @@ def main() -> None:
         from graphify.watch import check_update
         check_update(Path(sys.argv[2]).resolve())
         sys.exit(0)
+    elif cmd == "merge-graphs":
+        # graphify merge-graphs graph1.json graph2.json ... --out merged.json
+        args = sys.argv[2:]
+        graph_paths: list[Path] = []
+        out_path = Path("graphify-out/merged-graph.json")
+        i = 0
+        while i < len(args):
+            if args[i] == "--out" and i + 1 < len(args):
+                out_path = Path(args[i + 1]); i += 2
+            else:
+                graph_paths.append(Path(args[i])); i += 1
+        if len(graph_paths) < 2:
+            print("Usage: graphify merge-graphs <graph1.json> <graph2.json> [...] [--out merged.json]", file=sys.stderr)
+            sys.exit(1)
+        import networkx as _nx
+        from networkx.readwrite import json_graph as _jg
+        graphs = []
+        for gp in graph_paths:
+            if not gp.exists():
+                print(f"error: not found: {gp}", file=sys.stderr)
+                sys.exit(1)
+            data = json.loads(gp.read_text(encoding="utf-8"))
+            try:
+                G = _jg.node_link_graph(data, edges="links")
+            except TypeError:
+                G = _jg.node_link_graph(data)
+            # Tag every node with which repo it came from
+            repo_tag = gp.parent.parent.name  # graphify-out/../ → repo dir name
+            for node in G.nodes:
+                G.nodes[node].setdefault("repo", repo_tag)
+            graphs.append(G)
+        merged = _nx.compose_all(graphs)
+        try:
+            out_data = _jg.node_link_data(merged, edges="links")
+        except TypeError:
+            out_data = _jg.node_link_data(merged)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(json.dumps(out_data, indent=2), encoding="utf-8")
+        print(f"Merged {len(graphs)} graphs → {merged.number_of_nodes()} nodes, {merged.number_of_edges()} edges")
+        print(f"Written to: {out_path}")
+
     elif cmd == "clone":
         if len(sys.argv) < 3:
             print("Usage: graphify clone <github-url> [--branch <branch>] [--out <dir>]", file=sys.stderr)
