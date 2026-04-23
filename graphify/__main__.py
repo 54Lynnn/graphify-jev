@@ -906,6 +906,59 @@ def claude_uninstall(project_dir: Path | None = None) -> None:
     _uninstall_claude_hook(project_dir or Path("."))
 
 
+def _clone_repo(url: str, branch: str | None = None, out_dir: Path | None = None) -> Path:
+    """Clone a GitHub repo to a local cache dir and return the path.
+
+    Clones into ~/.graphify/repos/<owner>/<repo> by default so repeated
+    runs on the same URL reuse the existing clone (git pull instead of clone).
+    """
+    import subprocess as _sp
+    import re as _re
+
+    # Normalise URL — strip trailing .git if present
+    url = url.rstrip("/")
+    if not url.endswith(".git"):
+        git_url = url + ".git"
+    else:
+        git_url = url
+        url = url[:-4]
+
+    # Extract owner/repo from URL
+    m = _re.search(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?$", url)
+    if not m:
+        print(f"error: not a recognised GitHub URL: {url}", file=sys.stderr)
+        sys.exit(1)
+    owner, repo = m.group(1), m.group(2)
+
+    if out_dir:
+        dest = out_dir
+    else:
+        dest = Path.home() / ".graphify" / "repos" / owner / repo
+
+    if dest.exists():
+        print(f"Repo already cloned at {dest} — pulling latest...", flush=True)
+        cmd = ["git", "-C", str(dest), "pull"]
+        if branch:
+            cmd += ["origin", branch]
+        result = _sp.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"warning: git pull failed:\n{result.stderr}", file=sys.stderr)
+    else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        print(f"Cloning {url} → {dest} ...", flush=True)
+        cmd = ["git", "clone", "--depth", "1"]
+        if branch:
+            cmd += ["--branch", branch]
+        cmd += [git_url, str(dest)]
+        result = _sp.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"error: git clone failed:\n{result.stderr}", file=sys.stderr)
+            sys.exit(1)
+
+    print(f"Ready at: {dest}", flush=True)
+    return dest
+
+
 def main() -> None:
     # Check all known skill install locations for a stale version stamp.
     # Skip during install/uninstall (hook writes trigger a fresh check anyway).
@@ -923,6 +976,9 @@ def main() -> None:
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
         print("  explain \"X\"             plain-language explanation of a node and its neighbors")
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
+        print("  clone <github-url>      clone a GitHub repo locally and print its path for /graphify")
+        print("    --branch <branch>       checkout a specific branch (default: repo default)")
+        print("    --out <dir>             clone to a custom directory (default: ~/.graphify/repos/<owner>/<repo>)")
         print("  add <url>               fetch a URL and save it to ./raw, then update the graph")
         print("    --author \"Name\"         tag the author of the content")
         print("    --contributor \"Name\"    tag who added it to the corpus")
@@ -1359,6 +1415,25 @@ def main() -> None:
         from graphify.watch import check_update
         check_update(Path(sys.argv[2]).resolve())
         sys.exit(0)
+    elif cmd == "clone":
+        if len(sys.argv) < 3:
+            print("Usage: graphify clone <github-url> [--branch <branch>] [--out <dir>]", file=sys.stderr)
+            sys.exit(1)
+        url = sys.argv[2]
+        branch: str | None = None
+        out_dir: Path | None = None
+        args = sys.argv[3:]
+        i = 0
+        while i < len(args):
+            if args[i] == "--branch" and i + 1 < len(args):
+                branch = args[i + 1]; i += 2
+            elif args[i] == "--out" and i + 1 < len(args):
+                out_dir = Path(args[i + 1]); i += 2
+            else:
+                i += 1
+        local_path = _clone_repo(url, branch=branch, out_dir=out_dir)
+        print(local_path)
+
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark
         graph_path = sys.argv[2] if len(sys.argv) > 2 else "graphify-out/graph.json"

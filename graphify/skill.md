@@ -13,6 +13,8 @@ Turn any folder of files into a navigable knowledge graph with community detecti
 ```
 /graphify                                             # full pipeline on current directory → Obsidian vault
 /graphify <path>                                      # full pipeline on specific path
+/graphify https://github.com/<owner>/<repo>           # clone repo then run full pipeline on it
+/graphify https://github.com/<owner>/<repo> --branch <branch>  # clone a specific branch
 /graphify <path> --mode deep                          # thorough extraction, richer INFERRED edges
 /graphify <path> --update                             # incremental - re-extract only new/changed files
 /graphify <path> --directed                            # build directed graph (preserves edge direction: source→target)
@@ -57,7 +59,19 @@ Use it for:
 
 If no path was given, use `.` (current directory). Do not ask the user for a path.
 
+If the path argument starts with `https://github.com/` or `http://github.com/`, treat it as a GitHub URL — run Step 0 before anything else, then continue with the resolved local path.
+
 Follow these steps in order. Do not skip steps.
+
+### Step 0 - Clone GitHub repo (only if a GitHub URL was given)
+
+```bash
+# Clone the repo (or pull if already cloned) and capture the local path
+LOCAL_PATH=$(graphify clone <github-url> [--branch <branch>])
+# Use LOCAL_PATH as the target for all subsequent steps
+```
+
+Graphify clones into `~/.graphify/repos/<owner>/<repo>` so repeated calls on the same URL reuse the existing clone. Print the resolved path to the user before continuing. If `--branch` was specified, pass it through.
 
 ### Step 1 - Ensure graphify is installed
 
