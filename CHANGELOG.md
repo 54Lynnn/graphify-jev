@@ -2,6 +2,21 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased — `graphify tree` subcommand
+
+- **New:** `graphify tree` — emits a self-contained D3 v7 collapsible-tree HTML
+  view of `graph.json`.  Expand-all / collapse-all / reset-view buttons;
+  multi-line `wrapText` labels with separately-coloured name + count;
+  depth-based colour palette; click-to-toggle subtree; hover inspector
+  showing top-K outbound edges per symbol.
+- Hierarchy is built from `source_file` longest-common-prefix; symbols are
+  grouped by their containing module so the tree mirrors the on-disk layout.
+- Configuration: `--graph PATH`, `--output HTML`, `--root PATH`,
+  `--max-children N` (default 200), `--top-k-edges N` (default 12),
+  `--label NAME`.
+- Implementation: `graphify/tree_html.py` (575 LOC, no external runtime
+  dependencies — D3 v7 is loaded from cdn.jsdelivr.net).
+
 ## 0.4.23 (2026-04-18)
 
 - Fix: stale skill version warning persists after running `graphify install` when multiple platforms were previously installed — `graphify install` now refreshes `.graphify_version` in all other known skill directories so the warning clears across the board (#178)
