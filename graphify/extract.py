@@ -18,6 +18,48 @@ def _make_id(*parts: str) -> str:
     return cleaned.strip("_").lower()
 
 
+def _file_stem(path: Path) -> str:
+    """Return a stem qualified with the parent directory name to avoid ID collisions
+    when multiple files share the same filename in different directories (#550)."""
+    parent = path.parent.name
+    if parent and parent not in (".", ""):
+        return f"{parent}.{path.stem}"
+    return path.stem
+
+
+_TSCONFIG_ALIAS_CACHE: dict[str, dict[str, str]] = {}
+
+
+def _load_tsconfig_aliases(start_dir: Path) -> dict[str, str]:
+    """Walk up from start_dir to find tsconfig.json and return compilerOptions.paths aliases.
+
+    Returns a dict mapping alias prefix (e.g. "@/") to resolved base dir (e.g. "src/").
+    Result is cached by tsconfig path string.
+    """
+    current = start_dir.resolve()
+    for candidate in [current, *current.parents]:
+        tsconfig = candidate / "tsconfig.json"
+        if tsconfig.exists():
+            key = str(tsconfig)
+            if key not in _TSCONFIG_ALIAS_CACHE:
+                try:
+                    data = json.loads(tsconfig.read_text(encoding="utf-8"))
+                    paths = data.get("compilerOptions", {}).get("paths", {})
+                    aliases: dict[str, str] = {}
+                    for alias, targets in paths.items():
+                        if not targets:
+                            continue
+                        # Strip trailing /* from alias and target
+                        alias_prefix = alias.rstrip("/*")
+                        target_base = targets[0].rstrip("/*")
+                        aliases[alias_prefix] = str(candidate / target_base)
+                    _TSCONFIG_ALIAS_CACHE[key] = aliases
+                except Exception:
+                    _TSCONFIG_ALIAS_CACHE[key] = {}
+            return _TSCONFIG_ALIAS_CACHE[key]
+    return {}
+
+
 # ── LanguageConfig dataclass ─────────────────────────────────────────────────
 
 @dataclass
@@ -156,11 +198,22 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                     resolved = resolved.with_suffix(".tsx")
                 tgt_nid = _make_id(str(resolved))
             else:
-                # Bare/scoped import (node_modules) - use last segment; dropped as external
-                module_name = raw.split("/")[-1]
-                if not module_name:
-                    break
-                tgt_nid = _make_id(module_name)
+                # Check tsconfig.json path aliases (e.g. "@/" → "src/") before treating as external (#575)
+                aliases = _load_tsconfig_aliases(Path(str_path).parent)
+                resolved_alias = None
+                for alias_prefix, alias_base in aliases.items():
+                    if raw == alias_prefix or raw.startswith(alias_prefix + "/"):
+                        rest = raw[len(alias_prefix):].lstrip("/")
+                        resolved_alias = Path(os.path.normpath(Path(alias_base) / rest))
+                        break
+                if resolved_alias is not None:
+                    tgt_nid = _make_id(str(resolved_alias))
+                else:
+                    # Bare/scoped import (node_modules) - use last segment; dropped as external
+                    module_name = raw.split("/")[-1]
+                    if not module_name:
+                        break
+                    tgt_nid = _make_id(module_name)
             edges.append({
                 "source": file_nid,
                 "target": tgt_nid,
@@ -676,7 +729,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -1301,7 +1354,7 @@ def _extract_python_rationale(path: Path, result: dict) -> None:
     except Exception:
         return
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes = result["nodes"]
     edges = result["edges"]
@@ -1560,7 +1613,7 @@ def extract_verilog(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -1676,7 +1729,7 @@ def extract_julia(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -1888,7 +1941,7 @@ def extract_go(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     # Use directory name as package scope so methods on the same type across
     # multiple files in a package share one canonical type node.
     pkg_scope = path.parent.name or stem
@@ -2087,7 +2140,7 @@ def extract_rust(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -2264,7 +2317,7 @@ def extract_zig(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -2427,7 +2480,7 @@ def extract_powershell(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -2621,7 +2674,7 @@ def _resolve_cross_file_imports(
     stem_to_path: dict[str, Path] = {p.stem: p for p in paths}
 
     for file_result, path in zip(per_file, paths):
-        stem = path.stem
+        stem = _file_stem(path)
         str_path = str(path)
 
         # Find all classes defined in this file (the importers)
@@ -2745,7 +2798,7 @@ def _resolve_cross_file_java_imports(
     new_edges: list[dict] = []
     seen_pairs: set[tuple[str, str]] = set()
     for path in paths:
-        file_nid = _make_id(path.stem)
+        file_nid = _make_id(str(path))
         try:
             source = path.read_bytes()
             tree = parser.parse(source)
@@ -2809,7 +2862,7 @@ def extract_objc(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -3007,7 +3060,7 @@ def extract_elixir(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -3372,6 +3425,19 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
                     "source_location": rc.get("source_location"),
                     "weight": 1.0,
                 })
+
+    # Relativize source_file fields so paths are portable across machines (#555)
+    for item in all_nodes + all_edges:
+        sf = item.get("source_file")
+        if not sf:
+            continue
+        sf_path = Path(sf)
+        if not sf_path.is_absolute():
+            continue
+        try:
+            item["source_file"] = str(sf_path.relative_to(root))
+        except ValueError:
+            pass
 
     return {
         "nodes": all_nodes,

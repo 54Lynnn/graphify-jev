@@ -99,10 +99,13 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
 
         out.mkdir(exist_ok=True)
 
+        json_written = to_json(G, communities, str(out / "graph.json"))
+        if not json_written:
+            return False
+
         report = generate(G, communities, cohesion, labels, gods, surprises, detection,
                           {"input": 0, "output": 0}, report_root, suggested_questions=questions)
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
-        to_json(G, communities, str(out / "graph.json"))
 
         # to_html raises ValueError for graphs > MAX_NODES_FOR_VIZ (5000).
         # Wrap so core outputs (graph.json + GRAPH_REPORT.md) always land.
