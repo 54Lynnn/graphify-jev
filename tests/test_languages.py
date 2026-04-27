@@ -607,3 +607,21 @@ def test_ts_no_dynamic_import_in_sync_fn():
         sync_imports = [e for e in r["edges"]
                         if e["source"] == sync_nid and e["relation"] == "imports_from"]
         assert len(sync_imports) == 0
+
+def test_ts_dynamic_template_literal_skipped():
+    """Dynamic template literals (with ${}) must not produce an imports_from edge."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    targets = {e["target"] for e in r["edges"] if e["relation"] == "imports_from"}
+    # loadHandler uses `./handlers/${handlerName}` — no static path, must be absent
+    assert not any("handler" in t.lower() and "$" in t for t in targets), \
+        f"Garbage edge from dynamic template literal found: {targets}"
+    # More robust: no target should contain a brace character
+    assert not any("{" in t or "}" in t for t in targets), \
+        f"Target contains unresolved template expression: {targets}"
+
+def test_ts_static_template_literal_resolved():
+    """Static template literals (no ${}) should resolve the same as a plain string."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    targets = {e["target"] for e in r["edges"] if e["relation"] == "imports_from"}
+    assert any("statichelper" in t.lower() for t in targets), \
+        f"Static template literal import not resolved: {targets}"

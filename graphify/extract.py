@@ -255,46 +255,53 @@ def _dynamic_import_js(node, source: bytes, caller_nid: str, str_path: str, edge
     if args is None:
         return True  # It's an import() but no args — skip
     for arg in args.children:
-        if arg.type in ("string", "template_string"):
-            raw = _read_text(arg, source).strip("'\"` ")
-            if not raw:
+        if arg.type == "template_string":
+            # Skip dynamic template literals — path can't be statically resolved
+            if any(c.type == "template_substitution" for c in arg.children):
                 break
-            # Resolve path using the same logic as static imports
-            if raw.startswith("."):
-                resolved = Path(os.path.normpath(Path(str_path).parent / raw))
-                if resolved.suffix == ".js":
-                    resolved = resolved.with_suffix(".ts")
-                elif resolved.suffix == ".jsx":
-                    resolved = resolved.with_suffix(".tsx")
-                tgt_nid = _make_id(str(resolved))
-            else:
-                aliases = _load_tsconfig_aliases(Path(str_path).parent)
-                resolved_alias = None
-                for alias_prefix, alias_base in aliases.items():
-                    if raw == alias_prefix or raw.startswith(alias_prefix + "/"):
-                        rest = raw[len(alias_prefix):].lstrip("/")
-                        resolved_alias = Path(os.path.normpath(Path(alias_base) / rest))
-                        break
-                if resolved_alias is not None:
-                    tgt_nid = _make_id(str(resolved_alias))
-                else:
-                    module_name = raw.split("/")[-1]
-                    if not module_name:
-                        break
-                    tgt_nid = _make_id(module_name)
-            pair = (caller_nid, tgt_nid)
-            if pair not in seen_dyn_pairs:
-                seen_dyn_pairs.add(pair)
-                edges.append({
-                    "source": caller_nid,
-                    "target": tgt_nid,
-                    "relation": "imports_from",
-                    "confidence": "EXTRACTED",
-                    "source_file": str_path,
-                    "source_location": f"L{node.start_point[0] + 1}",
-                    "weight": 1.0,
-                })
+            raw = _read_text(arg, source).strip("`")
+        elif arg.type == "string":
+            raw = _read_text(arg, source).strip("'\" ")
+        else:
+            continue
+        if not raw:
             break
+        # Resolve path using the same logic as static imports
+        if raw.startswith("."):
+            resolved = Path(os.path.normpath(Path(str_path).parent / raw))
+            if resolved.suffix == ".js":
+                resolved = resolved.with_suffix(".ts")
+            elif resolved.suffix == ".jsx":
+                resolved = resolved.with_suffix(".tsx")
+            tgt_nid = _make_id(str(resolved))
+        else:
+            aliases = _load_tsconfig_aliases(Path(str_path).parent)
+            resolved_alias = None
+            for alias_prefix, alias_base in aliases.items():
+                if raw == alias_prefix or raw.startswith(alias_prefix + "/"):
+                    rest = raw[len(alias_prefix):].lstrip("/")
+                    resolved_alias = Path(os.path.normpath(Path(alias_base) / rest))
+                    break
+            if resolved_alias is not None:
+                tgt_nid = _make_id(str(resolved_alias))
+            else:
+                module_name = raw.split("/")[-1]
+                if not module_name:
+                    break
+                tgt_nid = _make_id(module_name)
+        pair = (caller_nid, tgt_nid)
+        if pair not in seen_dyn_pairs:
+            seen_dyn_pairs.add(pair)
+            edges.append({
+                "source": caller_nid,
+                "target": tgt_nid,
+                "relation": "imports_from",
+                "confidence": "EXTRACTED",
+                "source_file": str_path,
+                "source_location": f"L{node.start_point[0] + 1}",
+                "weight": 1.0,
+            })
+        break
     return True
 
 

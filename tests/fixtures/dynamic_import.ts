@@ -13,8 +13,20 @@ async function pollMessages(orgId: string) {
     await commsQueue.add('check-inbound', { orgId });
 }
 
+async function loadHandler(handlerName: string) {
+    // dynamic template literal — path not statically resolvable, should produce no edge
+    const mod = await import(`./handlers/${handlerName}`);
+    return mod.default;
+}
+
+async function loadStatic() {
+    // static template literal (no interpolation) — should resolve like a plain string
+    const { helper } = await import(`./staticHelper`);
+    return helper;
+}
+
 function syncOnly() {
     logger.info('no dynamic imports here');
 }
 
-export { processInbound, pollMessages, syncOnly };
+export { processInbound, pollMessages, loadHandler, loadStatic, syncOnly };
