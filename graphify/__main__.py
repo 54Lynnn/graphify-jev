@@ -37,14 +37,22 @@ def _refresh_all_version_stamps() -> None:
             vf.write_text(__version__, encoding="utf-8")
 
 _SETTINGS_HOOK = {
-    "matcher": "Glob|Grep",
+    # Claude Code v2.1.117+ removed dedicated Grep/Glob tools; searches now go through Bash.
+    # We match on Bash and inspect the command string to avoid firing on every shell call.
+    "matcher": "Bash",
     "hooks": [
         {
             "type": "command",
             "command": (
-                "[ -f graphify-out/graph.json ] && "
-                r"""echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files."}}' """
-                "|| true"
+                "CMD=$(python3 -c \""
+                "import json,sys; d=json.load(sys.stdin); "
+                "print(d.get('tool_input',d).get('command',''))\" 2>/dev/null || true); "
+                "case \"$CMD\" in "
+                "*grep*|*rg\ *|*ripgrep*|*find\ *|*fd\ *|*ack\ *|*ag\ *) "
+                "  [ -f graphify-out/graph.json ] && "
+                r"""  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files."}}' """
+                "  || true ;; "
+                "esac"
             ),
         }
     ],
@@ -857,7 +865,7 @@ def _install_claude_hook(project_dir: Path) -> None:
     hooks = settings.setdefault("hooks", {})
     pre_tool = hooks.setdefault("PreToolUse", [])
 
-    hooks["PreToolUse"] = [h for h in pre_tool if not (h.get("matcher") == "Glob|Grep" and "graphify" in str(h))]
+    hooks["PreToolUse"] = [h for h in pre_tool if not (h.get("matcher") in ("Glob|Grep", "Bash") and "graphify" in str(h))]
     hooks["PreToolUse"].append(_SETTINGS_HOOK)
     settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     print(f"  .claude/settings.json  ->  PreToolUse hook registered")
@@ -873,7 +881,7 @@ def _uninstall_claude_hook(project_dir: Path) -> None:
     except json.JSONDecodeError:
         return
     pre_tool = settings.get("hooks", {}).get("PreToolUse", [])
-    filtered = [h for h in pre_tool if not (h.get("matcher") == "Glob|Grep" and "graphify" in str(h))]
+    filtered = [h for h in pre_tool if not (h.get("matcher") in ("Glob|Grep", "Bash") and "graphify" in str(h))]
     if len(filtered) == len(pre_tool):
         return
     settings["hooks"]["PreToolUse"] = filtered

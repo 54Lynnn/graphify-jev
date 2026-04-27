@@ -51,6 +51,10 @@ dist/
 
 Same syntax as `.gitignore`. You can keep a single `.graphifyignore` at your repo root — patterns work correctly even when graphify is run on a subfolder.
 
+## What's new in v0.5.2
+
+- **Hook fix for Claude Code v2.1.117+** — the PreToolUse hook now matches on `Bash` instead of `Glob|Grep`. Claude Code v2.1.117 removed dedicated Grep/Glob tools; searches now go through Bash. The hook inspects the command string and only fires on search-like calls (grep, rg, find, fd etc.), so it does not trigger on every shell command.
+
 ## What's new in v0.5.1
 
 - **Node ID collision fix** — files sharing the same name in different directories (e.g. two `utils.py` files) now get unique IDs by prefixing the parent directory name.
