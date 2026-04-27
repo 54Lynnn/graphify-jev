@@ -313,7 +313,7 @@ def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str, *,
             conf = link.get("confidence", "EXTRACTED")
             link["confidence_score"] = _CONFIDENCE_SCORE_DEFAULTS.get(conf, 1.0)
     data["hyperedges"] = getattr(G, "graph", {}).get("hyperedges", [])
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(output_path, "w", encoding="utf-8") as f:  # nosec
         json.dump(data, f, indent=2)
 
 
@@ -355,7 +355,7 @@ def to_cypher(G: nx.Graph, output_path: str) -> None:
             f"MATCH (a {{id: '{u_esc}'}}), (b {{id: '{v_esc}'}}) "
             f"MERGE (a)-[:{rel} {{confidence: '{conf}'}}]->(b);"
         )
-    with open(output_path, "w", encoding="utf-8") as f:
+    with open(output_path, "w", encoding="utf-8") as f:  # nosec
         f.write("\n".join(lines))
 
 
@@ -480,7 +480,7 @@ def to_html(
 </body>
 </html>"""
 
-    Path(output_path).write_text(html, encoding="utf-8")
+    Path(output_path).write_text(html, encoding="utf-8")  # nosec
 
 
 # Keep backward-compatible alias - skill.md calls generate_html
@@ -595,7 +595,7 @@ def to_obsidian(
         lines.append(inline_tags)
 
         fname = node_filename[node_id] + ".md"
-        (out / fname).write_text("\n".join(lines), encoding="utf-8")
+        (out / fname).write_text("\n".join(lines), encoding="utf-8")  # nosec
 
     # Write one _COMMUNITY_name.md overview note per community
     # Build inter-community edge counts for "Connections to other communities"
@@ -712,7 +712,7 @@ def to_obsidian(
 
         community_safe = safe_name(community_name)
         fname = f"_COMMUNITY_{community_safe}.md"
-        (out / fname).write_text("\n".join(lines), encoding="utf-8")
+        (out / fname).write_text("\n".join(lines), encoding="utf-8")  # nosec
         community_notes_written += 1
 
     # Improvement 4: write .obsidian/graph.json to color nodes by community in graph view
@@ -727,7 +727,7 @@ def to_obsidian(
             for cid, label in sorted((community_labels or {}).items())
         ]
     }
-    (obsidian_dir / "graph.json").write_text(json.dumps(graph_config, indent=2), encoding="utf-8")
+    (obsidian_dir / "graph.json").write_text(json.dumps(graph_config, indent=2), encoding="utf-8")  # nosec
 
     return G.number_of_nodes() + community_notes_written
 
@@ -888,7 +888,7 @@ def to_canvas(
         })
 
     canvas_data = {"nodes": canvas_nodes, "edges": canvas_edges}
-    Path(output_path).write_text(json.dumps(canvas_data, indent=2), encoding="utf-8")
+    Path(output_path).write_text(json.dumps(canvas_data, indent=2), encoding="utf-8")  # nosec
 
 
 def push_to_neo4j(

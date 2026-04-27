@@ -176,9 +176,15 @@ Think of it this way: the always-on hook gives your assistant a map. The `/graph
 **Recommended `.gitignore` additions:**
 ```
 # keep graph outputs, skip heavy/local-only files
-graphify-out/cache/            # optional: commit for shared extraction speed, skip to keep repo small
-graphify-out/manifest.json     # mtime-based, invalid after git clone — always gitignore this
-graphify-out/cost.json         # local token tracking, not useful to share
+
+# optional: commit for shared extraction speed, skip to keep repo small
+graphify-out/cache/
+
+# mtime-based, invalid after git clone - always gitignore this
+graphify-out/manifest.json
+
+# local token tracking, not useful to share
+graphify-out/cost.json
 ```
 
 **Shared setup:**
