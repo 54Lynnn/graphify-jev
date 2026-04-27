@@ -16,6 +16,10 @@ Full release notes with details on each version: [GitHub Releases](https://githu
   `--label NAME`.
 - Implementation: `graphify/tree_html.py` (575 LOC, no external runtime
   dependencies — D3 v7 is loaded from cdn.jsdelivr.net).
+- Security: `emit_html()` now `html.escape()`s the page title and header,
+  and JS-escapes `</` sequences in the embedded JSON blob so crafted
+  graph labels or `--label` values cannot break out of `<title>`, `<h1>`,
+  or the `<script>` tag (matches the `_js_safe()` pattern in `export.py`).
 
 ## 0.4.23 (2026-04-18)
 

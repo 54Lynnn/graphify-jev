@@ -34,6 +34,7 @@ Implementation notes:
 
 from __future__ import annotations
 
+import html as _html
 import json
 from collections import defaultdict
 from pathlib import Path
@@ -546,12 +547,15 @@ def emit_html(
     svg_width: int = 6000,
     svg_height: int = 8000,
 ) -> str:
+    # Escape </script> sequences so embedded JSON cannot break out of the
+    # <script> tag, and HTML-escape values that land in <title>/<h1>.
+    data_json = json.dumps(tree, ensure_ascii=False, separators=(",", ":")).replace("</", "<\\/")
     return _HTML_TEMPLATE.format(
-        title=title,
-        header=header,
+        title=_html.escape(title),
+        header=_html.escape(header),
         svg_width=svg_width,
         svg_height=svg_height,
-        data_json=json.dumps(tree, ensure_ascii=False, separators=(",", ":")),
+        data_json=data_json,
     )
 
 
