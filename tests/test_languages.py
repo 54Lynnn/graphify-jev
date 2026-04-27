@@ -1,11 +1,11 @@
-"""Tests for language extractors: Java, C, C++, Ruby, C#, Kotlin, Scala, PHP, Swift, Go, Julia."""
+"""Tests for language extractors: Java, C, C++, Ruby, C#, Kotlin, Scala, PHP, Swift, Go, Julia, JS/TS."""
 from __future__ import annotations
 from pathlib import Path
 import pytest
 from graphify.extract import (
     extract_java, extract_c, extract_cpp, extract_ruby,
     extract_csharp, extract_kotlin, extract_scala, extract_php,
-    extract_swift, extract_go, extract_julia,
+    extract_swift, extract_go, extract_julia, extract_js,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -560,3 +560,50 @@ def test_julia_no_dangling_edges():
     node_ids = {n["id"] for n in r["nodes"]}
     for e in r["edges"]:
         assert e["source"] in node_ids, f"Dangling source: {e}"
+
+
+# ── TypeScript dynamic imports ───────────────────────────────────────────────
+
+def test_ts_dynamic_import_no_error():
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    assert "error" not in r
+
+def test_ts_dynamic_import_extracts_edges():
+    """Dynamic import() calls inside functions should produce imports_from edges."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    dyn_edges = [e for e in r["edges"] if e["relation"] == "imports_from"]
+    targets = {e["target"] for e in dyn_edges}
+    # Should find: static ./logger, dynamic ./mayaEngine.js, dynamic ./queue.js
+    assert any("logger" in t for t in targets), f"Missing static import of logger: {targets}"
+    assert any("mayaengine" in t.lower() for t in targets), f"Missing dynamic import of mayaEngine: {targets}"
+    assert any("queue" in t.lower() for t in targets), f"Missing dynamic import of queue: {targets}"
+
+def test_ts_dynamic_import_confidence():
+    """Dynamic imports should have EXTRACTED confidence (they are deterministic string literals)."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    dyn_edges = [e for e in r["edges"]
+                 if e["relation"] == "imports_from"
+                 and "mayaengine" in e["target"].lower()]
+    assert len(dyn_edges) >= 1
+    assert dyn_edges[0]["confidence"] == "EXTRACTED"
+
+def test_ts_dynamic_import_source_is_function():
+    """Dynamic import edge source should be the enclosing function, not the file."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    node_labels = {n["id"]: n["label"] for n in r["nodes"]}
+    dyn_edges = [e for e in r["edges"]
+                 if e["relation"] == "imports_from"
+                 and "mayaengine" in e["target"].lower()]
+    assert len(dyn_edges) >= 1
+    src_label = node_labels.get(dyn_edges[0]["source"], "")
+    assert "processInbound" in src_label, f"Expected processInbound as source, got {src_label}"
+
+def test_ts_no_dynamic_import_in_sync_fn():
+    """Functions without dynamic imports should not get spurious imports_from edges."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    node_ids = {n["label"]: n["id"] for n in r["nodes"]}
+    sync_nid = node_ids.get("syncOnly()")
+    if sync_nid:
+        sync_imports = [e for e in r["edges"]
+                        if e["source"] == sync_nid and e["relation"] == "imports_from"]
+        assert len(sync_imports) == 0
