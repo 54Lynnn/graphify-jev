@@ -51,6 +51,16 @@ dist/
 
 Same syntax as `.gitignore`. You can keep a single `.graphifyignore` at your repo root — patterns work correctly even when graphify is run on a subfolder.
 
+## What's new in v0.5.1
+
+- **Node ID collision fix** — files sharing the same name in different directories (e.g. two `utils.py` files) now get unique IDs by prefixing the parent directory name.
+- **Portable `source_file` paths** — `extract()` now relativizes all `source_file` fields before returning, so `graph.json` is portable across machines and git worktrees.
+- **Desync guard** — `to_json()` returns a boolean; `graphify update` only writes `GRAPH_REPORT.md` and `graph.html` if the JSON write succeeded (shrink guard fired = no stale report).
+- **TypeScript path aliases** — `@/` and other `compilerOptions.paths` aliases in `tsconfig.json` are now resolved to real file nodes instead of being dropped as external packages.
+- **Show All / Hide All** — community panel in the HTML visualization now has Show All and Hide All buttons.
+- **Skill prompt fixes** — rationale is stored as a node attribute (not a spurious fragment node); `calls` edge direction is now explicitly enforced (caller → callee).
+- **Hook and tooling fixes** — `~` expansion in `core.hooksPath`, correct `.gitignore` inline comment placement, `# nosec` annotations on file write sinks.
+
 ## What's new in v0.5.0
 
 - **`graphify clone <github-url>`** — clone any public GitHub repo and run the full pipeline on it. Clones to `~/.graphify/repos/<owner>/<repo>`, reuses existing clones on repeat runs (`git pull`). Supports `--branch` and `--out`.
