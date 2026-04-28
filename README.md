@@ -51,6 +51,11 @@ dist/
 
 Same syntax as `.gitignore`. You can keep a single `.graphifyignore` at your repo root — patterns work correctly even when graphify is run on a subfolder.
 
+## What's new in v0.5.4
+
+- **SSRF DNS rebinding fix** — `safe_fetch` now patches `socket.getaddrinfo` for the entire duration of each HTTP request so a DNS rebinding attack cannot swap a public IP (returned during validation) for a private one during the actual connection. DNS lookup failures now also raise an error instead of silently skipping the IP check.
+- **yt-dlp SSRF bypass fix** — `download_audio` now runs `validate_url` before handing the URL to yt-dlp, blocking private IPs and disallowed schemes on the video/audio ingest path.
+
 ## What's new in v0.5.3
 
 - **Cache namespace fix** — AST and semantic cache entries now live in separate `cache/ast/` and `cache/semantic/` subdirectories. Previously both used the same flat `cache/` directory, causing semantic results to silently overwrite AST entries for code files on mixed code+docs corpora, which triggered the shrink guard on every subsequent `graphify update`. Existing flat cache entries are read as a migration fallback so no cache is lost on upgrade.
