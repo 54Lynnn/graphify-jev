@@ -43,37 +43,52 @@ def file_hash(path: Path, root: Path = Path(".")) -> str:
     return h.hexdigest()
 
 
-def cache_dir(root: Path = Path(".")) -> Path:
-    """Returns graphify-out/cache/ - creates it if needed."""
-    d = Path(root).resolve() / "graphify-out" / "cache"
+def cache_dir(root: Path = Path("."), kind: str = "ast") -> Path:
+    """Returns graphify-out/cache/{kind}/ - creates it if needed.
+
+    kind is "ast" or "semantic". Separate subdirectories prevent semantic cache
+    entries from overwriting AST cache entries for the same source_file (#582).
+    """
+    d = Path(root).resolve() / "graphify-out" / "cache" / kind
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def load_cached(path: Path, root: Path = Path(".")) -> dict | None:
+def load_cached(path: Path, root: Path = Path("."), kind: str = "ast") -> dict | None:
     """Return cached extraction for this file if hash matches, else None.
 
     Cache key: SHA256 of file contents.
-    Cache value: stored as graphify-out/cache/{hash}.json
+    Cache value: stored as graphify-out/cache/{kind}/{hash}.json
+
+    For kind="ast", also checks the legacy flat cache/  directory so users
+    upgrading from pre-0.5.3 don't lose their existing AST cache entries.
     Returns None if no cache entry or file has changed.
     """
     try:
         h = file_hash(path, root)
     except OSError:
         return None
-    entry = cache_dir(root) / f"{h}.json"
-    if not entry.exists():
-        return None
-    try:
-        return json.loads(entry.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
+    entry = cache_dir(root, kind) / f"{h}.json"
+    if entry.exists():
+        try:
+            return json.loads(entry.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+    # Migration fallback: check legacy flat cache/ dir for AST entries
+    if kind == "ast":
+        legacy = Path(root).resolve() / "graphify-out" / "cache" / f"{h}.json"
+        if legacy.exists():
+            try:
+                return json.loads(legacy.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                return None
+    return None
 
 
-def save_cached(path: Path, result: dict, root: Path = Path(".")) -> None:
+def save_cached(path: Path, result: dict, root: Path = Path("."), kind: str = "ast") -> None:
     """Save extraction result for this file.
 
-    Stores as graphify-out/cache/{hash}.json where hash = SHA256 of current file contents.
+    Stores as graphify-out/cache/{kind}/{hash}.json where hash = SHA256 of current file contents.
     result should be a dict with 'nodes' and 'edges' lists.
 
     No-ops if `path` is not a regular file. Subagent-produced semantic fragments
@@ -84,7 +99,7 @@ def save_cached(path: Path, result: dict, root: Path = Path(".")) -> None:
     if not p.is_file():
         return
     h = file_hash(p, root)
-    entry = cache_dir(root) / f"{h}.json"
+    entry = cache_dir(root, kind) / f"{h}.json"
     tmp = entry.with_suffix(".tmp")
     try:
         tmp.write_text(json.dumps(result), encoding="utf-8")
@@ -102,16 +117,33 @@ def save_cached(path: Path, result: dict, root: Path = Path(".")) -> None:
 
 
 def cached_files(root: Path = Path(".")) -> set[str]:
-    """Return set of file paths that have a valid cache entry (hash still matches)."""
-    d = cache_dir(root)
-    return {p.stem for p in d.glob("*.json")}
+    """Return set of file hashes that have a valid cache entry (any kind)."""
+    base = Path(root).resolve() / "graphify-out" / "cache"
+    hashes: set[str] = set()
+    # Legacy flat entries
+    if base.is_dir():
+        hashes.update(p.stem for p in base.glob("*.json"))
+    # Namespaced entries
+    for kind in ("ast", "semantic"):
+        d = base / kind
+        if d.is_dir():
+            hashes.update(p.stem for p in d.glob("*.json"))
+    return hashes
 
 
 def clear_cache(root: Path = Path(".")) -> None:
-    """Delete all graphify-out/cache/*.json files."""
-    d = cache_dir(root)
-    for f in d.glob("*.json"):
-        f.unlink()
+    """Delete all cache entries (ast/, semantic/, and legacy flat entries)."""
+    base = Path(root).resolve() / "graphify-out" / "cache"
+    # Legacy flat entries
+    if base.is_dir():
+        for f in base.glob("*.json"):
+            f.unlink()
+    # Namespaced entries
+    for kind in ("ast", "semantic"):
+        d = base / kind
+        if d.is_dir():
+            for f in d.glob("*.json"):
+                f.unlink()
 
 
 def check_semantic_cache(
@@ -129,7 +161,7 @@ def check_semantic_cache(
     uncached: list[str] = []
 
     for fpath in files:
-        result = load_cached(Path(fpath), root)
+        result = load_cached(Path(fpath), root, kind="semantic")
         if result is not None:
             cached_nodes.extend(result.get("nodes", []))
             cached_edges.extend(result.get("edges", []))
@@ -148,7 +180,9 @@ def save_semantic_cache(
 ) -> int:
     """Save semantic extraction results to cache, keyed by source_file.
 
-    Groups nodes and edges by source_file, then saves one cache entry per file.
+    Groups nodes and edges by source_file, then saves one cache entry per file
+    under cache/semantic/ (separate from AST entries in cache/ast/) to prevent
+    hash-key collisions (#582).
     Returns the number of files cached.
     """
     from collections import defaultdict
@@ -173,6 +207,6 @@ def save_semantic_cache(
         if not p.is_absolute():
             p = Path(root) / p
         if p.is_file():
-            save_cached(p, result, root)
+            save_cached(p, result, root, kind="semantic")
             saved += 1
     return saved

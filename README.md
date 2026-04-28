@@ -51,6 +51,10 @@ dist/
 
 Same syntax as `.gitignore`. You can keep a single `.graphifyignore` at your repo root — patterns work correctly even when graphify is run on a subfolder.
 
+## What's new in v0.5.3
+
+- **Cache namespace fix** — AST and semantic cache entries now live in separate `cache/ast/` and `cache/semantic/` subdirectories. Previously both used the same flat `cache/` directory, causing semantic results to silently overwrite AST entries for code files on mixed code+docs corpora, which triggered the shrink guard on every subsequent `graphify update`. Existing flat cache entries are read as a migration fallback so no cache is lost on upgrade.
+
 ## What's new in v0.5.2
 
 - **Hook fix for Claude Code v2.1.117+** — the PreToolUse hook now matches on `Bash` instead of `Glob|Grep`. Claude Code v2.1.117 removed dedicated Grep/Glob tools; searches now go through Bash. The hook inspects the command string and only fires on search-like calls (grep, rg, find, fd etc.), so it does not trigger on every shell command.
