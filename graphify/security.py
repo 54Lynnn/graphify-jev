@@ -1,6 +1,7 @@
 # Security helpers - URL validation, safe fetch, path guards, label sanitisation
 from __future__ import annotations
 
+import contextlib
 import html
 import re
 import urllib.error
@@ -58,10 +59,43 @@ def validate_url(url: str) -> str:
                         f"Blocked private/internal IP {addr} (resolved from '{hostname}'). "
                         f"Got: {url!r}"
                     )
-        except socket.gaierror:
-            pass  # DNS failure will surface later during fetch
+        except socket.gaierror as exc:
+            raise ValueError(
+                f"DNS resolution failed for '{hostname}': {exc}. Got: {url!r}"
+            ) from exc
 
     return url
+
+
+@contextlib.contextmanager
+def _ssrf_guarded_socket():
+    """Patch socket.getaddrinfo for the duration of a fetch to catch DNS rebinding.
+
+    Validates every IP that urllib resolves so a DNS server cannot return a public IP
+    for validate_url and swap to a private IP for the actual connection (TOCTOU fix).
+    Not thread-safe, but graphify is a single-threaded CLI tool.
+    """
+    original = socket.getaddrinfo
+
+    def _guarded(host, port, *args, **kwargs):
+        results = original(host, port, *args, **kwargs)
+        for info in results:
+            addr = info[4][0]
+            try:
+                ip = ipaddress.ip_address(addr)
+            except ValueError:
+                continue
+            if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local:
+                raise OSError(
+                    f"SSRF blocked: IP {addr} resolved from '{host}' is private/reserved"
+                )
+        return results
+
+    socket.getaddrinfo = _guarded
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = original
 
 
 class _NoFileRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -104,7 +138,7 @@ def safe_fetch(url: str, max_bytes: int = _MAX_FETCH_BYTES, timeout: int = 30) -
     opener = _build_opener()
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 graphify/1.0"})
 
-    with opener.open(req, timeout=timeout) as resp:
+    with _ssrf_guarded_socket(), opener.open(req, timeout=timeout) as resp:
         # urllib raises HTTPError for non-2xx when using urlopen directly;
         # with a custom opener we check manually to be safe.
         status = getattr(resp, "status", None) or getattr(resp, "code", None)
