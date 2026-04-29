@@ -1960,6 +1960,7 @@ def extract_go(path: Path) -> dict:
     edges: list[dict] = []
     seen_ids: set[str] = set()
     function_bodies: list[tuple[str, object]] = []
+    go_imported_pkgs: set[str] = set()  # local names of imported packages
 
     def add_node(nid: str, label: str, line: int) -> None:
         if nid not in seen_ids:
@@ -2057,12 +2058,21 @@ def extract_go(path: Path) -> dict:
                                 # don't collide with local files of the same basename.
                                 tgt_nid = _make_id("go", "pkg", raw)
                                 add_edge(file_nid, tgt_nid, "imports_from", spec.start_point[0] + 1)
+                                # Track local name (alias or last path segment)
+                                alias = spec.child_by_field_name("name")
+                                local_name = _read_text(alias, source) if alias else raw.split("/")[-1]
+                                if local_name and local_name != "_" and local_name != ".":
+                                    go_imported_pkgs.add(local_name)
                 elif child.type == "import_spec":
                     path_node = child.child_by_field_name("path")
                     if path_node:
                         raw = _read_text(path_node, source).strip('"')
                         tgt_nid = _make_id("go", "pkg", raw)
                         add_edge(file_nid, tgt_nid, "imports_from", child.start_point[0] + 1)
+                        alias = child.child_by_field_name("name")
+                        local_name = _read_text(alias, source) if alias else raw.split("/")[-1]
+                        if local_name and local_name != "_" and local_name != ".":
+                            go_imported_pkgs.add(local_name)
             return
 
         for child in node.children:
@@ -2090,8 +2100,12 @@ def extract_go(path: Path) -> dict:
                 if func_node.type == "identifier":
                     callee_name = _read_text(func_node, source)
                 elif func_node.type == "selector_expression":
-                    is_member_call = True
                     field = func_node.child_by_field_name("field")
+                    operand = func_node.child_by_field_name("operand")
+                    receiver_name = _read_text(operand, source) if operand else ""
+                    # Package-qualified call (e.g. fmt.Println) → allow cross-file resolution.
+                    # Receiver method call (e.g. s.logger.Log) → skip, no import evidence.
+                    is_member_call = receiver_name not in go_imported_pkgs
                     if field:
                         callee_name = _read_text(field, source)
             if callee_name:

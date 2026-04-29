@@ -6,7 +6,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 BACKENDS: dict[str, dict] = {
@@ -57,6 +59,20 @@ def _read_files(paths: list[Path], root: Path) -> str:
     return "\n\n".join(parts)
 
 
+def _parse_llm_json(raw: str) -> dict:
+    """Strip optional markdown fences and parse JSON. Returns empty fragment on failure."""
+    if raw.startswith("```"):
+        raw = raw.split("```", 2)[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+        raw = raw.rsplit("```", 1)[0]
+    try:
+        return json.loads(raw.strip())
+    except json.JSONDecodeError as exc:
+        print(f"[graphify] LLM returned invalid JSON, skipping chunk: {exc}", file=sys.stderr)
+        return {"nodes": [], "edges": [], "hyperedges": []}
+
+
 def _call_openai_compat(
     base_url: str,
     api_key: str,
@@ -82,14 +98,7 @@ def _call_openai_compat(
         max_completion_tokens=8192,
         temperature=0,
     )
-    raw = resp.choices[0].message.content or "{}"
-    # Strip markdown fences if model adds them despite instructions
-    if raw.startswith("```"):
-        raw = raw.split("```", 2)[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.rsplit("```", 1)[0]
-    result = json.loads(raw.strip())
+    result = _parse_llm_json(resp.choices[0].message.content or "{}")
     result["input_tokens"] = resp.usage.prompt_tokens if resp.usage else 0
     result["output_tokens"] = resp.usage.completion_tokens if resp.usage else 0
     result["model"] = model
@@ -113,13 +122,7 @@ def _call_claude(api_key: str, model: str, user_message: str) -> dict:
         system=_EXTRACTION_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
     )
-    raw = resp.content[0].text if resp.content else "{}"
-    if raw.startswith("```"):
-        raw = raw.split("```", 2)[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.rsplit("```", 1)[0]
-    result = json.loads(raw.strip())
+    result = _parse_llm_json(resp.content[0].text if resp.content else "{}")
     result["input_tokens"] = resp.usage.input_tokens if resp.usage else 0
     result["output_tokens"] = resp.usage.output_tokens if resp.usage else 0
     result["model"] = model
@@ -164,7 +167,7 @@ def extract_corpus_parallel(
     model: str | None = None,
     root: Path = Path("."),
     chunk_size: int = 20,
-    on_chunk_done: object = None,
+    on_chunk_done: Callable | None = None,
 ) -> dict:
     """Extract a corpus in chunks, merging results.
 
