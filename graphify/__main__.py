@@ -1,6 +1,7 @@
 """graphify CLI - `graphify install` sets up the Claude Code skill."""
 from __future__ import annotations
 import json
+import os
 import platform
 import re
 import shutil
@@ -37,14 +38,22 @@ def _refresh_all_version_stamps() -> None:
             vf.write_text(__version__, encoding="utf-8")
 
 _SETTINGS_HOOK = {
-    "matcher": "Glob|Grep",
+    # Claude Code v2.1.117+ removed dedicated Grep/Glob tools; searches now go through Bash.
+    # We match on Bash and inspect the command string to avoid firing on every shell call.
+    "matcher": "Bash",
     "hooks": [
         {
             "type": "command",
             "command": (
-                "[ -f graphify-out/graph.json ] && "
-                r"""echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files."}}' """
-                "|| true"
+                "CMD=$(python3 -c \""
+                "import json,sys; d=json.load(sys.stdin); "
+                "print(d.get('tool_input',d).get('command',''))\" 2>/dev/null || true); "
+                "case \"$CMD\" in "
+                r"*grep*|*rg\ *|*ripgrep*|*find\ *|*fd\ *|*ack\ *|*ag\ *) "
+                "  [ -f graphify-out/graph.json ] && "
+                r"""  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files."}}' """
+                "  || true ;; "
+                "esac"
             ),
         }
     ],
@@ -857,7 +866,7 @@ def _install_claude_hook(project_dir: Path) -> None:
     hooks = settings.setdefault("hooks", {})
     pre_tool = hooks.setdefault("PreToolUse", [])
 
-    hooks["PreToolUse"] = [h for h in pre_tool if not (h.get("matcher") == "Glob|Grep" and "graphify" in str(h))]
+    hooks["PreToolUse"] = [h for h in pre_tool if not (h.get("matcher") in ("Glob|Grep", "Bash") and "graphify" in str(h))]
     hooks["PreToolUse"].append(_SETTINGS_HOOK)
     settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     print(f"  .claude/settings.json  ->  PreToolUse hook registered")
@@ -873,7 +882,7 @@ def _uninstall_claude_hook(project_dir: Path) -> None:
     except json.JSONDecodeError:
         return
     pre_tool = settings.get("hooks", {}).get("PreToolUse", [])
-    filtered = [h for h in pre_tool if not (h.get("matcher") == "Glob|Grep" and "graphify" in str(h))]
+    filtered = [h for h in pre_tool if not (h.get("matcher") in ("Glob|Grep", "Bash") and "graphify" in str(h))]
     if len(filtered) == len(pre_tool):
         return
     settings["hooks"]["PreToolUse"] = filtered
@@ -1412,7 +1421,15 @@ def main() -> None:
         print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
 
     elif cmd == "update":
-        watch_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(".")
+        if len(sys.argv) > 2:
+            watch_path = Path(sys.argv[2])
+        else:
+            # Try to recover the scan root saved by the last full build
+            saved = Path("graphify-out/.graphify_root")
+            if saved.exists():
+                watch_path = Path(saved.read_text(encoding="utf-8").strip())
+            else:
+                watch_path = Path(".")
         if not watch_path.exists():
             print(f"error: path not found: {watch_path}", file=sys.stderr)
             sys.exit(1)
@@ -1421,6 +1438,8 @@ def main() -> None:
         ok = _rebuild_code(watch_path)
         if ok:
             print("Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.")
+            if not os.environ.get("MOONSHOT_API_KEY") and not os.environ.get("GRAPHIFY_NO_TIPS"):
+                print("Tip: set MOONSHOT_API_KEY to use Kimi K2.6 for semantic extraction — 3x cheaper, richer graphs. pip install 'graphifyy[kimi]'")
         else:
             print("Nothing to update or rebuild failed — check output above.", file=sys.stderr)
             sys.exit(1)

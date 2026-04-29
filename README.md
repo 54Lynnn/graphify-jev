@@ -7,6 +7,7 @@
 </p>
 
 <p align="center">
+  <a href="https://safishamsi.gumroad.com/l/qetvlo"><img src="https://img.shields.io/badge/Book-The%20Memory%20Layer-2ea44f?style=flat&logo=gitbook&logoColor=white" alt="The Memory Layer"/></a>
   <a href="https://github.com/safishamsi/graphify/actions/workflows/ci.yml"><img src="https://github.com/safishamsi/graphify/actions/workflows/ci.yml/badge.svg?branch=v4" alt="CI"/></a>
   <a href="https://pypi.org/project/graphifyy/"><img src="https://img.shields.io/pypi/v/graphifyy" alt="PyPI"/></a>
   <a href="https://pepy.tech/project/graphifyy"><img src="https://static.pepy.tech/badge/graphifyy" alt="Downloads"/></a>
@@ -49,6 +50,36 @@ dist/
 ```
 
 Same syntax as `.gitignore`. You can keep a single `.graphifyignore` at your repo root — patterns work correctly even when graphify is run on a subfolder.
+
+## What's new in v0.5.5
+
+- **Kimi K2.6 backend** — `pip install 'graphifyy[kimi]'` then set `MOONSHOT_API_KEY` to route semantic extraction through Kimi K2.6 instead of Claude subagents. 3-6x richer relation extraction at ~3x lower cost. Uses `graphify.llm.extract_corpus_parallel(files, backend="kimi")`. Claude remains the default; Kimi is opt-in. A tip is printed when `MOONSHOT_API_KEY` is not set so users discover it naturally.
+- **Phantom god node fix (#598)** — member-call callees (`this.logger.log()` → `log`) are no longer cross-file resolved. Previously, any top-level function named `log` anywhere in the corpus would attract hundreds of spurious INFERRED edges from every `Logger.log` call in NestJS/Vue/etc. codebases. Go package-qualified calls (`pkg.Func()`) are correctly preserved. Affects all languages: JS/TS, Go, Rust, Swift, Kotlin, Scala, PHP, C++, C#, Zig, Elixir.
+- **`concept` file_type fix (#601)** — nodes with `file_type: "concept"` (e.g. tech stack descriptions extracted from Markdown) no longer produce validation warnings. Added `concept` to `VALID_FILE_TYPES`.
+- **`graphify update` remembers scan root** — the scan root is saved to `graphify-out/.graphify_root` on every build. Running `graphify update` with no path argument now picks it up automatically instead of defaulting to `.` and re-scanning the wrong directory.
+
+## What's new in v0.5.4
+
+- **SSRF DNS rebinding fix** — `safe_fetch` now patches `socket.getaddrinfo` for the entire duration of each HTTP request so a DNS rebinding attack cannot swap a public IP (returned during validation) for a private one during the actual connection. DNS lookup failures now also raise an error instead of silently skipping the IP check.
+- **yt-dlp SSRF bypass fix** — `download_audio` now runs `validate_url` before handing the URL to yt-dlp, blocking private IPs and disallowed schemes on the video/audio ingest path.
+
+## What's new in v0.5.3
+
+- **Cache namespace fix** — AST and semantic cache entries now live in separate `cache/ast/` and `cache/semantic/` subdirectories. Previously both used the same flat `cache/` directory, causing semantic results to silently overwrite AST entries for code files on mixed code+docs corpora, which triggered the shrink guard on every subsequent `graphify update`. Existing flat cache entries are read as a migration fallback so no cache is lost on upgrade.
+
+## What's new in v0.5.2
+
+- **Hook fix for Claude Code v2.1.117+** — the PreToolUse hook now matches on `Bash` instead of `Glob|Grep`. Claude Code v2.1.117 removed dedicated Grep/Glob tools; searches now go through Bash. The hook inspects the command string and only fires on search-like calls (grep, rg, find, fd etc.), so it does not trigger on every shell command.
+
+## What's new in v0.5.1
+
+- **Node ID collision fix** — files sharing the same name in different directories (e.g. two `utils.py` files) now get unique IDs by prefixing the parent directory name.
+- **Portable `source_file` paths** — `extract()` now relativizes all `source_file` fields before returning, so `graph.json` is portable across machines and git worktrees.
+- **Desync guard** — `to_json()` returns a boolean; `graphify update` only writes `GRAPH_REPORT.md` and `graph.html` if the JSON write succeeded (shrink guard fired = no stale report).
+- **TypeScript path aliases** — `@/` and other `compilerOptions.paths` aliases in `tsconfig.json` are now resolved to real file nodes instead of being dropped as external packages.
+- **Show All / Hide All** — community panel in the HTML visualization now has Show All and Hide All buttons.
+- **Skill prompt fixes** — rationale is stored as a node attribute (not a spurious fragment node); `calls` edge direction is now explicitly enforced (caller → callee).
+- **Hook and tooling fixes** — `~` expansion in `core.hooksPath`, correct `.gitignore` inline comment placement, `# nosec` annotations on file write sinks.
 
 ## What's new in v0.5.0
 
@@ -175,9 +206,15 @@ Think of it this way: the always-on hook gives your assistant a map. The `/graph
 **Recommended `.gitignore` additions:**
 ```
 # keep graph outputs, skip heavy/local-only files
-graphify-out/cache/            # optional: commit for shared extraction speed, skip to keep repo small
-graphify-out/manifest.json     # mtime-based, invalid after git clone — always gitignore this
-graphify-out/cost.json         # local token tracking, not useful to share
+
+# optional: commit for shared extraction speed, skip to keep repo small
+graphify-out/cache/
+
+# mtime-based, invalid after git clone - always gitignore this
+graphify-out/manifest.json
+
+# local token tracking, not useful to share
+graphify-out/cost.json
 ```
 
 **Shared setup:**

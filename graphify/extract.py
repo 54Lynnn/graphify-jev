@@ -18,6 +18,48 @@ def _make_id(*parts: str) -> str:
     return cleaned.strip("_").lower()
 
 
+def _file_stem(path: Path) -> str:
+    """Return a stem qualified with the parent directory name to avoid ID collisions
+    when multiple files share the same filename in different directories (#550)."""
+    parent = path.parent.name
+    if parent and parent not in (".", ""):
+        return f"{parent}.{path.stem}"
+    return path.stem
+
+
+_TSCONFIG_ALIAS_CACHE: dict[str, dict[str, str]] = {}
+
+
+def _load_tsconfig_aliases(start_dir: Path) -> dict[str, str]:
+    """Walk up from start_dir to find tsconfig.json and return compilerOptions.paths aliases.
+
+    Returns a dict mapping alias prefix (e.g. "@/") to resolved base dir (e.g. "src/").
+    Result is cached by tsconfig path string.
+    """
+    current = start_dir.resolve()
+    for candidate in [current, *current.parents]:
+        tsconfig = candidate / "tsconfig.json"
+        if tsconfig.exists():
+            key = str(tsconfig)
+            if key not in _TSCONFIG_ALIAS_CACHE:
+                try:
+                    data = json.loads(tsconfig.read_text(encoding="utf-8"))
+                    paths = data.get("compilerOptions", {}).get("paths", {})
+                    aliases: dict[str, str] = {}
+                    for alias, targets in paths.items():
+                        if not targets:
+                            continue
+                        # Strip trailing /* from alias and target
+                        alias_prefix = alias.rstrip("/*")
+                        target_base = targets[0].rstrip("/*")
+                        aliases[alias_prefix] = str(candidate / target_base)
+                    _TSCONFIG_ALIAS_CACHE[key] = aliases
+                except Exception:
+                    _TSCONFIG_ALIAS_CACHE[key] = {}
+            return _TSCONFIG_ALIAS_CACHE[key]
+    return {}
+
+
 # ── LanguageConfig dataclass ─────────────────────────────────────────────────
 
 @dataclass
@@ -158,11 +200,22 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                     resolved = resolved.with_suffix(".tsx")
                 tgt_nid = _make_id(str(resolved))
             else:
-                # Bare/scoped import (node_modules) - use last segment; dropped as external
-                module_name = raw.split("/")[-1]
-                if not module_name:
-                    break
-                tgt_nid = _make_id(module_name)
+                # Check tsconfig.json path aliases (e.g. "@/" → "src/") before treating as external (#575)
+                aliases = _load_tsconfig_aliases(Path(str_path).parent)
+                resolved_alias = None
+                for alias_prefix, alias_base in aliases.items():
+                    if raw == alias_prefix or raw.startswith(alias_prefix + "/"):
+                        rest = raw[len(alias_prefix):].lstrip("/")
+                        resolved_alias = Path(os.path.normpath(Path(alias_base) / rest))
+                        break
+                if resolved_alias is not None:
+                    tgt_nid = _make_id(str(resolved_alias))
+                else:
+                    # Bare/scoped import (node_modules) - use last segment; dropped as external
+                    module_name = raw.split("/")[-1]
+                    if not module_name:
+                        break
+                    tgt_nid = _make_id(module_name)
             edges.append({
                 "source": file_nid,
                 "target": tgt_nid,
@@ -709,7 +762,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -1062,6 +1115,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
 
         if node.type in config.call_types:
             callee_name: str | None = None
+            is_member_call: bool = False
 
             # Special handling per language
             if config.ts_module == "tree_sitter_swift":
@@ -1071,6 +1125,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if first.type == "simple_identifier":
                         callee_name = _read_text(first, source)
                     elif first.type == "navigation_expression":
+                        is_member_call = True
                         for child in first.children:
                             if child.type == "navigation_suffix":
                                 for sc in child.children:
@@ -1083,6 +1138,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if first.type == "simple_identifier":
                         callee_name = _read_text(first, source)
                     elif first.type == "navigation_expression":
+                        is_member_call = True
                         for child in reversed(first.children):
                             if child.type == "simple_identifier":
                                 callee_name = _read_text(child, source)
@@ -1094,6 +1150,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if first.type == "identifier":
                         callee_name = _read_text(first, source)
                     elif first.type == "field_expression":
+                        is_member_call = True
                         field = first.child_by_field_name("field")
                         if field:
                             callee_name = _read_text(field, source)
@@ -1113,6 +1170,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                             raw = _read_text(child, source)
                             if "." in raw:
                                 callee_name = raw.split(".")[-1]
+                                is_member_call = True
                             else:
                                 callee_name = raw
                             break
@@ -1128,6 +1186,8 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if scope_node:
                         callee_name = _read_text(scope_node, source)
                 else:
+                    # member_call_expression: $obj->method()
+                    is_member_call = True
                     name_node = node.child_by_field_name("name")
                     if name_node:
                         callee_name = _read_text(name_node, source)
@@ -1138,6 +1198,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if func_node.type == "identifier":
                         callee_name = _read_text(func_node, source)
                     elif func_node.type in ("field_expression", "qualified_identifier"):
+                        is_member_call = True
                         name = func_node.child_by_field_name("field") or func_node.child_by_field_name("name")
                         if name:
                             callee_name = _read_text(name, source)
@@ -1148,6 +1209,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if func_node.type == "identifier":
                         callee_name = _read_text(func_node, source)
                     elif func_node.type in config.call_accessor_node_types:
+                        is_member_call = True
                         if config.call_accessor_field:
                             attr = func_node.child_by_field_name(config.call_accessor_field)
                             if attr:
@@ -1178,6 +1240,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     raw_calls.append({
                         "caller_nid": caller_nid,
                         "callee": callee_name,
+                        "is_member_call": is_member_call,
                         "source_file": str_path,
                         "source_location": f"L{node.start_point[0] + 1}",
                     })
@@ -1365,7 +1428,7 @@ def _extract_python_rationale(path: Path, result: dict) -> None:
     except Exception:
         return
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes = result["nodes"]
     edges = result["edges"]
@@ -1624,7 +1687,7 @@ def extract_verilog(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -1740,7 +1803,7 @@ def extract_julia(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -1956,7 +2019,7 @@ def extract_go(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     # Use directory name as package scope so methods on the same type across
     # multiple files in a package share one canonical type node.
     pkg_scope = path.parent.name or stem
@@ -1965,6 +2028,7 @@ def extract_go(path: Path) -> dict:
     edges: list[dict] = []
     seen_ids: set[str] = set()
     function_bodies: list[tuple[str, object]] = []
+    go_imported_pkgs: set[str] = set()  # local names of imported packages
 
     def add_node(nid: str, label: str, line: int) -> None:
         if nid not in seen_ids:
@@ -2066,12 +2130,21 @@ def extract_go(path: Path) -> dict:
                                 # don't collide with local files of the same basename.
                                 tgt_nid = _make_id("go", "pkg", raw)
                                 add_edge(file_nid, tgt_nid, "imports_from", spec.start_point[0] + 1, context="import")
+                                # Track local name (alias or last path segment)
+                                alias = spec.child_by_field_name("name")
+                                local_name = _read_text(alias, source) if alias else raw.split("/")[-1]
+                                if local_name and local_name != "_" and local_name != ".":
+                                    go_imported_pkgs.add(local_name)
                 elif child.type == "import_spec":
                     path_node = child.child_by_field_name("path")
                     if path_node:
                         raw = _read_text(path_node, source).strip('"')
                         tgt_nid = _make_id("go", "pkg", raw)
                         add_edge(file_nid, tgt_nid, "imports_from", child.start_point[0] + 1, context="import")
+                        alias = child.child_by_field_name("name")
+                        local_name = _read_text(alias, source) if alias else raw.split("/")[-1]
+                        if local_name and local_name != "_" and local_name != ".":
+                            go_imported_pkgs.add(local_name)
             return
 
         for child in node.children:
@@ -2094,11 +2167,17 @@ def extract_go(path: Path) -> dict:
         if node.type == "call_expression":
             func_node = node.child_by_field_name("function")
             callee_name: str | None = None
+            is_member_call: bool = False
             if func_node:
                 if func_node.type == "identifier":
                     callee_name = _read_text(func_node, source)
                 elif func_node.type == "selector_expression":
                     field = func_node.child_by_field_name("field")
+                    operand = func_node.child_by_field_name("operand")
+                    receiver_name = _read_text(operand, source) if operand else ""
+                    # Package-qualified call (e.g. fmt.Println) → allow cross-file resolution.
+                    # Receiver method call (e.g. s.logger.Log) → skip, no import evidence.
+                    is_member_call = receiver_name not in go_imported_pkgs
                     if field:
                         callee_name = _read_text(field, source)
             if callee_name:
@@ -2122,6 +2201,7 @@ def extract_go(path: Path) -> dict:
                     raw_calls.append({
                         "caller_nid": caller_nid,
                         "callee": callee_name,
+                        "is_member_call": is_member_call,
                         "source_file": str_path,
                         "source_location": f"L{node.start_point[0] + 1}",
                     })
@@ -2160,7 +2240,7 @@ def extract_rust(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -2272,10 +2352,12 @@ def extract_rust(path: Path) -> dict:
         if node.type == "call_expression":
             func_node = node.child_by_field_name("function")
             callee_name: str | None = None
+            is_member_call: bool = False
             if func_node:
                 if func_node.type == "identifier":
                     callee_name = _read_text(func_node, source)
                 elif func_node.type == "field_expression":
+                    is_member_call = True
                     field = func_node.child_by_field_name("field")
                     if field:
                         callee_name = _read_text(field, source)
@@ -2304,6 +2386,7 @@ def extract_rust(path: Path) -> dict:
                     raw_calls.append({
                         "caller_nid": caller_nid,
                         "callee": callee_name,
+                        "is_member_call": is_member_call,
                         "source_file": str_path,
                         "source_location": f"L{node.start_point[0] + 1}",
                     })
@@ -2342,7 +2425,7 @@ def extract_zig(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -2462,7 +2545,9 @@ def extract_zig(path: Path) -> dict:
         if node.type == "call_expression":
             fn = node.child_by_field_name("function")
             if fn:
-                callee = _read_text(fn, source).split(".")[-1]
+                fn_text = _read_text(fn, source)
+                callee = fn_text.split(".")[-1]
+                is_member_call = "." in fn_text
                 tgt_nid = next((n["id"] for n in nodes if n["label"] in
                                 (f"{callee}()", f".{callee}()")), None)
                 if tgt_nid and tgt_nid != caller_nid:
@@ -2476,6 +2561,7 @@ def extract_zig(path: Path) -> dict:
                     raw_calls.append({
                         "caller_nid": caller_nid,
                         "callee": callee,
+                        "is_member_call": is_member_call,
                         "source_file": str_path,
                         "source_location": f"L{node.start_point[0] + 1}",
                     })
@@ -2509,7 +2595,7 @@ def extract_powershell(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -2644,6 +2730,7 @@ def extract_powershell(path: Path) -> dict:
                         raw_calls.append({
                             "caller_nid": caller_nid,
                             "callee": cmd_text,
+                            "is_member_call": False,
                             "source_file": str_path,
                             "source_location": f"L{node.start_point[0] + 1}",
                         })
@@ -2707,7 +2794,7 @@ def _resolve_cross_file_imports(
     stem_to_path: dict[str, Path] = {p.stem: p for p in paths}
 
     for file_result, path in zip(per_file, paths):
-        stem = path.stem
+        stem = _file_stem(path)
         str_path = str(path)
 
         # Find all classes defined in this file (the importers)
@@ -2831,7 +2918,7 @@ def _resolve_cross_file_java_imports(
     new_edges: list[dict] = []
     seen_pairs: set[tuple[str, str]] = set()
     for path in paths:
-        file_nid = _make_id(path.stem)
+        file_nid = _make_id(str(path))
         try:
             source = path.read_bytes()
             tree = parser.parse(source)
@@ -2895,7 +2982,7 @@ def extract_objc(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -3097,7 +3184,7 @@ def extract_elixir(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = path.stem
+    stem = _file_stem(path)
     str_path = str(path)
     nodes: list[dict] = []
     edges: list[dict] = []
@@ -3233,8 +3320,10 @@ def extract_elixir(path: Path) -> dict:
                     return
                 break
         callee_name: str | None = None
+        is_member_call: bool = False
         for child in node.children:
             if child.type == "dot":
+                is_member_call = True
                 dot_text = source[child.start_byte:child.end_byte].decode("utf-8", errors="replace")
                 parts = dot_text.rstrip(".").split(".")
                 if parts:
@@ -3256,6 +3345,7 @@ def extract_elixir(path: Path) -> dict:
                 raw_calls.append({
                     "caller_nid": caller_nid,
                     "callee": callee_name,
+                    "is_member_call": is_member_call,
                     "source_file": str_path,
                     "source_location": f"L{node.start_point[0] + 1}",
                 })
@@ -3453,6 +3543,10 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
             callee = rc.get("callee", "")
             if not callee:
                 continue
+            # Skip member-call callees: obj.log() → "log" has no import evidence
+            # and collides with any top-level function named "log" in the corpus.
+            if rc.get("is_member_call"):
+                continue
             tgt = global_label_to_nid.get(callee.lower())
             caller = rc["caller_nid"]
             if tgt and tgt != caller and (caller, tgt) not in existing_pairs:
@@ -3468,6 +3562,19 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
                     "source_location": rc.get("source_location"),
                     "weight": 1.0,
                 })
+
+    # Relativize source_file fields so paths are portable across machines (#555)
+    for item in all_nodes + all_edges:
+        sf = item.get("source_file")
+        if not sf:
+            continue
+        sf_path = Path(sf)
+        if not sf_path.is_absolute():
+            continue
+        try:
+            item["source_file"] = str(sf_path.relative_to(root))
+        except ValueError:
+            pass
 
     return {
         "nodes": all_nodes,

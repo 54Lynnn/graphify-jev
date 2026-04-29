@@ -235,7 +235,7 @@ Process each file one at a time. For each file:
    - INFERRED: reasonable inference (shared structure, implied dependency)
    - AMBIGUOUS: uncertain — flag it, do not omit
    - Code files: semantic edges AST cannot find. Do not re-extract imports.
-   - Doc/paper files: named concepts, entities, citations, and rationale nodes (WHY decisions were made → `rationale_for` edges)
+   - Doc/paper files: named concepts, entities, citations. Store rationale (WHY decisions were made) as a `rationale` attribute on the relevant node, not as a separate node. When adding `calls` edges: source is caller, target is callee.
    - Image files: use vision — understand what the image IS, not just OCR
    - DEEP_MODE (if --mode deep): be aggressive with INFERRED edges
    - Semantic similarity: if two concepts solve the same problem without a structural link, add `semantically_similar_to` INFERRED edge (confidence 0.6-0.95). Non-obvious cross-file links only.
