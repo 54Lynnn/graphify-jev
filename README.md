@@ -53,9 +53,10 @@ Same syntax as `.gitignore`. You can keep a single `.graphifyignore` at your rep
 
 ## What's new in v0.5.5
 
-- **Kimi K2.6 backend** — `pip install 'graphifyy[kimi]'` then set `MOONSHOT_API_KEY` to route semantic extraction through Kimi K2.6 instead of Claude subagents. 3-6x richer relation extraction at ~3x lower cost. Uses `graphify.llm.extract_corpus_parallel(files, backend="kimi")`. Claude remains the default; Kimi is opt-in.
-- **Phantom god node fix (#598)** — member-call callees (`this.logger.log()` → `log`) are no longer cross-file resolved. Previously, any top-level function named `log` anywhere in the corpus would attract hundreds of spurious INFERRED edges from every `Logger.log` call in NestJS/Vue/etc. codebases. Affects all languages: JS/TS, Go, Rust, Swift, Kotlin, Scala, PHP, C++, C#, Zig, Elixir.
+- **Kimi K2.6 backend** — `pip install 'graphifyy[kimi]'` then set `MOONSHOT_API_KEY` to route semantic extraction through Kimi K2.6 instead of Claude subagents. 3-6x richer relation extraction at ~3x lower cost. Uses `graphify.llm.extract_corpus_parallel(files, backend="kimi")`. Claude remains the default; Kimi is opt-in. A tip is printed when `MOONSHOT_API_KEY` is not set so users discover it naturally.
+- **Phantom god node fix (#598)** — member-call callees (`this.logger.log()` → `log`) are no longer cross-file resolved. Previously, any top-level function named `log` anywhere in the corpus would attract hundreds of spurious INFERRED edges from every `Logger.log` call in NestJS/Vue/etc. codebases. Go package-qualified calls (`pkg.Func()`) are correctly preserved. Affects all languages: JS/TS, Go, Rust, Swift, Kotlin, Scala, PHP, C++, C#, Zig, Elixir.
 - **`concept` file_type fix (#601)** — nodes with `file_type: "concept"` (e.g. tech stack descriptions extracted from Markdown) no longer produce validation warnings. Added `concept` to `VALID_FILE_TYPES`.
+- **`graphify update` remembers scan root** — the scan root is saved to `graphify-out/.graphify_root` on every build. Running `graphify update` with no path argument now picks it up automatically instead of defaulting to `.` and re-scanning the wrong directory.
 
 ## What's new in v0.5.4
 
