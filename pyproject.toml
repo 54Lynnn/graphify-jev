@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "graphifyy"
-version = "0.5.4"
+version = "0.5.5"
 description = "AI coding assistant skill (Claude Code, Codex, OpenCode, Cursor, Gemini CLI, Aider, OpenClaw, Factory Droid, Trae, Hermes, Kiro, Google Antigravity) - turn any folder of code, docs, papers, images, or videos into a queryable knowledge graph"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -50,7 +50,8 @@ svg = ["matplotlib"]
 leiden = ["graspologic; python_version < '3.13'"]
 office = ["python-docx", "openpyxl"]
 video = ["faster-whisper", "yt-dlp"]
-all = ["mcp", "neo4j", "pypdf", "html2text", "watchdog", "graspologic; python_version < '3.13'", "python-docx", "openpyxl", "faster-whisper", "yt-dlp", "matplotlib"]
+kimi = ["openai"]
+all = ["mcp", "neo4j", "pypdf", "html2text", "watchdog", "graspologic; python_version < '3.13'", "python-docx", "openpyxl", "faster-whisper", "yt-dlp", "matplotlib", "openai"]
 
 [project.scripts]
 graphify = "graphify.__main__:main"

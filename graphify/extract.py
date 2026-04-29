@@ -1052,6 +1052,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
 
         if node.type in config.call_types:
             callee_name: str | None = None
+            is_member_call: bool = False
 
             # Special handling per language
             if config.ts_module == "tree_sitter_swift":
@@ -1061,6 +1062,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if first.type == "simple_identifier":
                         callee_name = _read_text(first, source)
                     elif first.type == "navigation_expression":
+                        is_member_call = True
                         for child in first.children:
                             if child.type == "navigation_suffix":
                                 for sc in child.children:
@@ -1073,6 +1075,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if first.type == "simple_identifier":
                         callee_name = _read_text(first, source)
                     elif first.type == "navigation_expression":
+                        is_member_call = True
                         for child in reversed(first.children):
                             if child.type == "simple_identifier":
                                 callee_name = _read_text(child, source)
@@ -1084,6 +1087,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if first.type == "identifier":
                         callee_name = _read_text(first, source)
                     elif first.type == "field_expression":
+                        is_member_call = True
                         field = first.child_by_field_name("field")
                         if field:
                             callee_name = _read_text(field, source)
@@ -1103,6 +1107,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                             raw = _read_text(child, source)
                             if "." in raw:
                                 callee_name = raw.split(".")[-1]
+                                is_member_call = True
                             else:
                                 callee_name = raw
                             break
@@ -1118,6 +1123,8 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if scope_node:
                         callee_name = _read_text(scope_node, source)
                 else:
+                    # member_call_expression: $obj->method()
+                    is_member_call = True
                     name_node = node.child_by_field_name("name")
                     if name_node:
                         callee_name = _read_text(name_node, source)
@@ -1128,6 +1135,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if func_node.type == "identifier":
                         callee_name = _read_text(func_node, source)
                     elif func_node.type in ("field_expression", "qualified_identifier"):
+                        is_member_call = True
                         name = func_node.child_by_field_name("field") or func_node.child_by_field_name("name")
                         if name:
                             callee_name = _read_text(name, source)
@@ -1138,6 +1146,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     if func_node.type == "identifier":
                         callee_name = _read_text(func_node, source)
                     elif func_node.type in config.call_accessor_node_types:
+                        is_member_call = True
                         if config.call_accessor_field:
                             attr = func_node.child_by_field_name(config.call_accessor_field)
                             if attr:
@@ -1167,6 +1176,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                     raw_calls.append({
                         "caller_nid": caller_nid,
                         "callee": callee_name,
+                        "is_member_call": is_member_call,
                         "source_file": str_path,
                         "source_location": f"L{node.start_point[0] + 1}",
                     })
@@ -2075,10 +2085,12 @@ def extract_go(path: Path) -> dict:
         if node.type == "call_expression":
             func_node = node.child_by_field_name("function")
             callee_name: str | None = None
+            is_member_call: bool = False
             if func_node:
                 if func_node.type == "identifier":
                     callee_name = _read_text(func_node, source)
                 elif func_node.type == "selector_expression":
+                    is_member_call = True
                     field = func_node.child_by_field_name("field")
                     if field:
                         callee_name = _read_text(field, source)
@@ -2102,6 +2114,7 @@ def extract_go(path: Path) -> dict:
                     raw_calls.append({
                         "caller_nid": caller_nid,
                         "callee": callee_name,
+                        "is_member_call": is_member_call,
                         "source_file": str_path,
                         "source_location": f"L{node.start_point[0] + 1}",
                     })
@@ -2248,10 +2261,12 @@ def extract_rust(path: Path) -> dict:
         if node.type == "call_expression":
             func_node = node.child_by_field_name("function")
             callee_name: str | None = None
+            is_member_call: bool = False
             if func_node:
                 if func_node.type == "identifier":
                     callee_name = _read_text(func_node, source)
                 elif func_node.type == "field_expression":
+                    is_member_call = True
                     field = func_node.child_by_field_name("field")
                     if field:
                         callee_name = _read_text(field, source)
@@ -2279,6 +2294,7 @@ def extract_rust(path: Path) -> dict:
                     raw_calls.append({
                         "caller_nid": caller_nid,
                         "callee": callee_name,
+                        "is_member_call": is_member_call,
                         "source_file": str_path,
                         "source_location": f"L{node.start_point[0] + 1}",
                     })
@@ -2433,7 +2449,9 @@ def extract_zig(path: Path) -> dict:
         if node.type == "call_expression":
             fn = node.child_by_field_name("function")
             if fn:
-                callee = _read_text(fn, source).split(".")[-1]
+                fn_text = _read_text(fn, source)
+                callee = fn_text.split(".")[-1]
+                is_member_call = "." in fn_text
                 tgt_nid = next((n["id"] for n in nodes if n["label"] in
                                 (f"{callee}()", f".{callee}()")), None)
                 if tgt_nid and tgt_nid != caller_nid:
@@ -2447,6 +2465,7 @@ def extract_zig(path: Path) -> dict:
                     raw_calls.append({
                         "caller_nid": caller_nid,
                         "callee": callee,
+                        "is_member_call": is_member_call,
                         "source_file": str_path,
                         "source_location": f"L{node.start_point[0] + 1}",
                     })
@@ -2611,6 +2630,7 @@ def extract_powershell(path: Path) -> dict:
                         raw_calls.append({
                             "caller_nid": caller_nid,
                             "callee": cmd_text,
+                            "is_member_call": False,
                             "source_file": str_path,
                             "source_location": f"L{node.start_point[0] + 1}",
                         })
@@ -3192,8 +3212,10 @@ def extract_elixir(path: Path) -> dict:
                     return
                 break
         callee_name: str | None = None
+        is_member_call: bool = False
         for child in node.children:
             if child.type == "dot":
+                is_member_call = True
                 dot_text = source[child.start_byte:child.end_byte].decode("utf-8", errors="replace")
                 parts = dot_text.rstrip(".").split(".")
                 if parts:
@@ -3214,6 +3236,7 @@ def extract_elixir(path: Path) -> dict:
                 raw_calls.append({
                     "caller_nid": caller_nid,
                     "callee": callee_name,
+                    "is_member_call": is_member_call,
                     "source_file": str_path,
                     "source_location": f"L{node.start_point[0] + 1}",
                 })
@@ -3410,6 +3433,10 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
         for rc in result.get("raw_calls", []):
             callee = rc.get("callee", "")
             if not callee:
+                continue
+            # Skip member-call callees: obj.log() → "log" has no import evidence
+            # and collides with any top-level function named "log" in the corpus.
+            if rc.get("is_member_call"):
                 continue
             tgt = global_label_to_nid.get(callee.lower())
             caller = rc["caller_nid"]

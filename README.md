@@ -51,6 +51,12 @@ dist/
 
 Same syntax as `.gitignore`. You can keep a single `.graphifyignore` at your repo root — patterns work correctly even when graphify is run on a subfolder.
 
+## What's new in v0.5.5
+
+- **Kimi K2.6 backend** — `pip install 'graphifyy[kimi]'` then set `MOONSHOT_API_KEY` to route semantic extraction through Kimi K2.6 instead of Claude subagents. 3-6x richer relation extraction at ~3x lower cost. Uses `graphify.llm.extract_corpus_parallel(files, backend="kimi")`. Claude remains the default; Kimi is opt-in.
+- **Phantom god node fix (#598)** — member-call callees (`this.logger.log()` → `log`) are no longer cross-file resolved. Previously, any top-level function named `log` anywhere in the corpus would attract hundreds of spurious INFERRED edges from every `Logger.log` call in NestJS/Vue/etc. codebases. Affects all languages: JS/TS, Go, Rust, Swift, Kotlin, Scala, PHP, C++, C#, Zig, Elixir.
+- **`concept` file_type fix (#601)** — nodes with `file_type: "concept"` (e.g. tech stack descriptions extracted from Markdown) no longer produce validation warnings. Added `concept` to `VALID_FILE_TYPES`.
+
 ## What's new in v0.5.4
 
 - **SSRF DNS rebinding fix** — `safe_fetch` now patches `socket.getaddrinfo` for the entire duration of each HTTP request so a DNS rebinding attack cannot swap a public IP (returned during validation) for a private one during the actual connection. DNS lookup failures now also raise an error instead of silently skipping the IP check.

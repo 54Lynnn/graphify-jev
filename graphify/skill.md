@@ -198,7 +198,9 @@ After transcription:
 
 **Before starting:** note whether `--mode deep` was given. You must pass `DEEP_MODE=true` to every subagent in Step B2 if it was. Track this from the original invocation - do not lose it.
 
-This step has two parts: **structural extraction** (deterministic, free) and **semantic extraction** (Claude, costs tokens).
+This step has two parts: **structural extraction** (deterministic, free) and **semantic extraction** (LLM, costs tokens).
+
+**Kimi K2.6 option:** If `MOONSHOT_API_KEY` is set in the environment, you can run semantic extraction via Kimi instead of Claude subagents. Kimi K2.6 is OpenAI-compatible, extracts 3-6x richer relations, and costs ~3x less per token. To use it: `from graphify.llm import extract_corpus_parallel; result = extract_corpus_parallel(files, backend="kimi")`. Install with `pip install 'graphifyy[kimi]'`. Claude remains the default — Kimi is opt-in via the env var.
 
 **Run Part A (AST) and Part B (semantic) in parallel. Dispatch all semantic subagents AND start AST extraction in the same message. Both can run simultaneously since they operate on different file types. Merge results in Part C as before.**
 
