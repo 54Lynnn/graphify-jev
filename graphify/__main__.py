@@ -1,6 +1,7 @@
 """graphify CLI - `graphify install` sets up the Claude Code skill."""
 from __future__ import annotations
 import json
+import os
 import platform
 import re
 import shutil
@@ -1427,7 +1428,7 @@ def main() -> None:
         ok = _rebuild_code(watch_path)
         if ok:
             print("Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.")
-            if not _os.environ.get("MOONSHOT_API_KEY") and not _os.environ.get("GRAPHIFY_NO_TIPS"):
+            if not os.environ.get("MOONSHOT_API_KEY") and not os.environ.get("GRAPHIFY_NO_TIPS"):
                 print("Tip: set MOONSHOT_API_KEY to use Kimi K2.6 for semantic extraction — 3x cheaper, richer graphs. pip install 'graphifyy[kimi]'")
         else:
             print("Nothing to update or rebuild failed — check output above.", file=sys.stderr)
