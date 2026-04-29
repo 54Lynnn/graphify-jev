@@ -17,12 +17,14 @@ BACKENDS: dict[str, dict] = {
         "default_model": "claude-sonnet-4-6",
         "env_key": "ANTHROPIC_API_KEY",
         "pricing": {"input": 3.0, "output": 15.0},  # USD per 1M tokens
+        "temperature": 0,
     },
     "kimi": {
         "base_url": "https://api.moonshot.ai/v1",
         "default_model": "kimi-k2.6",
         "env_key": "MOONSHOT_API_KEY",
         "pricing": {"input": 0.74, "output": 4.66},  # USD per 1M tokens
+        "temperature": None,  # kimi-k2.6 enforces its own fixed temperature; sending any value raises 400
     },
 }
 
@@ -78,6 +80,7 @@ def _call_openai_compat(
     api_key: str,
     model: str,
     user_message: str,
+    temperature: float | None = 0,
 ) -> dict:
     """Call any OpenAI-compatible API (Kimi, OpenAI, etc.) and return parsed JSON."""
     try:
@@ -89,15 +92,17 @@ def _call_openai_compat(
         ) from exc
 
     client = OpenAI(api_key=api_key, base_url=base_url)
-    resp = client.chat.completions.create(
-        model=model,
-        messages=[
+    kwargs: dict = {
+        "model": model,
+        "messages": [
             {"role": "system", "content": _EXTRACTION_SYSTEM},
             {"role": "user", "content": user_message},
         ],
-        max_completion_tokens=8192,
-        temperature=0,
-    )
+        "max_completion_tokens": 8192,
+    }
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    resp = client.chat.completions.create(**kwargs)
     result = _parse_llm_json(resp.choices[0].message.content or "{}")
     result["input_tokens"] = resp.usage.prompt_tokens if resp.usage else 0
     result["output_tokens"] = resp.usage.completion_tokens if resp.usage else 0
@@ -157,7 +162,7 @@ def extract_files_direct(
     if backend == "claude":
         return _call_claude(key, mdl, user_msg)
     else:
-        return _call_openai_compat(cfg["base_url"], key, mdl, user_msg)
+        return _call_openai_compat(cfg["base_url"], key, mdl, user_msg, temperature=cfg.get("temperature", 0))
 
 
 def extract_corpus_parallel(
