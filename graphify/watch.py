@@ -98,6 +98,7 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
         questions = suggest_questions(G, communities, labels)
 
         out.mkdir(exist_ok=True)
+        (out / ".graphify_root").write_text(str(watch_root), encoding="utf-8")
 
         json_written = to_json(G, communities, str(out / "graph.json"))
         if not json_written:

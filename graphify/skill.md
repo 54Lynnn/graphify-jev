@@ -112,6 +112,8 @@ if [ -z "$PYTHON" ]; then PYTHON="python3"; fi
 # Write interpreter path for all subsequent steps (persists across invocations)
 mkdir -p graphify-out
 "$PYTHON" -c "import sys; open('graphify-out/.graphify_python', 'w').write(sys.executable)"
+# Save scan root so `graphify update` (no args) knows where to look next time
+echo "$(cd INPUT_PATH && pwd)" > graphify-out/.graphify_root
 ```
 
 If the import succeeds, print nothing and move straight to Step 2.
@@ -200,7 +202,10 @@ After transcription:
 
 This step has two parts: **structural extraction** (deterministic, free) and **semantic extraction** (LLM, costs tokens).
 
-**Kimi K2.6 option:** If `MOONSHOT_API_KEY` is set in the environment, you can run semantic extraction via Kimi instead of Claude subagents. Kimi K2.6 is OpenAI-compatible, extracts 3-6x richer relations, and costs ~3x less per token. To use it: `from graphify.llm import extract_corpus_parallel; result = extract_corpus_parallel(files, backend="kimi")`. Install with `pip install 'graphifyy[kimi]'`. Claude remains the default — Kimi is opt-in via the env var.
+**Before dispatching subagents:** check whether `MOONSHOT_API_KEY` is set. If it is NOT set, print this one-liner to the user:
+> Tip: set `MOONSHOT_API_KEY` to use Kimi K2.6 for semantic extraction — 3x cheaper, richer graphs (`pip install 'graphifyy[kimi]'`).
+
+Print it once, then continue. If `MOONSHOT_API_KEY` IS set, use `graphify.llm.extract_corpus_parallel(files, backend="kimi")` for semantic extraction instead of dispatching Claude subagents.
 
 **Run Part A (AST) and Part B (semantic) in parallel. Dispatch all semantic subagents AND start AST extraction in the same message. Both can run simultaneously since they operate on different file types. Merge results in Part C as before.**
 

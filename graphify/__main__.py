@@ -1410,7 +1410,15 @@ def main() -> None:
         print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
 
     elif cmd == "update":
-        watch_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(".")
+        if len(sys.argv) > 2:
+            watch_path = Path(sys.argv[2])
+        else:
+            # Try to recover the scan root saved by the last full build
+            saved = Path("graphify-out/.graphify_root")
+            if saved.exists():
+                watch_path = Path(saved.read_text(encoding="utf-8").strip())
+            else:
+                watch_path = Path(".")
         if not watch_path.exists():
             print(f"error: path not found: {watch_path}", file=sys.stderr)
             sys.exit(1)
@@ -1419,6 +1427,8 @@ def main() -> None:
         ok = _rebuild_code(watch_path)
         if ok:
             print("Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.")
+            if not _os.environ.get("MOONSHOT_API_KEY") and not _os.environ.get("GRAPHIFY_NO_TIPS"):
+                print("Tip: set MOONSHOT_API_KEY to use Kimi K2.6 for semantic extraction — 3x cheaper, richer graphs. pip install 'graphifyy[kimi]'")
         else:
             print("Nothing to update or rebuild failed — check output above.", file=sys.stderr)
             sys.exit(1)
