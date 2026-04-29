@@ -51,46 +51,6 @@ dist/
 
 Same syntax as `.gitignore`. You can keep a single `.graphifyignore` at your repo root — patterns work correctly even when graphify is run on a subfolder.
 
-## What's new in v0.5.5
-
-- **Kimi K2.6 backend** — `pip install 'graphifyy[kimi]'` then set `MOONSHOT_API_KEY` to route semantic extraction through Kimi K2.6 instead of Claude subagents. 3-6x richer relation extraction at ~3x lower cost. Uses `graphify.llm.extract_corpus_parallel(files, backend="kimi")`. Claude remains the default; Kimi is opt-in. A tip is printed when `MOONSHOT_API_KEY` is not set so users discover it naturally.
-- **Phantom god node fix (#598)** — member-call callees (`this.logger.log()` → `log`) are no longer cross-file resolved. Previously, any top-level function named `log` anywhere in the corpus would attract hundreds of spurious INFERRED edges from every `Logger.log` call in NestJS/Vue/etc. codebases. Go package-qualified calls (`pkg.Func()`) are correctly preserved. Affects all languages: JS/TS, Go, Rust, Swift, Kotlin, Scala, PHP, C++, C#, Zig, Elixir.
-- **`concept` file_type fix (#601)** — nodes with `file_type: "concept"` (e.g. tech stack descriptions extracted from Markdown) no longer produce validation warnings. Added `concept` to `VALID_FILE_TYPES`.
-- **`graphify update` remembers scan root** — the scan root is saved to `graphify-out/.graphify_root` on every build. Running `graphify update` with no path argument now picks it up automatically instead of defaulting to `.` and re-scanning the wrong directory.
-
-## What's new in v0.5.4
-
-- **SSRF DNS rebinding fix** — `safe_fetch` now patches `socket.getaddrinfo` for the entire duration of each HTTP request so a DNS rebinding attack cannot swap a public IP (returned during validation) for a private one during the actual connection. DNS lookup failures now also raise an error instead of silently skipping the IP check.
-- **yt-dlp SSRF bypass fix** — `download_audio` now runs `validate_url` before handing the URL to yt-dlp, blocking private IPs and disallowed schemes on the video/audio ingest path.
-
-## What's new in v0.5.3
-
-- **Cache namespace fix** — AST and semantic cache entries now live in separate `cache/ast/` and `cache/semantic/` subdirectories. Previously both used the same flat `cache/` directory, causing semantic results to silently overwrite AST entries for code files on mixed code+docs corpora, which triggered the shrink guard on every subsequent `graphify update`. Existing flat cache entries are read as a migration fallback so no cache is lost on upgrade.
-
-## What's new in v0.5.2
-
-- **Hook fix for Claude Code v2.1.117+** — the PreToolUse hook now matches on `Bash` instead of `Glob|Grep`. Claude Code v2.1.117 removed dedicated Grep/Glob tools; searches now go through Bash. The hook inspects the command string and only fires on search-like calls (grep, rg, find, fd etc.), so it does not trigger on every shell command.
-
-## What's new in v0.5.1
-
-- **Node ID collision fix** — files sharing the same name in different directories (e.g. two `utils.py` files) now get unique IDs by prefixing the parent directory name.
-- **Portable `source_file` paths** — `extract()` now relativizes all `source_file` fields before returning, so `graph.json` is portable across machines and git worktrees.
-- **Desync guard** — `to_json()` returns a boolean; `graphify update` only writes `GRAPH_REPORT.md` and `graph.html` if the JSON write succeeded (shrink guard fired = no stale report).
-- **TypeScript path aliases** — `@/` and other `compilerOptions.paths` aliases in `tsconfig.json` are now resolved to real file nodes instead of being dropped as external packages.
-- **Show All / Hide All** — community panel in the HTML visualization now has Show All and Hide All buttons.
-- **Skill prompt fixes** — rationale is stored as a node attribute (not a spurious fragment node); `calls` edge direction is now explicitly enforced (caller → callee).
-- **Hook and tooling fixes** — `~` expansion in `core.hooksPath`, correct `.gitignore` inline comment placement, `# nosec` annotations on file write sinks.
-
-## What's new in v0.5.0
-
-- **`graphify clone <github-url>`** — clone any public GitHub repo and run the full pipeline on it. Clones to `~/.graphify/repos/<owner>/<repo>`, reuses existing clones on repeat runs (`git pull`). Supports `--branch` and `--out`.
-- **`graphify merge-graphs`** — combine two or more `graph.json` outputs into one cross-repo graph. Each node is tagged with its source repo. Useful for mapping dependencies across multiple projects.
-- **`CLAUDE_CONFIG_DIR` support** — `graphify install` now respects the `CLAUDE_CONFIG_DIR` environment variable when installing the Claude Code skill, instead of always writing to `~/.claude`.
-- **Shrink guard** — `to_json()` refuses to overwrite `graph.json` with a smaller graph. Prevents silent data loss when `--update` is called with a partial chunk list.
-- **`build_merge()`** — new library function for safe incremental updates: loads existing graph, merges new chunks, optionally prunes deleted-file nodes, never shrinks.
-- **Duplicate node deduplication** — `deduplicate_by_label()` collapses nodes that share a normalised label (e.g. from parallel subagents generating `achille_varzi` and `achille_varzi_c4`). Chunk-suffix contamination is also blocked at the prompt level.
-- **Bug fixes** — `graphify-out/` is now excluded from source scanning so generated artifacts never trigger false incremental refresh pressure.
-
 ## How it works
 
 graphify runs in three passes. First, a deterministic AST pass extracts structure from code files (classes, functions, imports, call graphs, docstrings, rationale comments) with no LLM needed. Second, video and audio files are transcribed locally with faster-whisper using a domain-aware prompt derived from corpus god nodes — transcripts are cached so re-runs are instant. Third, Claude subagents run in parallel over docs, papers, images, and transcripts to extract concepts, relationships, and design rationale. The results are merged into a NetworkX graph, clustered with Leiden community detection, and exported as interactive HTML, queryable JSON, and a plain-language audit report.
@@ -425,6 +385,8 @@ For better accuracy on technical content, use a larger model:
 ```
 
 Audio never leaves your machine. All transcription runs locally.
+
+> **Legal notice:** Only use `/graphify add <url>` to download content you have the rights to. graphify uses yt-dlp for audio extraction — the same terms of service and copyright rules apply.
 
 ## What you get
 
