@@ -9,7 +9,7 @@ description = "AI coding assistant skill (Claude Code, Codex, OpenCode, Cursor, 
 readme = "README.md"
 license = { file = "LICENSE" }
 keywords = ["claude", "claude-code", "codex", "opencode", "cursor", "gemini", "aider", "kiro", "knowledge-graph", "rag", "graphrag", "obsidian", "community-detection", "tree-sitter", "leiden", "llm"]
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.10"
 dependencies = [
     "networkx",
     "tree-sitter>=0.23.0",
