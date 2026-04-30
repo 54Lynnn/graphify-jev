@@ -9,7 +9,39 @@ import os
 import sys
 import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+# `_read_files` truncates each file at this many characters before joining into
+# the user message. Token estimates use the same cap so packing matches reality.
+_FILE_CHAR_CAP = 20_000
+# `_read_files` also wraps each file in a `=== {rel} ===\n...\n\n` separator;
+# this is roughly the per-file overhead in characters that the prompt adds.
+_PER_FILE_OVERHEAD_CHARS = 80
+# Coarse fallback used only when `tiktoken` is not installed. 1 token ≈ 4 chars
+# is the standard heuristic for English/code on BPE tokenizers.
+_CHARS_PER_TOKEN = 4
+
+
+def _get_tokenizer():
+    """Return a tiktoken encoder for accurate token counts, or None if tiktoken
+    is not installed. We use `cl100k_base` (GPT-4 / GPT-3.5-turbo) as a proxy:
+    Kimi-K2 ships a tiktoken-based tokenizer with very similar BPE behaviour,
+    and Claude's tokenizer has a comparable token-to-char ratio for prose/code.
+    Estimates only need to be within ~5%, not exact.
+    """
+    try:
+        import tiktoken
+    except ImportError:
+        return None
+    try:
+        return tiktoken.get_encoding("cl100k_base")
+    except Exception:  # network failure on first-use download, etc.
+        return None
+
+
+# Cached at import time. None if tiktoken is unavailable; consumers must handle.
+_TOKENIZER = _get_tokenizer()
 
 BACKENDS: dict[str, dict] = {
     "claude": {
@@ -165,6 +197,70 @@ def extract_files_direct(
         return _call_openai_compat(cfg["base_url"], key, mdl, user_msg, temperature=cfg.get("temperature", 0))
 
 
+def _estimate_file_tokens(path: Path) -> int:
+    """Estimate the prompt-token cost of a single file under `_read_files` rules.
+
+    Uses tiktoken (`cl100k_base`) when available for accurate counts. Falls back
+    to the chars/4 heuristic if tiktoken is not installed. Both paths cap at
+    `_FILE_CHAR_CAP` to match `_read_files`'s truncation, plus a constant for
+    the `=== rel ===` separator. Returns 0 for unreadable paths so they don't
+    blow up packing.
+    """
+    if _TOKENIZER is None:
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return 0
+        chars = min(size, _FILE_CHAR_CAP) + _PER_FILE_OVERHEAD_CHARS
+        return chars // _CHARS_PER_TOKEN
+
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")[:_FILE_CHAR_CAP]
+    except OSError:
+        return 0
+    return len(_TOKENIZER.encode(content)) + (_PER_FILE_OVERHEAD_CHARS // _CHARS_PER_TOKEN)
+
+
+def _pack_chunks_by_tokens(
+    files: list[Path],
+    token_budget: int,
+) -> list[list[Path]]:
+    """Greedily pack files into chunks that fit a token budget.
+
+    Files are first grouped by parent directory so related artifacts share a
+    chunk (cross-file edges are more likely to be extracted within a chunk
+    than across chunks). Within each directory, files are added one at a
+    time; a chunk is closed when adding the next file would exceed the
+    budget. A single file larger than the budget gets its own chunk and the
+    caller is expected to handle the API error if it actually overflows the
+    model's context window — packing can't shrink one big file.
+    """
+    if token_budget <= 0:
+        raise ValueError(f"token_budget must be positive, got {token_budget}")
+
+    by_dir: dict[Path, list[Path]] = {}
+    for f in files:
+        by_dir.setdefault(f.parent, []).append(f)
+
+    chunks: list[list[Path]] = []
+    current: list[Path] = []
+    current_tokens = 0
+
+    for directory in sorted(by_dir):
+        for path in by_dir[directory]:
+            cost = _estimate_file_tokens(path)
+            if current and current_tokens + cost > token_budget:
+                chunks.append(current)
+                current = []
+                current_tokens = 0
+            current.append(path)
+            current_tokens += cost
+
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def extract_corpus_parallel(
     files: list[Path],
     backend: str = "kimi",
@@ -173,28 +269,85 @@ def extract_corpus_parallel(
     root: Path = Path("."),
     chunk_size: int = 20,
     on_chunk_done: Callable | None = None,
+    token_budget: int | None = 60_000,
+    max_concurrency: int = 4,
 ) -> dict:
     """Extract a corpus in chunks, merging results.
 
-    on_chunk_done(idx, total, chunk_result) is called after each chunk if provided.
-    Returns merged dict with nodes, edges, hyperedges, input_tokens, output_tokens.
+    Chunking strategy:
+        - If `token_budget` is set (default 60_000), files are packed to fit
+          the budget and grouped by parent directory. This avoids the worst
+          case where 20 randomly-grouped files exceed a model's context
+          window in a single request.
+        - If `token_budget=None`, falls back to the legacy fixed-count
+          `chunk_size` packing for backwards compatibility.
+
+    Concurrency:
+        - Chunks run in parallel via a thread pool capped at `max_concurrency`
+          (default 4 — conservative to stay under provider rate limits).
+        - Set `max_concurrency=1` to force sequential execution.
+
+    `on_chunk_done(idx, total, chunk_result)` fires once per chunk as it
+    completes (in completion order, not submission order). `idx` is the
+    chunk's submission index so callers can correlate progress.
+
+    Returns merged dict with nodes, edges, hyperedges, input_tokens,
+    output_tokens. Failed chunks are logged to stderr and skipped — one bad
+    chunk does not abort the run.
     """
-    chunks = [files[i:i + chunk_size] for i in range(0, len(files), chunk_size)]
+    if token_budget is not None:
+        chunks = _pack_chunks_by_tokens(files, token_budget=token_budget)
+    else:
+        chunks = [files[i:i + chunk_size] for i in range(0, len(files), chunk_size)]
+
     merged: dict = {"nodes": [], "edges": [], "hyperedges": [], "input_tokens": 0, "output_tokens": 0}
+    total = len(chunks)
 
-    for idx, chunk in enumerate(chunks):
+    def _run_one(idx: int, chunk: list[Path]) -> tuple[int, dict | None, Exception | None]:
         t0 = time.time()
-        result = extract_files_direct(chunk, backend=backend, api_key=api_key, model=model, root=root)
-        result["elapsed_seconds"] = round(time.time() - t0, 2)
-        merged["nodes"].extend(result.get("nodes", []))
-        merged["edges"].extend(result.get("edges", []))
-        merged["hyperedges"].extend(result.get("hyperedges", []))
-        merged["input_tokens"] += result.get("input_tokens", 0)
-        merged["output_tokens"] += result.get("output_tokens", 0)
-        if callable(on_chunk_done):
-            on_chunk_done(idx, len(chunks), result)
+        try:
+            result = extract_files_direct(chunk, backend=backend, api_key=api_key, model=model, root=root)
+            result["elapsed_seconds"] = round(time.time() - t0, 2)
+            return idx, result, None
+        except Exception as exc:  # noqa: BLE001 — caller-facing surface, log + continue
+            return idx, None, exc
 
+    workers = max(1, min(max_concurrency, total))
+    if workers == 1:
+        # Avoid thread pool overhead for single-worker runs (and keep
+        # callback ordering identical to the pre-refactor sequential path).
+        for idx, chunk in enumerate(chunks):
+            _, result, exc = _run_one(idx, chunk)
+            if exc is not None:
+                print(f"[graphify] chunk {idx + 1}/{total} failed: {exc}", file=sys.stderr)
+                continue
+            assert result is not None
+            _merge_into(merged, result)
+            if callable(on_chunk_done):
+                on_chunk_done(idx, total, result)
+        return merged
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_run_one, idx, chunk) for idx, chunk in enumerate(chunks)]
+        for future in as_completed(futures):
+            idx, result, exc = future.result()
+            if exc is not None:
+                print(f"[graphify] chunk {idx + 1}/{total} failed: {exc}", file=sys.stderr)
+                continue
+            assert result is not None
+            _merge_into(merged, result)
+            if callable(on_chunk_done):
+                on_chunk_done(idx, total, result)
     return merged
+
+
+def _merge_into(merged: dict, result: dict) -> None:
+    """Append a chunk result into the running merged accumulator."""
+    merged["nodes"].extend(result.get("nodes", []))
+    merged["edges"].extend(result.get("edges", []))
+    merged["hyperedges"].extend(result.get("hyperedges", []))
+    merged["input_tokens"] += result.get("input_tokens", 0)
+    merged["output_tokens"] += result.get("output_tokens", 0)
 
 
 def estimate_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
