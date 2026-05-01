@@ -49,7 +49,7 @@ dist/
 *.generated.py
 ```
 
-Same syntax as `.gitignore`. You can keep a single `.graphifyignore` at your repo root — patterns work correctly even when graphify is run on a subfolder. Discovery never crosses a VCS boundary (`.git`, `.hg`, etc.), so sibling projects in a shared workspace don't leak rules into each other. Without a VCS root, only the scan folder's own `.graphifyignore` applies.
+Same syntax as `.gitignore` — including `!` negation patterns to re-include specific files. You can keep a single `.graphifyignore` at your repo root — patterns work correctly even when graphify is run on a subfolder. Discovery never crosses a VCS boundary (`.git`, `.hg`, etc.), so sibling projects in a shared workspace don't leak rules into each other. Without a VCS root, only the scan folder's own `.graphifyignore` applies. Inline comments are supported: `vendor/ # legacy deps`.
 
 ## How it works
 
