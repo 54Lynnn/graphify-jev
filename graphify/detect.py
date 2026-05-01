@@ -385,16 +385,23 @@ def _parse_gitignore_line(raw: str) -> str:
     """Parse one raw line from a .graphifyignore file per gitignore spec.
 
     - Strip newline chars
+    - Strip inline comments (whitespace + # suffix), but only when # is
+      preceded by whitespace — so path#with#hash.py is preserved
+    - Unescape \\# to literal #
     - Remove trailing spaces unless escaped with backslash
     - Strip leading whitespace
-    - Return empty string for blank lines and comments
+    - Return empty string for blank lines and full-line comments
     """
     line = raw.rstrip("\n\r")
-    # Remove unescaped trailing spaces (per gitignore spec)
-    line = re.sub(r"(?<!\\) +$", "", line)
     line = line.lstrip()
     if not line or line.startswith("#"):
         return ""
+    # Strip inline comments: require whitespace before # (gitignore extension)
+    line = re.sub(r"\s+#+[^\\].*$", "", line)
+    # Unescape \# → literal #
+    line = line.replace("\\#", "#")
+    # Remove unescaped trailing spaces (per gitignore spec)
+    line = re.sub(r"(?<!\\) +$", "", line)
     return line
 
 
@@ -613,8 +620,21 @@ def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
     }
 
 
-def load_manifest(manifest_path: str = _MANIFEST_PATH) -> dict[str, float]:
-    """Load the file modification time manifest from a previous run."""
+def _md5_file(path: Path) -> str:
+    """MD5 of file contents streamed in 64KB chunks — for change detection only."""
+    import hashlib as _hl
+    h = _hl.md5()
+    try:
+        with path.open("rb") as f:
+            for chunk in iter(lambda: f.read(65536), b""):
+                h.update(chunk)
+    except OSError:
+        return ""
+    return h.hexdigest()
+
+
+def load_manifest(manifest_path: str = _MANIFEST_PATH) -> dict:
+    """Load the manifest from a previous run. Returns {} on any error."""
     try:
         return json.loads(Path(manifest_path).read_text(encoding="utf-8"))
     except Exception:
@@ -622,12 +642,13 @@ def load_manifest(manifest_path: str = _MANIFEST_PATH) -> dict[str, float]:
 
 
 def save_manifest(files: dict[str, list[str]], manifest_path: str = _MANIFEST_PATH) -> None:
-    """Save current file mtimes so the next --update run can diff against them."""
-    manifest: dict[str, float] = {}
+    """Save current file mtimes + content hashes for change detection on --update."""
+    manifest: dict[str, dict] = {}
     for file_list in files.values():
         for f in file_list:
             try:
-                manifest[f] = Path(f).stat().st_mtime
+                p = Path(f)
+                manifest[f] = {"mtime": p.stat().st_mtime, "hash": _md5_file(p)}
             except OSError:
                 pass  # file deleted between detect() and manifest write - skip it
     Path(manifest_path).parent.mkdir(parents=True, exist_ok=True)
@@ -637,8 +658,11 @@ def save_manifest(files: dict[str, list[str]], manifest_path: str = _MANIFEST_PA
 def detect_incremental(root: Path, manifest_path: str = _MANIFEST_PATH) -> dict:
     """Like detect(), but returns only new or modified files since the last run.
 
-    Compares current file mtimes against the stored manifest.
-    Use for --update mode: re-extract only what changed, merge into existing graph.
+    Fast path: mtime unchanged → unchanged (free, no hash).
+    Slow path: mtime bumped → compare MD5. Same hash = sync tool touched mtime,
+    treat as unchanged. Different hash = actually changed, re-extract.
+
+    Backwards compatible with legacy manifests storing plain float mtime values.
     """
     full = detect(root)
     manifest = load_manifest(manifest_path)
@@ -656,12 +680,26 @@ def detect_incremental(root: Path, manifest_path: str = _MANIFEST_PATH) -> dict:
 
     for ftype, file_list in full["files"].items():
         for f in file_list:
-            stored_mtime = manifest.get(f)
+            stored = manifest.get(f)
             try:
                 current_mtime = Path(f).stat().st_mtime
             except Exception:
                 current_mtime = 0
-            if stored_mtime is None or current_mtime > stored_mtime:
+
+            # Legacy manifest: plain float value
+            if isinstance(stored, (int, float)):
+                changed = stored is None or current_mtime > stored
+            elif isinstance(stored, dict):
+                stored_mtime = stored.get("mtime")
+                if stored_mtime is None or current_mtime != stored_mtime:
+                    # mtime bumped — verify with content hash before re-extracting
+                    changed = _md5_file(Path(f)) != stored.get("hash", "")
+                else:
+                    changed = False
+            else:
+                changed = True  # unknown format, re-extract to be safe
+
+            if changed:
                 new_files[ftype].append(f)
             else:
                 unchanged_files[ftype].append(f)

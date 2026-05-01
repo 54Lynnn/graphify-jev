@@ -44,7 +44,7 @@ Issues = "https://github.com/safishamsi/graphify/issues"
 [project.optional-dependencies]
 mcp = ["mcp"]
 neo4j = ["neo4j"]
-pdf = ["pypdf", "html2text"]
+pdf = ["pypdf", "markdownify"]
 watch = ["watchdog"]
 svg = ["matplotlib"]
 leiden = ["graspologic; python_version < '3.13'"]
@@ -52,7 +52,7 @@ office = ["python-docx", "openpyxl"]
 video = ["faster-whisper", "yt-dlp"]
 kimi = ["openai"]
 sql = ["tree-sitter-sql"]
-all = ["mcp", "neo4j", "pypdf", "html2text", "watchdog", "graspologic; python_version < '3.13'", "python-docx", "openpyxl", "faster-whisper", "yt-dlp", "matplotlib", "openai", "tree-sitter-sql"]
+all = ["mcp", "neo4j", "pypdf", "markdownify", "watchdog", "graspologic; python_version < '3.13'", "python-docx", "openpyxl", "faster-whisper", "yt-dlp", "matplotlib", "openai", "tree-sitter-sql"]
 
 [project.scripts]
 graphify = "graphify.__main__:main"

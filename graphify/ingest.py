@@ -49,19 +49,16 @@ def _fetch_html(url: str) -> str:
 
 
 def _html_to_markdown(html: str, url: str) -> str:
-    """Convert HTML to clean markdown. Uses html2text if available, else basic strip."""
+    """Convert HTML to clean markdown. Uses markdownify if available, else basic strip."""
+    # Always pre-strip script/style so their text content never leaks into output
+    html = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    html = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
     try:
-        import html2text
-        h = html2text.HTML2Text()
-        h.ignore_links = False
-        h.ignore_images = True
-        h.body_width = 0
-        return h.handle(html)
+        from markdownify import markdownify
+        return markdownify(html, heading_style="ATX", bullets="-", strip=["img"])
     except ImportError:
-        # Fallback: strip tags
-        text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"<[^>]+>", " ", text)
+        # Fallback: basic tag strip
+        text = re.sub(r"<[^>]+>", " ", html)
         text = re.sub(r"\s+", " ", text).strip()
         return text[:8000]
 

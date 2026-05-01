@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
 
 
@@ -111,20 +112,29 @@ def save_cached(path: Path, result: dict, root: Path = Path("."), kind: str = "a
     if not p.is_file():
         return
     h = file_hash(p, root)
-    entry = cache_dir(root, kind) / f"{h}.json"
-    tmp = entry.with_suffix(".tmp")
+    target_dir = cache_dir(root, kind)
+    entry = target_dir / f"{h}.json"
+    fd, tmp_path = tempfile.mkstemp(dir=target_dir, prefix=f"{h}.", suffix=".tmp")
     try:
-        tmp.write_text(json.dumps(result), encoding="utf-8")
+        os.write(fd, json.dumps(result).encode())
+        os.close(fd)
         try:
-            os.replace(tmp, entry)
+            os.replace(tmp_path, entry)
         except PermissionError:
             # Windows: os.replace can fail with WinError 5 if the target is
             # briefly locked. Fall back to copy-then-delete.
             import shutil
-            shutil.copy2(tmp, entry)
-            tmp.unlink(missing_ok=True)
+            shutil.copy2(tmp_path, entry)
+            os.unlink(tmp_path)
     except Exception:
-        tmp.unlink(missing_ok=True)
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
         raise
 
 

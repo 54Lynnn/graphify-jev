@@ -45,6 +45,9 @@ def _strip_diacritics(text: str) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c))
 
 
+_EXACT_MATCH_BONUS = 100.0
+
+
 def _score_nodes(G: nx.Graph, terms: list[str]) -> list[tuple[float, str]]:
     scored = []
     norm_terms = [_strip_diacritics(t).lower() for t in terms]
@@ -52,6 +55,9 @@ def _score_nodes(G: nx.Graph, terms: list[str]) -> list[tuple[float, str]]:
         norm_label = data.get("norm_label") or _strip_diacritics(data.get("label") or "").lower()
         source = (data.get("source_file") or "").lower()
         score = sum(1 for t in norm_terms if t in norm_label) + sum(0.5 for t in norm_terms if t in source)
+        # Exact match: single term equals the full label (strip trailing () for functions)
+        if any(t == norm_label or t == norm_label.rstrip("()") for t in norm_terms):
+            score += _EXACT_MATCH_BONUS
         if score > 0:
             scored.append((score, nid))
     return sorted(scored, reverse=True)
@@ -89,11 +95,18 @@ def _dfs(G: nx.Graph, start_nodes: list[str], depth: int) -> tuple[set[str], lis
     return visited, edges_seen
 
 
-def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_budget: int = 2000) -> str:
-    """Render subgraph as text, cutting at token_budget (approx 3 chars/token)."""
+def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_budget: int = 2000, *, seeds: list[str] | None = None) -> str:
+    """Render subgraph as text, cutting at token_budget (approx 3 chars/token).
+
+    seeds: exact-match nodes rendered first before the degree-sorted expansion,
+    so the queried symbol always appears at the top of the output.
+    """
     char_budget = token_budget * 3
     lines = []
-    for nid in sorted(nodes, key=lambda n: G.degree(n), reverse=True):
+    seed_set = set(seeds or [])
+    ordered = [n for n in (seeds or []) if n in nodes] + \
+              sorted(nodes - seed_set, key=lambda n: G.degree(n), reverse=True)
+    for nid in ordered:
         d = G.nodes[nid]
         line = f"NODE {sanitize_label(d.get('label', nid))} [src={d.get('source_file', '')} loc={d.get('source_location', '')} community={d.get('community', '')}]"
         lines.append(line)
@@ -246,7 +259,7 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
             return "No matching nodes found."
         nodes, edges = _dfs(G, start_nodes, depth) if mode == "dfs" else _bfs(G, start_nodes, depth)
         header = f"Traversal: {mode.upper()} depth={depth} | Start: {[G.nodes[n].get('label', n) for n in start_nodes]} | {len(nodes)} nodes found\n\n"
-        return header + _subgraph_to_text(G, nodes, edges, budget)
+        return header + _subgraph_to_text(G, nodes, edges, budget, seeds=start_nodes)
 
     def _tool_get_node(arguments: dict) -> str:
         label = arguments["label"].lower()

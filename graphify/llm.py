@@ -102,6 +102,9 @@ def _call_openai_compat(
     }
     if temperature is not None:
         kwargs["temperature"] = temperature
+    # Kimi-k2.6 is a reasoning model — disable thinking so content isn't empty
+    if "moonshot" in base_url:
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     resp = client.chat.completions.create(**kwargs)
     result = _parse_llm_json(resp.choices[0].message.content or "{}")
     result["input_tokens"] = resp.usage.prompt_tokens if resp.usage else 0

@@ -104,6 +104,12 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
         if not json_written:
             return False
 
+        try:
+            from graphify.detect import save_manifest
+            save_manifest(detected["files"])
+        except Exception:
+            pass
+
         report = generate(G, communities, cohesion, labels, gods, surprises, detection,
                           {"input": 0, "output": 0}, report_root, suggested_questions=questions)
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
