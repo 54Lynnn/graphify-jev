@@ -18,7 +18,7 @@ class FileType(str, Enum):
 
 _MANIFEST_PATH = "graphify-out/manifest.json"
 
-CODE_EXTENSIONS = {'.py', '.ts', '.js', '.jsx', '.tsx', '.mjs', '.ejs', '.go', '.rs', '.java', '.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', '.rb', '.swift', '.kt', '.kts', '.cs', '.scala', '.php', '.lua', '.toc', '.zig', '.ps1', '.ex', '.exs', '.m', '.mm', '.jl', '.vue', '.svelte', '.dart', '.v', '.sv', '.sql'}
+CODE_EXTENSIONS = {'.py', '.ts', '.js', '.jsx', '.tsx', '.mjs', '.ejs', '.go', '.rs', '.java', '.cpp', '.cc', '.cxx', '.c', '.h', '.hpp', '.rb', '.swift', '.kt', '.kts', '.cs', '.scala', '.php', '.lua', '.toc', '.zig', '.ps1', '.ex', '.exs', '.m', '.mm', '.jl', '.vue', '.svelte', '.dart', '.v', '.sv', '.sql', '.r'}
 DOC_EXTENSIONS = {'.md', '.mdx', '.txt', '.rst', '.html', '.yaml', '.yml'}
 PAPER_EXTENSIONS = {'.pdf'}
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'}
@@ -78,11 +78,42 @@ def _looks_like_paper(path: Path) -> bool:
 _ASSET_DIR_MARKERS = {".imageset", ".xcassets", ".appiconset", ".colorset", ".launchimage"}
 
 
+_SHEBANG_CODE_INTERPRETERS = {
+    "python", "python3", "python2",
+    "ruby", "perl", "node", "nodejs",
+    "bash", "sh", "dash", "zsh", "fish", "ksh", "tcsh",
+    "lua", "php", "julia", "Rscript",
+}
+
+
+def _shebang_file_type(path: Path) -> FileType | None:
+    """Peek at the first line of an extensionless file for a shebang."""
+    try:
+        with path.open("rb") as f:
+            first = f.read(128)
+        if not first.startswith(b"#!"):
+            return None
+        line = first.split(b"\n")[0].decode(errors="replace")
+        parts = line[2:].strip().split()
+        if not parts:
+            return None
+        interp = parts[0].split("/")[-1]  # /usr/bin/env → env
+        if interp == "env" and len(parts) > 1:
+            interp = parts[1].split("/")[-1]
+        if interp in _SHEBANG_CODE_INTERPRETERS:
+            return FileType.CODE
+    except OSError:
+        pass
+    return None
+
+
 def classify_file(path: Path) -> FileType | None:
     # Compound extensions must be checked before simple suffix lookup
     if path.name.lower().endswith(".blade.php"):
         return FileType.CODE
     ext = path.suffix.lower()
+    if not ext:
+        return _shebang_file_type(path)
     if ext in CODE_EXTENSIONS:
         return FileType.CODE
     if ext in PAPER_EXTENSIONS:
@@ -415,7 +446,12 @@ def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
 
 
 def _is_ignored(path: Path, root: Path, patterns: list[tuple[Path, str]]) -> bool:
-    """Return True if path matches any .graphifyignore pattern."""
+    """Return True if the path should be ignored per .graphifyignore patterns.
+
+    Uses gitignore last-match-wins semantics: all patterns are evaluated in
+    order; the final matching pattern determines the result. Negation patterns
+    (starting with !) un-ignore a previously ignored path.
+    """
     if not patterns:
         return False
 
@@ -432,35 +468,38 @@ def _is_ignored(path: Path, root: Path, patterns: list[tuple[Path, str]]) -> boo
                 return True
         return False
 
+    result = False
     for anchor, pattern in patterns:
-        anchored = pattern.startswith("/")
-        p = pattern.strip("/")
+        negated = pattern.startswith("!")
+        raw = pattern[1:] if negated else pattern
+        anchored = raw.startswith("/")
+        p = raw.strip("/")
         if not p:
             continue
+
+        matched = False
         if anchored:
-            # Anchored patterns are relative to the .graphifyignore's own dir only
             try:
                 rel_anchor = str(path.relative_to(anchor)).replace(os.sep, "/")
-                if _matches(rel_anchor, p):
-                    return True
+                matched = _matches(rel_anchor, p)
             except ValueError:
                 pass
         else:
-            # Non-anchored: try relative to scan root first, then anchor
             try:
                 rel = str(path.relative_to(root)).replace(os.sep, "/")
-                if _matches(rel, p):
-                    return True
+                matched = _matches(rel, p)
             except ValueError:
                 pass
-            if anchor != root:
+            if not matched and anchor != root:
                 try:
                     rel_anchor = str(path.relative_to(anchor)).replace(os.sep, "/")
-                    if _matches(rel_anchor, p):
-                        return True
+                    matched = _matches(rel_anchor, p)
                 except ValueError:
                     pass
-    return False
+
+        if matched:
+            result = not negated  # last match wins; ! flips to un-ignore
+    return result
 
 
 def detect(root: Path, *, follow_symlinks: bool = False) -> dict:

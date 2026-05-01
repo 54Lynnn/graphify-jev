@@ -1,6 +1,33 @@
 """Graph analysis: god nodes (most connected), surprising connections (cross-community), suggested questions."""
 from __future__ import annotations
+from pathlib import Path
 import networkx as nx
+
+# Language families — extensions sharing a runtime can legitimately call each other
+_LANG_FAMILY: dict[str, str] = {
+    **{e: "python" for e in (".py", ".pyw")},
+    **{e: "js" for e in (".js", ".jsx", ".mjs", ".ejs", ".ts", ".tsx", ".vue", ".svelte")},
+    **{e: "go" for e in (".go",)},
+    **{e: "rust" for e in (".rs",)},
+    **{e: "jvm" for e in (".java", ".kt", ".kts", ".scala")},
+    **{e: "c" for e in (".c", ".h", ".cpp", ".cc", ".cxx", ".hpp")},
+    **{e: "ruby" for e in (".rb",)},
+    **{e: "swift" for e in (".swift",)},
+    **{e: "dotnet" for e in (".cs",)},
+    **{e: "php" for e in (".php",)},
+    **{e: "r" for e in (".r",)},
+}
+
+
+def _cross_language(src_a: str, src_b: str) -> bool:
+    """Return True if two source files belong to different language families."""
+    ext_a = Path(src_a).suffix.lower()
+    ext_b = Path(src_b).suffix.lower()
+    fam_a = _LANG_FAMILY.get(ext_a)
+    fam_b = _LANG_FAMILY.get(ext_b)
+    if fam_a is None or fam_b is None:
+        return False
+    return fam_a != fam_b
 
 
 def _node_community_map(communities: dict[int, list[str]]) -> dict[str, int]:
@@ -143,7 +170,13 @@ def _surprise_score(
 
     # 1. Confidence weight - uncertain connections are more noteworthy
     conf = data.get("confidence", "EXTRACTED")
+    relation = data.get("relation", "")
     conf_bonus = {"AMBIGUOUS": 3, "INFERRED": 2, "EXTRACTED": 1}.get(conf, 1)
+
+    # Cross-language INFERRED calls are likely resolver pollution, not real surprises
+    if conf == "INFERRED" and relation == "calls" and _cross_language(u_source, v_source):
+        conf_bonus = 0  # downgrade: don't promote likely false positives
+
     score += conf_bonus
     if conf in ("AMBIGUOUS", "INFERRED"):
         reasons.append(f"{conf.lower()} connection - not explicitly stated in source")

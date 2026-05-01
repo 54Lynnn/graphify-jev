@@ -17,6 +17,17 @@ def _body_content(content: bytes) -> bytes:
     return content
 
 
+def _normalize_path(path: Path) -> Path:
+    """Normalize path for consistent cache keys across Windows path spellings."""
+    import sys
+    if sys.platform != "win32":
+        return path
+    s = str(path)
+    if s.startswith("\\\\?\\"):
+        s = s[4:]  # strip extended-length prefix \\?\
+    return Path(os.path.normcase(s))
+
+
 def file_hash(path: Path, root: Path = Path(".")) -> str:
     """SHA256 of file contents + path relative to root.
 
@@ -27,7 +38,8 @@ def file_hash(path: Path, root: Path = Path(".")) -> str:
     For Markdown files (.md), only the body below the YAML frontmatter is hashed,
     so metadata-only changes (e.g. reviewed, status, tags) do not invalidate the cache.
     """
-    p = Path(path)
+    p = _normalize_path(Path(path))
+    root = _normalize_path(Path(root))
     if not p.is_file():
         raise IsADirectoryError(f"file_hash requires a file, got: {p}")
     raw = p.read_bytes()

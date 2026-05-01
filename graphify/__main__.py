@@ -1391,7 +1391,8 @@ def main() -> None:
         from graphify.export import to_json, to_html
         print("Loading existing graph...")
         _raw = json.loads(graph_json.read_text(encoding="utf-8"))
-        G = build_from_json(_raw)
+        _directed = bool(_raw.get("directed", False))
+        G = build_from_json(_raw, directed=_directed)
         print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
         print("Re-clustering...")
         communities = cluster(G)
