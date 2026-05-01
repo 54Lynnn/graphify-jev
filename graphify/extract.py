@@ -1710,6 +1710,137 @@ def extract_verilog(path: Path) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
+def extract_sql(path: Path) -> dict:
+    """Extract tables, views, functions, and relationships from .sql files via tree-sitter."""
+    try:
+        import tree_sitter_sql as tssql
+        from tree_sitter import Language, Parser
+    except ImportError:
+        return {"nodes": [], "edges": [], "error": "tree_sitter_sql not installed. Run: pip install tree-sitter-sql"}
+
+    try:
+        language = Language(tssql.language())
+        parser = Parser(language)
+        source = path.read_bytes()
+        tree = parser.parse(source)
+        root = tree.root_node
+    except Exception as e:
+        return {"nodes": [], "edges": [], "error": str(e)}
+
+    stem = re.sub(r"[^a-z0-9]", "_", path.stem.lower())
+    str_path = str(path)
+    file_nid = _make_id(str_path)
+    nodes: list[dict] = [{"id": file_nid, "label": path.name, "file_type": "code",
+                           "source_file": str_path, "source_location": None}]
+    edges: list[dict] = []
+    seen_ids: set[str] = {file_nid}
+    table_nids: dict[str, str] = {}  # name → nid for reference resolution
+
+    def _read(n) -> str:
+        return source[n.start_byte:n.end_byte].decode("utf-8", errors="replace")
+
+    def _obj_name(n) -> str | None:
+        for c in n.children:
+            if c.type == "object_reference":
+                for cc in c.children:
+                    if cc.type == "identifier":
+                        return _read(cc)
+        return None
+
+    def _add_node(nid: str, label: str, line: int) -> None:
+        if nid not in seen_ids:
+            seen_ids.add(nid)
+            nodes.append({"id": nid, "label": label, "file_type": "code",
+                           "source_file": str_path, "source_location": f"L{line}"})
+            edges.append({"source": file_nid, "target": nid, "relation": "contains",
+                           "confidence": "EXTRACTED", "source_file": str_path,
+                           "source_location": f"L{line}", "weight": 1.0})
+
+    def _add_edge(src: str, tgt: str, relation: str, line: int) -> None:
+        edges.append({"source": src, "target": tgt, "relation": relation,
+                       "confidence": "EXTRACTED", "source_file": str_path,
+                       "source_location": f"L{line}", "weight": 1.0})
+
+    def walk(node) -> None:
+        t = node.type
+        line = node.start_point[0] + 1
+
+        if t == "create_table":
+            name = _obj_name(node)
+            if name:
+                nid = _make_id(stem, name)
+                _add_node(nid, name, line)
+                table_nids[name.lower()] = nid
+                # Foreign key REFERENCES
+                for col in node.children:
+                    if col.type == "column_definitions":
+                        for cd in col.children:
+                            if cd.type != "column_definition":
+                                continue
+                            ref_name: str | None = None
+                            found_ref = False
+                            for cc in cd.children:
+                                if cc.type == "keyword_references":
+                                    found_ref = True
+                                elif found_ref and cc.type == "object_reference":
+                                    for ccc in cc.children:
+                                        if ccc.type == "identifier":
+                                            ref_name = _read(ccc)
+                                    break
+                            if ref_name:
+                                ref_nid = _make_id(stem, ref_name)
+                                _add_edge(nid, ref_nid, "references", line)
+
+        elif t == "create_view":
+            name = _obj_name(node)
+            if name:
+                nid = _make_id(stem, name)
+                _add_node(nid, name, line)
+                table_nids[name.lower()] = nid
+                # FROM/JOIN table references inside view body
+                _walk_from_refs(node, nid, line)
+
+        elif t == "create_function":
+            name = _obj_name(node)
+            if name:
+                nid = _make_id(stem, name)
+                _add_node(nid, f"{name}()", line)
+                _walk_from_refs(node, nid, line)
+
+        elif t == "create_procedure":
+            name = _obj_name(node)
+            if name:
+                nid = _make_id(stem, name)
+                _add_node(nid, f"{name}()", line)
+                _walk_from_refs(node, nid, line)
+
+        for child in node.children:
+            walk(child)
+
+    def _walk_from_refs(node, caller_nid: str, line: int) -> None:
+        """Recursively find FROM/JOIN table references inside a node."""
+        if node.type in ("from", "join"):
+            for c in node.children:
+                if c.type == "relation":
+                    for cc in c.children:
+                        if cc.type == "object_reference":
+                            for ccc in cc.children:
+                                if ccc.type == "identifier":
+                                    tbl = _read(ccc)
+                                    tbl_nid = _make_id(stem, tbl)
+                                    _add_edge(caller_nid, tbl_nid, "reads_from",
+                                              c.start_point[0] + 1)
+        for child in node.children:
+            _walk_from_refs(child, caller_nid, line)
+
+    for stmt in root.children:
+        if stmt.type == "statement":
+            for child in stmt.children:
+                walk(child)
+
+    return {"nodes": nodes, "edges": edges}
+
+
 def extract_lua(path: Path) -> dict:
     """Extract functions, methods, require() imports, and calls from a .lua file."""
     return _extract_generic(path, _LUA_CONFIG)
@@ -3359,6 +3490,7 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
         ".dart": extract_dart,
         ".v": extract_verilog,
         ".sv": extract_verilog,
+        ".sql": extract_sql,
     }
 
     total = len(paths)

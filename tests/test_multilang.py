@@ -1,9 +1,9 @@
-"""Tests for multi-language AST extraction: JS/TS, Go, Rust."""
+"""Tests for multi-language AST extraction: JS/TS, Go, Rust, SQL."""
 from __future__ import annotations
 import shutil
 from pathlib import Path
 import pytest
-from graphify.extract import extract_js, extract_go, extract_rust, extract
+from graphify.extract import extract_js, extract_go, extract_rust, extract, extract_sql
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -171,3 +171,38 @@ def test_cache_miss_after_file_change(tmp_path):
     # bar() should appear in the second result
     labels2 = [n["label"] for n in r2["nodes"]]
     assert any("bar" in l for l in labels2)
+
+
+# ── SQL ───────────────────────────────────────────────────────────────────────
+
+def test_sql_finds_tables():
+    r = extract_sql(FIXTURES / "sample.sql")
+    labels = [n["label"] for n in r["nodes"]]
+    assert any("users" in l for l in labels)
+    assert any("organizations" in l for l in labels)
+
+def test_sql_finds_view():
+    r = extract_sql(FIXTURES / "sample.sql")
+    labels = [n["label"] for n in r["nodes"]]
+    assert any("active_users" in l for l in labels)
+
+def test_sql_finds_function():
+    r = extract_sql(FIXTURES / "sample.sql")
+    labels = [n["label"] for n in r["nodes"]]
+    assert any("get_user" in l for l in labels)
+
+def test_sql_emits_foreign_key_edge():
+    r = extract_sql(FIXTURES / "sample.sql")
+    relations = {e["relation"] for e in r["edges"]}
+    assert "references" in relations
+
+def test_sql_emits_reads_from_edge():
+    r = extract_sql(FIXTURES / "sample.sql")
+    relations = {e["relation"] for e in r["edges"]}
+    assert "reads_from" in relations
+
+def test_sql_no_dangling_edges():
+    r = extract_sql(FIXTURES / "sample.sql")
+    node_ids = {n["id"] for n in r["nodes"]}
+    for e in r["edges"]:
+        assert e["source"] in node_ids, f"dangling source: {e['source']}"
