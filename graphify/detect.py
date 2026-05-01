@@ -367,8 +367,10 @@ def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
                 line = line.strip()
                 if line and not line.startswith("#"):
                     patterns.append((current, line))
-        # Stop climbing once we've processed the git repo root
-        if (current / ".git").exists():
+        # Stop climbing at any VCS root or home directory
+        if any((current / marker).exists() for marker in (".git", ".hg", ".svn", "_darcs", ".fossil")):
+            break
+        if current == Path.home():
             break
         parent = current.parent
         if parent == current:
