@@ -347,38 +347,70 @@ def _is_noise_dir(part: str) -> bool:
     return False
 
 
-def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
-    """Read .graphifyignore from root **and ancestor directories**.
+_VCS_MARKERS = (".git", ".hg", ".svn", "_darcs", ".fossil")
 
-    Returns a list of (anchor_dir, pattern) pairs. Each pattern is matched
-    against paths relative to both the scan root and the anchor_dir where
-    the .graphifyignore file was found — so patterns written relative to a
-    parent directory still work when graphify is run on a subfolder.
 
-    Walks upward from *root* stopping at the nearest VCS root (.git, .hg, etc.)
-    — never crosses a VCS boundary into a different repository. If no VCS root
-    is found, walks up to the home directory as a safety limit.
-    Lines starting with # are comments; blank lines ignored.
+def _parse_gitignore_line(raw: str) -> str:
+    """Parse one raw line from a .graphifyignore file per gitignore spec.
+
+    - Strip newline chars
+    - Remove trailing spaces unless escaped with backslash
+    - Strip leading whitespace
+    - Return empty string for blank lines and comments
     """
-    _VCS_MARKERS = (".git", ".hg", ".svn", "_darcs", ".fossil")
-    home = Path.home()
+    line = raw.rstrip("\n\r")
+    # Remove unescaped trailing spaces (per gitignore spec)
+    line = re.sub(r"(?<!\\) +$", "", line)
+    line = line.lstrip()
+    if not line or line.startswith("#"):
+        return ""
+    return line
 
-    patterns: list[tuple[Path, str]] = []
-    current = root.resolve()
+
+def _find_vcs_root(start: Path) -> Path | None:
+    """Walk upward from start; return the first directory containing a VCS marker."""
+    current = start.resolve()
+    home = Path.home()
     while True:
-        ignore_file = current / ".graphifyignore"
-        if ignore_file.exists():
-            for line in ignore_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    patterns.append((current, line))
-        # Stop once we've processed a VCS root — never walk above it
-        if any((current / marker).exists() for marker in _VCS_MARKERS):
-            break
+        if any((current / m).exists() for m in _VCS_MARKERS):
+            return current
         parent = current.parent
         if parent == current or current == home:
-            break
+            return None
         current = parent
+
+
+def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
+    """Read .graphifyignore files and return (anchor_dir, pattern) pairs.
+
+    Patterns are returned outer-first so that inner (closer) rules are
+    appended last and win via last-match-wins semantics — matching gitignore
+    behavior exactly.
+
+    Walk ceiling: the nearest VCS root if inside a repo, otherwise the scan
+    root itself (hermetic — no leakage across unrelated sibling projects).
+    """
+    root = root.resolve()
+    ceiling = _find_vcs_root(root) or root
+
+    # Collect ancestor dirs from ceiling down to root (outer → inner)
+    dirs: list[Path] = []
+    current = root
+    while True:
+        dirs.append(current)
+        if current == ceiling:
+            break
+        current = current.parent
+    dirs.reverse()  # ceiling first, scan root last
+
+    patterns: list[tuple[Path, str]] = []
+    for d in dirs:
+        ignore_file = d / ".graphifyignore"
+        if ignore_file.exists():
+            for raw in ignore_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = _parse_gitignore_line(raw)
+                if line:
+                    patterns.append((d, line))
     return patterns
 
 
@@ -401,25 +433,33 @@ def _is_ignored(path: Path, root: Path, patterns: list[tuple[Path, str]]) -> boo
         return False
 
     for anchor, pattern in patterns:
+        anchored = pattern.startswith("/")
         p = pattern.strip("/")
         if not p:
             continue
-        # Try path relative to the scan root
-        try:
-            rel = str(path.relative_to(root)).replace(os.sep, "/")
-            if _matches(rel, p):
-                return True
-        except ValueError:
-            pass
-        # Also try relative to the anchor dir (the .graphifyignore's location),
-        # so patterns written at a parent level still fire when running on a subfolder
-        if anchor != root:
+        if anchored:
+            # Anchored patterns are relative to the .graphifyignore's own dir only
             try:
                 rel_anchor = str(path.relative_to(anchor)).replace(os.sep, "/")
                 if _matches(rel_anchor, p):
                     return True
             except ValueError:
                 pass
+        else:
+            # Non-anchored: try relative to scan root first, then anchor
+            try:
+                rel = str(path.relative_to(root)).replace(os.sep, "/")
+                if _matches(rel, p):
+                    return True
+            except ValueError:
+                pass
+            if anchor != root:
+                try:
+                    rel_anchor = str(path.relative_to(anchor)).replace(os.sep, "/")
+                    if _matches(rel_anchor, p):
+                        return True
+                except ValueError:
+                    pass
     return False
 
 

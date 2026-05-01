@@ -138,8 +138,27 @@ def test_detect_follows_symlinked_file(tmp_path):
     assert any("link.py" in f for f in code)
 
 
-def test_graphifyignore_discovered_from_parent(tmp_path):
-    """A .graphifyignore in a parent directory applies to subdirectory scans."""
+def test_graphifyignore_hermetic_without_vcs(tmp_path):
+    """Without a VCS root, parent .graphifyignore does NOT apply (hermetic)."""
+    (tmp_path / ".graphifyignore").write_text("vendor/\n")
+    sub = tmp_path / "packages" / "mylib"
+    sub.mkdir(parents=True)
+    (sub / "main.py").write_text("x = 1")
+    vendor = sub / "vendor"
+    vendor.mkdir()
+    (vendor / "dep.py").write_text("y = 2")
+
+    result = detect(sub)
+    code_files = result["files"]["code"]
+    assert any("main.py" in f for f in code_files)
+    # parent .graphifyignore must NOT leak into a non-VCS scan
+    assert any("vendor" in f for f in code_files)
+    assert result["graphifyignore_patterns"] == 0
+
+
+def test_graphifyignore_discovered_from_parent_in_vcs(tmp_path):
+    """Inside a VCS repo, parent .graphifyignore applies to subdirectory scans."""
+    (tmp_path / ".git").mkdir()
     (tmp_path / ".graphifyignore").write_text("vendor/\n")
     sub = tmp_path / "packages" / "mylib"
     sub.mkdir(parents=True)

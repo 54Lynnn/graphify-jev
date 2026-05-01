@@ -1,6 +1,6 @@
 ---
 name: graphify
-description: "any input (code, docs, papers, images) - knowledge graph - clustered communities - HTML + JSON + audit report"
+description: "Use when the user asks any question about a codebase, documents, papers, images, or any content in a project - especially if graphify-out/ exists, treat it as a /graphify query. Also use to build a knowledge graph from any folder of files."
 trigger: /graphify
 ---
 
