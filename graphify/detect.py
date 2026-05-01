@@ -355,9 +355,14 @@ def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
     the .graphifyignore file was found — so patterns written relative to a
     parent directory still work when graphify is run on a subfolder.
 
-    Walks upward from *root* towards the filesystem root, stopping at a
-    ``.git`` boundary. Lines starting with # are comments; blank lines ignored.
+    Walks upward from *root* stopping at the nearest VCS root (.git, .hg, etc.)
+    — never crosses a VCS boundary into a different repository. If no VCS root
+    is found, walks up to the home directory as a safety limit.
+    Lines starting with # are comments; blank lines ignored.
     """
+    _VCS_MARKERS = (".git", ".hg", ".svn", "_darcs", ".fossil")
+    home = Path.home()
+
     patterns: list[tuple[Path, str]] = []
     current = root.resolve()
     while True:
@@ -367,14 +372,12 @@ def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
                 line = line.strip()
                 if line and not line.startswith("#"):
                     patterns.append((current, line))
-        # Stop climbing at any VCS root or home directory
-        if any((current / marker).exists() for marker in (".git", ".hg", ".svn", "_darcs", ".fossil")):
-            break
-        if current == Path.home():
+        # Stop once we've processed a VCS root — never walk above it
+        if any((current / marker).exists() for marker in _VCS_MARKERS):
             break
         parent = current.parent
-        if parent == current:
-            break  # filesystem root
+        if parent == current or current == home:
+            break
         current = parent
     return patterns
 
