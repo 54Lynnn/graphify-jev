@@ -25,6 +25,22 @@ def _calls(r):
     }
 
 
+def _references(r):
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    return [
+        (
+            node_by_id.get(e["source"], e["source"]),
+            node_by_id.get(e["target"], e["target"]),
+            e,
+        )
+        for e in r["edges"] if e["relation"] == "references"
+    ]
+
+
+def _edges_with_relation(r, *relations):
+    return [e for e in r["edges"] if e["relation"] in relations]
+
+
 # ── Java ──────────────────────────────────────────────────────────────────────
 
 def test_java_no_error():
@@ -48,6 +64,13 @@ def test_java_finds_methods():
 def test_java_finds_imports():
     r = extract_java(FIXTURES / "sample.java")
     assert "imports" in _relations(r)
+
+
+def test_java_import_edges_have_import_context():
+    r = extract_java(FIXTURES / "sample.java")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
 
 def test_java_no_dangling_edges():
     r = extract_java(FIXTURES / "sample.java")
@@ -83,6 +106,20 @@ def test_c_calls_are_extracted():
             assert e["confidence"] == "EXTRACTED"
 
 
+def test_c_import_edges_have_import_context():
+    r = extract_c(FIXTURES / "sample.c")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
+
+
+def test_c_call_edges_have_call_context():
+    r = extract_c(FIXTURES / "sample.c")
+    call_edges = _edges_with_relation(r, "calls")
+    assert call_edges
+    assert all(e.get("context") == "call" for e in call_edges)
+
+
 # ── C++ ───────────────────────────────────────────────────────────────────────
 
 def test_cpp_no_error():
@@ -102,6 +139,13 @@ def test_cpp_finds_methods():
 def test_cpp_finds_includes():
     r = extract_cpp(FIXTURES / "sample.cpp")
     assert "imports" in _relations(r)
+
+
+def test_cpp_import_edges_have_import_context():
+    r = extract_cpp(FIXTURES / "sample.cpp")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
 
 
 # ── Ruby ─────────────────────────────────────────────────────────────────────
@@ -164,6 +208,33 @@ def test_csharp_inherits_iprocessor():
     assert found, "DataProcessor should have inherits edge to IProcessor"
 
 
+def test_csharp_field_type_references_have_field_context():
+    r = extract_csharp(FIXTURES / "sample.cs")
+    refs = _references(r)
+    assert any(
+        "DataProcessor" in src and "HttpClient" in tgt and edge.get("context") == "field"
+        for src, tgt, edge in refs
+    ), "DataProcessor field declarations should reference HttpClient with field context"
+
+
+def test_csharp_call_edges_have_call_context():
+    r = extract_csharp(FIXTURES / "sample.cs")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    assert any(
+        "Process" in node_by_id.get(e["source"], "")
+        and "Validate" in node_by_id.get(e["target"], "")
+        and e.get("context") == "call"
+        for e in r["edges"] if e["relation"] == "calls"
+    ), "C# call edges should retain call context"
+
+
+def test_csharp_import_edges_have_import_context():
+    r = extract_csharp(FIXTURES / "sample.cs")
+    import_edges = [e for e in r["edges"] if e["relation"] == "imports"]
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
+
+
 # ── Kotlin ───────────────────────────────────────────────────────────────────
 
 def test_kotlin_no_error():
@@ -222,6 +293,20 @@ def test_scala_finds_methods():
     assert any("post" in l for l in labels)
 
 
+def test_scala_import_edges_have_import_context():
+    r = extract_scala(FIXTURES / "sample.scala")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
+
+
+def test_scala_call_edges_have_call_context():
+    r = extract_scala(FIXTURES / "sample.scala")
+    call_edges = _edges_with_relation(r, "calls")
+    assert call_edges
+    assert all(e.get("context") == "call" for e in call_edges)
+
+
 # ── PHP ───────────────────────────────────────────────────────────────────────
 
 def test_php_no_error():
@@ -245,6 +330,20 @@ def test_php_finds_function():
 def test_php_finds_imports():
     r = extract_php(FIXTURES / "sample.php")
     assert "imports" in _relations(r)
+
+
+def test_php_import_edges_have_import_context():
+    r = extract_php(FIXTURES / "sample.php")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
+
+
+def test_php_call_edges_have_call_context():
+    r = extract_php(FIXTURES / "sample.php")
+    call_edges = _edges_with_relation(r, "calls")
+    assert call_edges
+    assert all(e.get("context") == "call" for e in call_edges)
 
 def test_php_finds_static_property_access():
     r = extract_php(FIXTURES / "sample_php_static_prop.php")
@@ -330,6 +429,13 @@ def test_swift_finds_function():
 def test_swift_finds_imports():
     r = extract_swift(FIXTURES / "sample.swift")
     assert "imports" in _relations(r)
+
+
+def test_swift_import_edges_have_import_context():
+    r = extract_swift(FIXTURES / "sample.swift")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
 
 def test_swift_no_dangling_edges():
     r = extract_swift(FIXTURES / "sample.swift")
@@ -489,6 +595,13 @@ def test_vbnet_no_dangling_edges():
     for e in r["edges"]:
         assert e["source"] in node_ids
 
+def test_swift_call_edges_have_call_context():
+    r = extract_swift(FIXTURES / "sample.swift")
+    call_edges = _edges_with_relation(r, "calls")
+    assert call_edges
+    assert all(e.get("context") == "call" for e in call_edges)
+
+
 # ── Elixir ────────────────────────────────────────────────────────────────────
 
 from graphify.extract import extract_elixir
@@ -511,11 +624,25 @@ def test_elixir_finds_imports():
     import_edges = [e for e in r["edges"] if e["relation"] == "imports"]
     assert len(import_edges) >= 2
 
+
+def test_elixir_import_edges_have_import_context():
+    r = extract_elixir(FIXTURES / "sample.ex")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
+
 def test_elixir_finds_calls():
     r = extract_elixir(FIXTURES / "sample.ex")
     calls = {(e["source"], e["target"]) for e in r["edges"] if e["relation"] == "calls"}
     labels = {n["id"]: n["label"] for n in r["nodes"]}
     assert any("create" in labels.get(src, "") and "validate" in labels.get(tgt, "") for src, tgt in calls)
+
+
+def test_elixir_call_edges_have_call_context():
+    r = extract_elixir(FIXTURES / "sample.ex")
+    call_edges = _edges_with_relation(r, "calls")
+    assert call_edges
+    assert all(e.get("context") == "call" for e in call_edges)
 
 def test_elixir_method_edges():
     r = extract_elixir(FIXTURES / "sample.ex")
@@ -549,6 +676,13 @@ def test_objc_finds_imports():
     r = extract_objc(FIXTURES / "sample.m")
     import_edges = [e for e in r["edges"] if e["relation"] == "imports"]
     assert len(import_edges) >= 1
+
+
+def test_objc_import_edges_have_import_context():
+    r = extract_objc(FIXTURES / "sample.m")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
 
 
 def test_objc_inherits_edge():
@@ -626,6 +760,13 @@ def test_julia_finds_imports():
     assert len(import_edges) >= 1
 
 
+def test_julia_import_edges_have_import_context():
+    r = extract_julia(FIXTURES / "sample.jl")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
+
+
 def test_julia_finds_inherits():
     r = extract_julia(FIXTURES / "sample.jl")
     inherits = [e for e in r["edges"] if e["relation"] == "inherits"]
@@ -636,6 +777,13 @@ def test_julia_finds_calls():
     r = extract_julia(FIXTURES / "sample.jl")
     call_edges = [e for e in r["edges"] if e["relation"] == "calls"]
     assert len(call_edges) >= 1
+
+
+def test_julia_call_edges_have_call_context():
+    r = extract_julia(FIXTURES / "sample.jl")
+    call_edges = _edges_with_relation(r, "calls")
+    assert call_edges
+    assert all(e.get("context") == "call" for e in call_edges)
 
 
 def test_julia_no_dangling_edges():

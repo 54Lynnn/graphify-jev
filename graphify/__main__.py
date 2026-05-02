@@ -1016,6 +1016,7 @@ def main() -> None:
         print("    --no-viz                skip graph.html generation (useful for >5000 node graphs / CI)")
         print("  query \"<question>\"       BFS traversal of graph.json for a question")
         print("    --dfs                   use depth-first instead of breadth-first")
+        print("    --context C             explicit edge-context filter (repeatable)")
         print("    --budget N              cap output at N tokens (default 2000)")
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
         print("  save-result             save a Q&A result to graphify-out/memory/ for graph feedback loop")
@@ -1209,15 +1210,16 @@ def main() -> None:
             sys.exit(1)
     elif cmd == "query":
         if len(sys.argv) < 3:
-            print("Usage: graphify query \"<question>\" [--dfs] [--budget N] [--graph path]", file=sys.stderr)
+            print("Usage: graphify query \"<question>\" [--dfs] [--context C] [--budget N] [--graph path]", file=sys.stderr)
             sys.exit(1)
-        from graphify.serve import _score_nodes, _bfs, _dfs, _subgraph_to_text
+        from graphify.serve import _query_graph_text
         from graphify.security import sanitize_label
         from networkx.readwrite import json_graph
         question = sys.argv[2]
         use_dfs = "--dfs" in sys.argv
         budget = 2000
         graph_path = "graphify-out/graph.json"
+        context_filters: list[str] = []
         args = sys.argv[3:]
         i = 0
         while i < len(args):
@@ -1234,6 +1236,12 @@ def main() -> None:
                 except ValueError:
                     print(f"error: --budget must be an integer", file=sys.stderr)
                     sys.exit(1)
+                i += 1
+            elif args[i] == "--context" and i + 1 < len(args):
+                context_filters.append(args[i + 1])
+                i += 2
+            elif args[i].startswith("--context="):
+                context_filters.append(args[i].split("=", 1)[1])
                 i += 1
             elif args[i] == "--graph" and i + 1 < len(args):
                 graph_path = args[i + 1]; i += 2
@@ -1257,14 +1265,16 @@ def main() -> None:
         except Exception as exc:
             print(f"error: could not load graph: {exc}", file=sys.stderr)
             sys.exit(1)
-        terms = [t.lower() for t in question.split() if len(t) > 2]
-        scored = _score_nodes(G, terms)
-        if not scored:
-            print("No matching nodes found.")
-            sys.exit(0)
-        start = [nid for _, nid in scored[:5]]
-        nodes, edges = (_dfs if use_dfs else _bfs)(G, start, depth=2)
-        print(_subgraph_to_text(G, nodes, edges, token_budget=budget))
+        print(
+            _query_graph_text(
+                G,
+                question,
+                mode="dfs" if use_dfs else "bfs",
+                depth=2,
+                token_budget=budget,
+                context_filters=context_filters,
+            )
+        )
     elif cmd == "save-result":
         # graphify save-result --question Q --answer A --type T [--nodes N1 N2 ...]
         import argparse as _ap

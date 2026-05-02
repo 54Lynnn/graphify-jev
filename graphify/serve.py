@@ -63,6 +63,68 @@ def _score_nodes(G: nx.Graph, terms: list[str]) -> list[tuple[float, str]]:
     return sorted(scored, reverse=True)
 
 
+_CONTEXT_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("call", ("call", "calls", "called", "invoke", "invokes", "invoked")),
+    ("import", ("import", "imports", "imported", "module", "modules")),
+    ("field", ("field", "fields", "member", "members", "property", "properties")),
+    ("parameter_type", ("parameter", "parameters", "param", "params", "argument", "arguments")),
+    ("return_type", ("return", "returns", "returned")),
+    ("generic_arg", ("generic", "generics", "template", "templates")),
+)
+
+
+def _normalize_context_filters(filters: list[str] | None) -> list[str]:
+    if not filters:
+        return []
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for value in filters:
+        key = _strip_diacritics(str(value)).strip().lower()
+        if key and key not in seen:
+            seen.add(key)
+            normalized.append(key)
+    return normalized
+
+
+def _infer_context_filters(question: str) -> list[str]:
+    lowered = {
+        _strip_diacritics(token).lower()
+        for token in question.replace("?", " ").replace(",", " ").split()
+    }
+    inferred: list[str] = []
+    for context, hints in _CONTEXT_HINTS:
+        if any(hint in lowered for hint in hints):
+            inferred.append(context)
+    return inferred
+
+
+def _resolve_context_filters(question: str, explicit_filters: list[str] | None = None) -> tuple[list[str], str | None]:
+    normalized = _normalize_context_filters(explicit_filters)
+    if normalized:
+        return normalized, "explicit"
+    inferred = _infer_context_filters(question)
+    if inferred:
+        return inferred, "heuristic"
+    return [], None
+
+
+def _filter_graph_by_context(G: nx.Graph, context_filters: list[str] | None) -> nx.Graph:
+    filters = set(_normalize_context_filters(context_filters))
+    if not filters:
+        return G
+    H = G.__class__()
+    H.add_nodes_from(G.nodes(data=True))
+    if isinstance(G, (nx.MultiGraph, nx.MultiDiGraph)):
+        for u, v, key, data in G.edges(keys=True, data=True):
+            if data.get("context") in filters:
+                H.add_edge(u, v, key=key, **data)
+    else:
+        for u, v, data in G.edges(data=True):
+            if data.get("context") in filters:
+                H.add_edge(u, v, **data)
+    return H
+
+
 def _bfs(G: nx.Graph, start_nodes: list[str], depth: int) -> tuple[set[str], list[tuple]]:
     visited: set[str] = set(start_nodes)
     frontier = set(start_nodes)
@@ -114,12 +176,46 @@ def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_bu
         if u in nodes and v in nodes:
             raw = G[u][v]
             d = next(iter(raw.values()), {}) if isinstance(G, (nx.MultiGraph, nx.MultiDiGraph)) else raw
-            line = f"EDGE {sanitize_label(G.nodes[u].get('label', u))} --{d.get('relation', '')} [{d.get('confidence', '')}]--> {sanitize_label(G.nodes[v].get('label', v))}"
+            context = d.get("context")
+            context_suffix = f" context={context}" if context else ""
+            line = (
+                f"EDGE {sanitize_label(G.nodes[u].get('label', u))} "
+                f"--{d.get('relation', '')} [{d.get('confidence', '')}{context_suffix}]--> "
+                f"{sanitize_label(G.nodes[v].get('label', v))}"
+            )
             lines.append(line)
     output = "\n".join(lines)
     if len(output) > char_budget:
         output = output[:char_budget] + f"\n... (truncated to ~{token_budget} token budget)"
     return output
+
+
+def _query_graph_text(
+    G: nx.Graph,
+    question: str,
+    *,
+    mode: str = "bfs",
+    depth: int = 3,
+    token_budget: int = 2000,
+    context_filters: list[str] | None = None,
+) -> str:
+    terms = [t.lower() for t in question.split() if len(t) > 2]
+    scored = _score_nodes(G, terms)
+    start_nodes = [nid for _, nid in scored[:3]]
+    if not start_nodes:
+        return "No matching nodes found."
+    resolved_filters, filter_source = _resolve_context_filters(question, context_filters)
+    traversal_graph = _filter_graph_by_context(G, resolved_filters)
+    nodes, edges = _dfs(traversal_graph, start_nodes, depth) if mode == "dfs" else _bfs(traversal_graph, start_nodes, depth)
+    header_parts = [
+        f"Traversal: {mode.upper()} depth={depth}",
+        f"Start: {[G.nodes[n].get('label', n) for n in start_nodes]}",
+    ]
+    if resolved_filters:
+        header_parts.append(f"Context: {', '.join(resolved_filters)} ({filter_source})")
+    header_parts.append(f"{len(nodes)} nodes found")
+    header = " | ".join(header_parts) + "\n\n"
+    return header + _subgraph_to_text(traversal_graph, nodes, edges, token_budget)
 
 
 def _find_node(G: nx.Graph, label: str) -> list[str]:
@@ -188,6 +284,11 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
                                  "description": "bfs=broad context, dfs=trace a specific path"},
                         "depth": {"type": "integer", "default": 3, "description": "Traversal depth (1-6)"},
                         "token_budget": {"type": "integer", "default": 2000, "description": "Max output tokens"},
+                        "context_filter": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional explicit edge-context filter, e.g. ['call', 'field']",
+                        },
                     },
                     "required": ["question"],
                 },
@@ -252,14 +353,15 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         mode = arguments.get("mode", "bfs")
         depth = min(int(arguments.get("depth", 3)), 6)
         budget = int(arguments.get("token_budget", 2000))
-        terms = [t.lower() for t in question.split() if len(t) > 2]
-        scored = _score_nodes(G, terms)
-        start_nodes = [nid for _, nid in scored[:3]]
-        if not start_nodes:
-            return "No matching nodes found."
-        nodes, edges = _dfs(G, start_nodes, depth) if mode == "dfs" else _bfs(G, start_nodes, depth)
-        header = f"Traversal: {mode.upper()} depth={depth} | Start: {[G.nodes[n].get('label', n) for n in start_nodes]} | {len(nodes)} nodes found\n\n"
-        return header + _subgraph_to_text(G, nodes, edges, budget, seeds=start_nodes)
+        context_filter = arguments.get("context_filter")
+        return _query_graph_text(
+            G,
+            question,
+            mode=mode,
+            depth=depth,
+            token_budget=budget,
+            context_filters=context_filter,
+        )
 
     def _tool_get_node(arguments: dict) -> str:
         label = arguments["label"].lower()

@@ -9,6 +9,10 @@ from graphify.serve import (
     _score_nodes,
     _bfs,
     _dfs,
+    _filter_graph_by_context,
+    _infer_context_filters,
+    _query_graph_text,
+    _resolve_context_filters,
     _subgraph_to_text,
     _load_graph,
 )
@@ -21,8 +25,8 @@ def _make_graph() -> nx.Graph:
     G.add_node("n3", label="build", source_file="build.py", source_location="L1", community=1)
     G.add_node("n4", label="report", source_file="report.py", source_location="L1", community=1)
     G.add_node("n5", label="isolated", source_file="other.py", source_location="L1", community=2)
-    G.add_edge("n1", "n2", relation="calls", confidence="INFERRED")
-    G.add_edge("n2", "n3", relation="imports", confidence="EXTRACTED")
+    G.add_edge("n1", "n2", relation="calls", confidence="INFERRED", context="call")
+    G.add_edge("n2", "n3", relation="imports", confidence="EXTRACTED", context="import")
     G.add_edge("n3", "n4", relation="uses", confidence="EXTRACTED")
     return G
 
@@ -73,6 +77,16 @@ def test_score_nodes_source_file_partial():
     assert "n2" in nids
 
 
+def test_infer_context_filters_for_calls_question():
+    assert _infer_context_filters("who calls extract") == ["call"]
+
+
+def test_resolve_context_filters_explicit_overrides_heuristic():
+    filters, source = _resolve_context_filters("who calls extract", ["field"])
+    assert filters == ["field"]
+    assert source == "explicit"
+
+
 # --- _bfs ---
 
 def test_bfs_depth_1():
@@ -97,6 +111,15 @@ def test_bfs_returns_edges():
     visited, edges = _bfs(G, ["n1"], depth=1)
     assert len(edges) >= 1
     assert any(u == "n1" or v == "n1" for u, v in edges)
+
+
+def test_filter_graph_by_context_limits_traversal():
+    G = _make_graph()
+    filtered = _filter_graph_by_context(G, ["call"])
+    visited, edges = _bfs(filtered, ["n1"], depth=2)
+    assert "n2" in visited
+    assert "n3" not in visited
+    assert edges == [("n1", "n2")]
 
 
 # --- _dfs ---
@@ -133,6 +156,28 @@ def test_subgraph_to_text_edge_included():
     text = _subgraph_to_text(G, {"n1", "n2"}, [("n1", "n2")])
     assert "EDGE" in text
     assert "calls" in text
+
+
+def test_subgraph_to_text_includes_edge_context():
+    G = _make_graph()
+    text = _subgraph_to_text(G, {"n1", "n2"}, [("n1", "n2")])
+    assert "context=call" in text
+
+
+def test_query_graph_text_explicit_context_filter_changes_traversal():
+    G = _make_graph()
+    text = _query_graph_text(G, "extract", mode="bfs", depth=2, token_budget=2000, context_filters=["call"])
+    assert "Context: call (explicit)" in text
+    assert "cluster" in text
+    assert "build" not in text
+
+
+def test_query_graph_text_heuristic_context_filter_changes_traversal():
+    G = _make_graph()
+    text = _query_graph_text(G, "who calls extract", mode="bfs", depth=2, token_budget=2000)
+    assert "Context: call (heuristic)" in text
+    assert "cluster" in text
+    assert "build" not in text
 
 
 # --- _load_graph ---

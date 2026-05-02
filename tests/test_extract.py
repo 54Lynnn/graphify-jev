@@ -124,6 +124,13 @@ def test_calls_edges_are_extracted():
             assert edge["weight"] == 1.0
 
 
+def test_python_call_edges_have_call_context():
+    result = extract_python(FIXTURES / "sample_calls.py")
+    call_edges = [e for e in result["edges"] if e["relation"] == "calls"]
+    assert call_edges
+    assert all(e.get("context") == "call" for e in call_edges)
+
+
 def test_calls_no_self_loops():
     result = extract_python(FIXTURES / "sample_calls.py")
     for edge in result["edges"]:
