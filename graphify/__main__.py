@@ -718,15 +718,11 @@ _CODEX_HOOK = {
                 "hooks": [
                     {
                         "type": "command",
-                        # Use Python for the file check so the hook works on Windows
-                        # (cmd.exe has no [ -f ] builtin; Python is always available).
-                        "command": (
-                            "python3 -c \""
-                            "import pathlib,json,sys; "
-                            "p=pathlib.Path('graphify-out/graph.json'); "
-                            r"print(json.dumps({'hookSpecificOutput':{'hookEventName':'PreToolUse','additionalContext':'graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files.'}})) if p.exists() else None"
-                            "\""
-                        ),
+                        # Use the graphify CLI itself so the hook is shell-agnostic:
+                        # no [ -f ] bash syntax, no python3 vs python Conda issue,
+                        # no JSON escaping inside PowerShell strings. Works on
+                        # Windows (PowerShell/cmd.exe), macOS, and Linux.
+                        "command": "graphify hook-check",
                     }
                 ],
             }
@@ -1453,6 +1449,25 @@ def main() -> None:
             print("Nothing to update or rebuild failed — check output above.", file=sys.stderr)
             sys.exit(1)
 
+    elif cmd == "hook-check":
+        # Shell-agnostic PreToolUse hook entry point for Codex (and any platform
+        # where embedding Python/bash inline in a JSON hook command is fragile).
+        # Prints the hookSpecificOutput JSON if graph.json exists, exits 0 silently
+        # if not. Works on Windows PowerShell, cmd.exe, macOS, and Linux.
+        graph = Path("graphify-out") / "graph.json"
+        if graph.exists():
+            import json as _json
+            print(_json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "additionalContext": (
+                        "graphify: Knowledge graph exists. "
+                        "Read graphify-out/GRAPH_REPORT.md for god nodes and "
+                        "community structure before searching raw files."
+                    ),
+                }
+            }))
+        sys.exit(0)
     elif cmd == "check-update":
         if len(sys.argv) < 3:
             print("Usage: graphify check-update <path>", file=sys.stderr)
