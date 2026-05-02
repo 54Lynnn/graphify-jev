@@ -736,6 +736,26 @@ _CODEX_HOOK = {
 }
 
 
+def _resolve_graphify_exe() -> str:
+    """Return the absolute path to the graphify executable.
+
+    Falls back to bare 'graphify' if resolution fails. Using an absolute path
+    ensures the hook works in environments where the venv Scripts/ directory is
+    not on PATH (e.g. VS Code Codex extension on Windows).
+    """
+    import shutil
+    found = shutil.which("graphify")
+    if found:
+        return found
+    # Derive from sys.executable: same Scripts/ (Windows) or bin/ (Unix) dir
+    scripts_dir = Path(sys.executable).parent
+    for name in ("graphify.exe", "graphify"):
+        candidate = scripts_dir / name
+        if candidate.exists():
+            return str(candidate)
+    return "graphify"
+
+
 def _install_codex_hook(project_dir: Path) -> None:
     """Add graphify PreToolUse hook to .codex/hooks.json."""
     hooks_path = project_dir / ".codex" / "hooks.json"
@@ -749,11 +769,23 @@ def _install_codex_hook(project_dir: Path) -> None:
     else:
         existing = {}
 
+    graphify_exe = _resolve_graphify_exe()
+    hook_entry = {
+        "hooks": {
+            "PreToolUse": [
+                {
+                    "matcher": "Bash",
+                    "hooks": [{"type": "command", "command": f"{graphify_exe} hook-check"}],
+                }
+            ]
+        }
+    }
+
     pre_tool = existing.setdefault("hooks", {}).setdefault("PreToolUse", [])
     existing["hooks"]["PreToolUse"] = [h for h in pre_tool if "graphify" not in str(h)]
-    existing["hooks"]["PreToolUse"].extend(_CODEX_HOOK["hooks"]["PreToolUse"])
+    existing["hooks"]["PreToolUse"].extend(hook_entry["hooks"]["PreToolUse"])
     hooks_path.write_text(json.dumps(existing, indent=2), encoding="utf-8")
-    print(f"  .codex/hooks.json  ->  PreToolUse hook registered")
+    print(f"  .codex/hooks.json  ->  PreToolUse hook registered ({graphify_exe} hook-check)")
 
 
 def _uninstall_codex_hook(project_dir: Path) -> None:
