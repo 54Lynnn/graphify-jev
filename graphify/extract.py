@@ -182,6 +182,7 @@ def _import_python(node, source: bytes, file_nid: str, stem: str, edges: list, s
 
 
 def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> None:
+    resolved_path: "Path | None" = None
     for child in node.children:
         if child.type == "string":
             raw = _read_text(child, source).strip("'\"` ")
@@ -197,6 +198,7 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                 elif resolved.suffix == ".jsx":
                     resolved = resolved.with_suffix(".tsx")
                 tgt_nid = _make_id(str(resolved))
+                resolved_path = resolved
             else:
                 # Check tsconfig.json path aliases (e.g. "@/" → "src/") before treating as external (#575)
                 aliases = _load_tsconfig_aliases(Path(str_path).parent)
@@ -208,6 +210,7 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                         break
                 if resolved_alias is not None:
                     tgt_nid = _make_id(str(resolved_alias))
+                    resolved_path = resolved_alias
                 else:
                     # Bare/scoped import (node_modules) - use last segment; dropped as external
                     module_name = raw.split("/")[-1]
@@ -224,6 +227,32 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                 "weight": 1.0,
             })
             break
+
+    # Emit symbol-level edges for named imports from local/aliased files.
+    # e.g. `import { Foo, type Bar } from './bar'` → file → Foo, file → Bar (EXTRACTED)
+    # Uses the same _make_id(target_stem, name) key that _extract_generic emits when
+    # defining the symbol, so these edges wire importers directly to existing symbol nodes.
+    if resolved_path is not None:
+        target_stem = _file_stem(resolved_path)
+        line = node.start_point[0] + 1
+        for child in node.children:
+            if child.type == "import_clause":
+                for sub in child.children:
+                    if sub.type == "named_imports":
+                        for spec in sub.children:
+                            if spec.type == "import_specifier":
+                                name_node = spec.child_by_field_name("name")
+                                if name_node:
+                                    sym = _read_text(name_node, source)
+                                    edges.append({
+                                        "source": file_nid,
+                                        "target": _make_id(target_stem, sym),
+                                        "relation": "imports",
+                                        "confidence": "EXTRACTED",
+                                        "source_file": str_path,
+                                        "source_location": f"L{line}",
+                                        "weight": 1.0,
+                                    })
 
 
 def _import_java(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> None:
