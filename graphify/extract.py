@@ -501,6 +501,25 @@ def _swift_extra_walk(node, source: bytes, file_nid: str, stem: str, str_path: s
     return False
 
 
+def _vbnet_extra_walk(node, source: bytes, file_nid: str, stem: str, str_path: str,
+                     nodes: list, edges: list, seen_ids: set, function_bodies: list,
+                     parent_class_nid: str | None, add_node_fn, add_edge_fn,
+                     walk_fn) -> bool:
+    """Handle namespace_block for VB.NET. Returns True if handled."""
+    if node.type == "namespace_block":
+        name_node = node.child_by_field_name("name")
+        if name_node:
+            ns_name = _read_text(name_node, source)
+            ns_nid = _make_id(stem, ns_name)
+            line = node.start_point[0] + 1
+            add_node_fn(ns_nid, ns_name, line)
+            add_edge_fn(file_nid, ns_nid, "contains", line)
+        for child in node.children:
+            walk_fn(child, parent_class_nid)
+        return True
+    return False
+
+
 # ── Language configs ──────────────────────────────────────────────────────────
 
 _PYTHON_CONFIG = LanguageConfig(
@@ -719,6 +738,24 @@ def _import_swift(node, source: bytes, file_nid: str, stem: str, edges: list, st
             break
 
 
+def _import_vbnet(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> None:
+    """Handle VB.NET 'Imports System.Collections.Generic' statements."""
+    for child in node.children:
+        if child.type == "namespace_name":
+            raw = _read_text(child, source).strip()
+            if raw:
+                tgt_nid = _make_id(raw)
+                edges.append({
+                    "source": file_nid,
+                    "target": tgt_nid,
+                    "relation": "imports",
+                    "confidence": "EXTRACTED",
+                    "source_file": str_path,
+                    "source_location": f"L{node.start_point[0] + 1}",
+                    "weight": 1.0,
+                })
+
+
 _SWIFT_CONFIG = LanguageConfig(
     ts_module="tree_sitter_swift",
     class_types=frozenset({"class_declaration", "protocol_declaration"}),
@@ -732,6 +769,20 @@ _SWIFT_CONFIG = LanguageConfig(
     body_fallback_child_types=("class_body", "protocol_body", "function_body", "enum_class_body"),
     function_boundary_types=frozenset({"function_declaration", "init_declaration", "deinit_declaration", "subscript_declaration"}),
     import_handler=_import_swift,
+)
+
+_VBNET_CONFIG = LanguageConfig(
+    ts_module="tree_sitter_vbnet",
+    ts_language_fn="language",
+    class_types=frozenset({"class_block", "module_block", "structure_block", "interface_block"}),
+    function_types=frozenset({"method_declaration", "constructor_declaration", "property_declaration"}),
+    import_types=frozenset({"imports_statement"}),
+    call_types=frozenset({"invocation"}),
+    call_function_field="target",
+    call_accessor_node_types=frozenset({"member_access"}),
+    call_accessor_field="member",
+    function_boundary_types=frozenset({"method_declaration", "constructor_declaration", "property_declaration"}),
+    import_handler=_import_vbnet,
 )
 
 
@@ -937,6 +988,43 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
             if body:
                 for child in body.children:
                     walk(child, parent_class_nid=class_nid)
+            elif config.ts_module == "tree_sitter_vbnet":
+                # VB.NET class/module/structure/interface have no separate body node —
+                # inherits/implements appear as named fields, members are inline children.
+                def _emit_vbnet_parent(clause_node, rel: str) -> None:
+                    for child in clause_node.children:
+                        if not child.is_named:
+                            continue
+                        raw = _read_text(child, source).strip()
+                        if not raw:
+                            continue
+                        # Strip generic args e.g. IList(Of T) → IList
+                        base_name = raw.split("(")[0].strip().split(".")[-1]
+                        if not base_name:
+                            continue
+                        base_nid = _make_id(stem, base_name)
+                        if base_nid not in seen_ids:
+                            base_nid = _make_id(base_name)
+                            if base_nid not in seen_ids:
+                                nodes.append({
+                                    "id": base_nid,
+                                    "label": base_name,
+                                    "file_type": "code",
+                                    "source_file": "",
+                                    "source_location": "",
+                                })
+                                seen_ids.add(base_nid)
+                        add_edge(class_nid, base_nid, rel, line)
+
+                inherits_node = node.child_by_field_name("inherits")
+                if inherits_node:
+                    _emit_vbnet_parent(inherits_node, "inherits")
+                implements_node = node.child_by_field_name("implements")
+                if implements_node:
+                    _emit_vbnet_parent(implements_node, "implements")
+
+                for child in node.children:
+                    walk(child, parent_class_nid=class_nid)
             return
 
         # Event listener property arrays: $listen = [Event::class => [Listener::class]]
@@ -997,6 +1085,9 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                 func_name: str | None = "deinit"
             elif t == "subscript_declaration":
                 func_name = "subscript"
+            elif config.ts_module == "tree_sitter_vbnet" and t == "constructor_declaration":
+                # VB.NET Sub New has no 'name' field — always named "New"
+                func_name = "New"
             elif config.resolve_function_name_fn is not None:
                 # C/C++ style: use declarator
                 declarator = node.child_by_field_name("declarator")
@@ -1028,6 +1119,10 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
             body = _find_body(node, config)
             if body:
                 function_bodies.append((func_nid, body))
+            elif config.ts_module == "tree_sitter_vbnet":
+                # VB.NET method/property/constructor bodies have no wrapper node —
+                # use the declaration node itself so walk_calls can find invocations.
+                function_bodies.append((func_nid, node))
             return
 
         # JS/TS arrow functions and C# namespaces — language-specific extra handling
@@ -1047,6 +1142,12 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
             if _swift_extra_walk(node, source, file_nid, stem, str_path,
                                   nodes, edges, seen_ids, function_bodies,
                                   parent_class_nid, add_node, add_edge):
+                return
+
+        if config.ts_module == "tree_sitter_vbnet":
+            if _vbnet_extra_walk(node, source, file_nid, stem, str_path,
+                                  nodes, edges, seen_ids, function_bodies,
+                                  parent_class_nid, add_node, add_edge, walk):
                 return
 
         # Default: recurse
@@ -1488,6 +1589,11 @@ def _extract_python_rationale(path: Path, result: dict) -> None:
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
+def extract_vbnet(path: Path) -> dict:
+    """Extract classes, modules, functions, and imports from a .vb file."""
+    return _extract_generic(path, _VBNET_CONFIG)
+
 
 def extract_python(path: Path) -> dict:
     """Extract classes, functions, and imports from a .py file via tree-sitter AST."""
@@ -3540,6 +3646,7 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
         ".v": extract_verilog,
         ".sv": extract_verilog,
         ".sql": extract_sql,
+        ".vb": extract_vbnet,
     }
 
     total = len(paths)

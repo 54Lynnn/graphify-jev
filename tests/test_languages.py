@@ -1,11 +1,11 @@
-"""Tests for language extractors: Java, C, C++, Ruby, C#, Kotlin, Scala, PHP, Swift, Go, Julia."""
+"""Tests for language extractors: Java, C, C++, Ruby, C#, Kotlin, Scala, PHP, Swift, Go, Julia, VB.NET."""
 from __future__ import annotations
 from pathlib import Path
 import pytest
 from graphify.extract import (
     extract_java, extract_c, extract_cpp, extract_ruby,
     extract_csharp, extract_kotlin, extract_scala, extract_php,
-    extract_swift, extract_go, extract_julia,
+    extract_swift, extract_go, extract_julia, extract_vbnet,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -417,6 +417,77 @@ def test_swift_emits_calls():
     calls = _calls(r)
     assert any("process" in src and "validate" in tgt for src, tgt in calls)
 
+# ── VB.NET ─────────────────────────────────────────────────────────────────────────
+
+def test_vbnet_no_error():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    assert "error" not in r
+
+def test_vbnet_finds_class():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    assert any("DataProcessor" in l for l in _labels(r))
+
+def test_vbnet_finds_interface():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    assert any("IProcessor" in l for l in _labels(r))
+
+def test_vbnet_finds_module():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    assert any("AppHelper" in l for l in _labels(r))
+
+def test_vbnet_finds_structure():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    assert any("Point" in l for l in _labels(r))
+
+def test_vbnet_finds_methods():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    labels = _labels(r)
+    assert any("Process" in l for l in labels)
+    assert any("Validate" in l for l in labels)
+
+def test_vbnet_finds_sub():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    assert any("Run" in l for l in _labels(r))
+
+def test_vbnet_finds_imports():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    assert "imports" in _relations(r)
+
+def test_vbnet_inherits_edge():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    inherits = [e for e in r["edges"] if e["relation"] == "inherits"]
+    assert len(inherits) >= 1
+
+def test_vbnet_inherits_baseprovessor():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    found = any(
+        "DataProcessor" in node_by_id.get(e["source"], "") and
+        "BaseProcessor" in node_by_id.get(e["target"], "")
+        for e in r["edges"] if e["relation"] == "inherits"
+    )
+    assert found, "DataProcessor should have inherits edge to BaseProcessor"
+
+def test_vbnet_implements_edge():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    implements = [e for e in r["edges"] if e["relation"] == "implements"]
+    assert len(implements) >= 1
+
+def test_vbnet_implements_iprocessor():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    found = any(
+        "DataProcessor" in node_by_id.get(e["source"], "") and
+        "IProcessor" in node_by_id.get(e["target"], "")
+        for e in r["edges"] if e["relation"] == "implements"
+    )
+    assert found, "DataProcessor should have implements edge to IProcessor"
+
+def test_vbnet_no_dangling_edges():
+    r = extract_vbnet(FIXTURES / "sample.vb")
+    node_ids = {n["id"] for n in r["nodes"]}
+    for e in r["edges"]:
+        assert e["source"] in node_ids
 
 # ── Elixir ────────────────────────────────────────────────────────────────────
 
