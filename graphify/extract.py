@@ -3650,7 +3650,167 @@ def _check_tree_sitter_version() -> None:
         )
 
 
-def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
+_DISPATCH: dict[str, Any] = {
+    ".py": extract_python,
+    ".js": extract_js,
+    ".jsx": extract_js,
+    ".mjs": extract_js,
+    ".ts": extract_js,
+    ".tsx": extract_js,
+    ".go": extract_go,
+    ".rs": extract_rust,
+    ".java": extract_java,
+    ".c": extract_c,
+    ".h": extract_c,
+    ".cpp": extract_cpp,
+    ".cc": extract_cpp,
+    ".cxx": extract_cpp,
+    ".hpp": extract_cpp,
+    ".rb": extract_ruby,
+    ".cs": extract_csharp,
+    ".kt": extract_kotlin,
+    ".kts": extract_kotlin,
+    ".scala": extract_scala,
+    ".php": extract_php,
+    ".swift": extract_swift,
+    ".lua": extract_lua,
+    ".toc": extract_lua,
+    ".zig": extract_zig,
+    ".ps1": extract_powershell,
+    ".ex": extract_elixir,
+    ".exs": extract_elixir,
+    ".m": extract_objc,
+    ".mm": extract_objc,
+    ".jl": extract_julia,
+    ".vue": extract_js,
+    ".svelte": extract_js,
+    ".dart": extract_dart,
+    ".v": extract_verilog,
+    ".sv": extract_verilog,
+    ".sql": extract_sql,
+}
+
+
+def _get_extractor(path: Path) -> Any | None:
+    """Return the correct extractor function for a file, or None if unsupported."""
+    if path.name.endswith(".blade.php"):
+        return extract_blade
+    return _DISPATCH.get(path.suffix)
+
+
+def _extract_single_file(args: tuple) -> tuple[int, dict]:
+    """Worker function for parallel extraction. Runs in a subprocess.
+
+    Must be at module level (not a closure) so it can be pickled by
+    ProcessPoolExecutor.
+
+    Args:
+        args: (index, path_str, cache_root_str) tuple
+
+    Returns:
+        (index, result_dict) so results can be placed back in order.
+    """
+    idx, path_str, cache_root_str = args
+    path = Path(path_str)
+    cache_root = Path(cache_root_str)
+
+    # Check cache first (avoid re-extraction)
+    cached = load_cached(path, cache_root)
+    if cached is not None:
+        return idx, cached
+
+    extractor = _get_extractor(path)
+    if extractor is None:
+        return idx, {"nodes": [], "edges": []}
+
+    result = extractor(path)
+    if "error" not in result:
+        save_cached(path, result, cache_root)
+    return idx, result
+
+
+def _extract_parallel(
+    uncached_work: list[tuple[int, Path]],
+    per_file: list[dict | None],
+    effective_root: Path,
+    max_workers: int | None,
+    total_files: int,
+) -> None:
+    """Extract uncached files in parallel using ProcessPoolExecutor."""
+    import concurrent.futures
+
+    if max_workers is None:
+        max_workers = min(os.cpu_count() or 4, len(uncached_work), 8)
+
+    root_str = str(effective_root)
+    work_items = [(idx, str(path), root_str) for idx, path in uncached_work]
+
+    done_count = 0
+    _PROGRESS_INTERVAL = 100
+    with concurrent.futures.ProcessPoolExecutor(max_workers=max_workers) as pool:
+        futures = {
+            pool.submit(_extract_single_file, item): item[0] for item in work_items
+        }
+        for future in concurrent.futures.as_completed(futures):
+            idx, result = future.result()
+            per_file[idx] = result
+            done_count += 1
+            if (
+                total_files >= _PROGRESS_INTERVAL
+                and done_count % _PROGRESS_INTERVAL == 0
+            ):
+                print(
+                    f"  AST extraction: {done_count}/{len(uncached_work)} uncached files "
+                    f"({done_count * 100 // len(uncached_work)}%) [{max_workers} workers]",
+                    flush=True,
+                )
+    if total_files >= _PROGRESS_INTERVAL:
+        print(
+            f"  AST extraction: {total_files}/{total_files} files (100%) [{max_workers} workers]",
+            flush=True,
+        )
+
+
+def _extract_sequential(
+    uncached_work: list[tuple[int, Path]],
+    per_file: list[dict | None],
+    effective_root: Path,
+    total_files: int,
+) -> None:
+    """Extract uncached files sequentially (fallback for small batches)."""
+    _PROGRESS_INTERVAL = 100
+    for work_idx, (idx, path) in enumerate(uncached_work):
+        if (
+            total_files >= _PROGRESS_INTERVAL
+            and work_idx % _PROGRESS_INTERVAL == 0
+            and work_idx > 0
+        ):
+            print(
+                f"  AST extraction: {work_idx}/{len(uncached_work)} uncached files ({work_idx * 100 // len(uncached_work)}%)",
+                flush=True,
+            )
+        extractor = _get_extractor(path)
+        if extractor is None:
+            per_file[idx] = {"nodes": [], "edges": []}
+            continue
+        result = extractor(path)
+        if "error" not in result:
+            save_cached(path, result, effective_root)
+        per_file[idx] = result
+    if total_files >= _PROGRESS_INTERVAL:
+        print(f"  AST extraction: {total_files}/{total_files} files (100%)", flush=True)
+
+
+_PARALLEL_THRESHOLD = 20
+
+
+def extract(
+    paths: list[Path],
+    cache_root: Path | None = None,
+    *,
+    parallel: bool = True,
+    max_workers: int | None = None,
+) -> dict:
     """Extract AST nodes and edges from a list of code files.
 
     Two-pass process:
@@ -3663,9 +3823,11 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
         cache_root: explicit root for graphify-out/cache/ (overrides the
             inferred common path prefix). Pass Path('.') when running on a
             subdirectory so the cache stays at ./graphify-out/cache/.
+        parallel: if True and there are >= _PARALLEL_THRESHOLD uncached files,
+            use ProcessPoolExecutor for multi-core extraction.
+        max_workers: max subprocess count. Defaults to min(cpu_count, 8).
     """
     _check_tree_sitter_version()
-    per_file: list[dict] = []
 
     # Infer a common root for cache keys (use first diverging segment, not sum of all matches)
     try:
@@ -3686,68 +3848,36 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
         root = Path(".")
     root = root.resolve()
 
-    _DISPATCH: dict[str, Any] = {
-        ".py": extract_python,
-        ".js": extract_js,
-        ".jsx": extract_js,
-        ".mjs": extract_js,
-        ".ts": extract_js,
-        ".tsx": extract_js,
-        ".go": extract_go,
-        ".rs": extract_rust,
-        ".java": extract_java,
-        ".c": extract_c,
-        ".h": extract_c,
-        ".cpp": extract_cpp,
-        ".cc": extract_cpp,
-        ".cxx": extract_cpp,
-        ".hpp": extract_cpp,
-        ".rb": extract_ruby,
-        ".cs": extract_csharp,
-        ".kt": extract_kotlin,
-        ".kts": extract_kotlin,
-        ".scala": extract_scala,
-        ".php": extract_php,
-        ".swift": extract_swift,
-        ".lua": extract_lua,
-        ".toc": extract_lua,
-        ".zig": extract_zig,
-        ".ps1": extract_powershell,
-        ".ex": extract_elixir,
-        ".exs": extract_elixir,
-        ".m": extract_objc,
-        ".mm": extract_objc,
-        ".jl": extract_julia,
-        ".vue": extract_js,
-        ".svelte": extract_js,
-        ".dart": extract_dart,
-        ".v": extract_verilog,
-        ".sv": extract_verilog,
-        ".sql": extract_sql,
-    }
-
+    effective_root = cache_root or root
     total = len(paths)
-    _PROGRESS_INTERVAL = 100
+
+    # Phase 1: separate cached hits from uncached work
+    per_file: list[dict | None] = [None] * total
+    uncached_work: list[tuple[int, Path]] = []
+
     for i, path in enumerate(paths):
-        if total >= _PROGRESS_INTERVAL and i % _PROGRESS_INTERVAL == 0 and i > 0:
-            print(f"  AST extraction: {i}/{total} files ({i * 100 // total}%)", flush=True)
-        # .blade.php must be checked before suffix lookup since Path.suffix returns .php
-        if path.name.endswith(".blade.php"):
-            extractor = extract_blade
-        else:
-            extractor = _DISPATCH.get(path.suffix)
-        if extractor is None:
+        if _get_extractor(path) is None:
+            per_file[i] = {"nodes": [], "edges": []}
             continue
-        cached = load_cached(path, cache_root or root)
+        cached = load_cached(path, effective_root)
         if cached is not None:
-            per_file.append(cached)
+            per_file[i] = cached
             continue
-        result = extractor(path)
-        if "error" not in result:
-            save_cached(path, result, cache_root or root)
-        per_file.append(result)
-    if total >= _PROGRESS_INTERVAL:
-        print(f"  AST extraction: {total}/{total} files (100%)", flush=True)
+        uncached_work.append((i, path))
+
+    # Phase 2: extract uncached files (parallel or sequential)
+    if uncached_work:
+        if parallel and len(uncached_work) >= _PARALLEL_THRESHOLD:
+            _extract_parallel(
+                uncached_work, per_file, effective_root, max_workers, total
+            )
+        else:
+            _extract_sequential(uncached_work, per_file, effective_root, total)
+
+    # Fill any remaining None slots (shouldn't happen, but defensive)
+    for i in range(total):
+        if per_file[i] is None:
+            per_file[i] = {"nodes": [], "edges": []}
 
     all_nodes: list[dict] = []
     all_edges: list[dict] = []
