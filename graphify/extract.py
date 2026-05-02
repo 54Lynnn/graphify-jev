@@ -251,6 +251,7 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                                         "source": file_nid,
                                         "target": _make_id(target_stem, sym),
                                         "relation": "imports",
+                                        "context": "import",
                                         "confidence": "EXTRACTED",
                                         "source_file": str_path,
                                         "source_location": f"L{line}",
