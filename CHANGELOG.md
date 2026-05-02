@@ -14,6 +14,7 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 - Docs: skill INFERRED confidence score guidance changed to discrete rubric (0.55/0.65/0.75/0.85/0.95) backed by calibration data (#546)
 - Docs: skill `--update` prune output clarified — splits no-drift vs drift cases (#544)
 - Docs: skill `--update` merge step now calls `save_manifest` to prevent deleted files reappearing (#545)
+- Feat: `graphify tree` — self-contained D3 v7 collapsible-tree HTML view of `graph.json`; expand/collapse controls, depth-based colours, hover inspector; XSS-safe via `html.escape()` and `_js_safe()` (#557)
 
 ## 0.6.5 (2026-05-02)
 
