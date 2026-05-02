@@ -60,20 +60,25 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False) -> bool:
         result = extract(code_files, cache_root=watch_root)
 
         # Preserve semantic nodes/edges from a previous full run.
-        # AST-only rebuild replaces code nodes; doc/paper/image nodes are kept.
+        # AST-only rebuild replaces nodes for changed files; everything else is kept.
+        # Filter by node ID membership in the new AST output, not by file_type —
+        # INFERRED/AMBIGUOUS nodes extracted from code files also carry file_type="code"
+        # and would be wrongly dropped by a file_type-based filter.
         out = watch_path / "graphify-out"
         existing_graph = out / "graph.json"
         if existing_graph.exists():
             try:
                 existing = json.loads(existing_graph.read_text(encoding="utf-8"))
-                code_ids = {n["id"] for n in existing.get("nodes", []) if n.get("file_type") == "code"}
-                sem_nodes = [n for n in existing.get("nodes", []) if n.get("file_type") != "code"]
-                sem_edges = [e for e in existing.get("links", existing.get("edges", []))
-                             if e.get("confidence") in ("INFERRED", "AMBIGUOUS")
-                             or (e.get("source") not in code_ids and e.get("target") not in code_ids)]
+                new_ast_ids = {n["id"] for n in result["nodes"]}
+                preserved_nodes = [n for n in existing.get("nodes", []) if n["id"] not in new_ast_ids]
+                all_ids = new_ast_ids | {n["id"] for n in preserved_nodes}
+                preserved_edges = [
+                    e for e in existing.get("links", existing.get("edges", []))
+                    if e.get("source") in all_ids and e.get("target") in all_ids
+                ]
                 result = {
-                    "nodes": result["nodes"] + sem_nodes,
-                    "edges": result["edges"] + sem_edges,
+                    "nodes": result["nodes"] + preserved_nodes,
+                    "edges": result["edges"] + preserved_edges,
                     "hyperedges": existing.get("hyperedges", []),
                     "input_tokens": 0,
                     "output_tokens": 0,
