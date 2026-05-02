@@ -23,6 +23,7 @@ def generate(
     token_cost: dict,
     root: str,
     suggested_questions: list[dict] | None = None,
+    min_community_size: int = 3,
 ) -> str:
     today = date.today().isoformat()
 
@@ -108,13 +109,19 @@ def generate(
             conf_tag = f"{conf} {cscore:.2f}" if cscore is not None else conf
             lines.append(f"- **{h.get('label', h.get('id', ''))}** — {node_labels} [{conf_tag}]")
 
-    lines += ["", "## Communities"]
+    thin_count = sum(
+        1 for nodes in communities.values()
+        if 0 < sum(1 for n in nodes if not _ifn(G, n)) < min_community_size
+    )
+    lines += ["", f"## Communities ({len(communities)} total, {thin_count} thin omitted)"]
     for cid, nodes in communities.items():
         label = community_labels.get(cid, f"Community {cid}")
         score = cohesion_scores.get(cid, 0.0)
         # Filter method/function stubs from display - they're structural noise
         real_nodes = [n for n in nodes if not _ifn(G, n)]
         if not real_nodes:
+            continue
+        if len(real_nodes) < min_community_size:
             continue
         display = [G.nodes[n].get("label", n) for n in real_nodes[:8]]
         suffix = f" (+{len(real_nodes)-8} more)" if len(real_nodes) > 8 else ""
@@ -157,11 +164,7 @@ def generate(
             lines.append(f"- **{len(isolated)} isolated node(s):** {', '.join(f'`{l}`' for l in isolated_labels)}{suffix}")
             lines.append("  These have ≤1 connection - possible missing edges or undocumented components.")
         if thin_communities:
-            for cid, nodes in thin_communities.items():
-                label = community_labels.get(cid, f"Community {cid}")
-                node_labels = [G.nodes[n].get("label", n) for n in nodes]
-                lines.append(f"- **Thin community `{label}`** ({len(nodes)} nodes): {', '.join(f'`{l}`' for l in node_labels)}")
-                lines.append("  Too small to be a meaningful cluster - may be noise or needs more connections extracted.")
+            lines.append(f"- **{len(thin_communities)} thin communities (<{min_community_size} nodes) omitted from report** — run `graphify query` to explore isolated nodes.")
         if amb_pct > 20:
             lines.append(f"- **High ambiguity: {amb_pct}% of edges are AMBIGUOUS.** Review the Ambiguous Edges section above.")
 
