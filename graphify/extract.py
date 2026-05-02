@@ -863,6 +863,15 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
         language = Language(lang_fn())
     except ImportError:
         return {"nodes": [], "edges": [], "error": f"{config.ts_module} not installed"}
+    except TypeError as e:
+        # tree-sitter version mismatch: old Language() expects (lib_path),
+        # new Language() expects (language_capsule, name). Surface a hint
+        # so users see the upgrade path instead of a bare TypeError.
+        hint = (
+            f"tree-sitter version mismatch for {config.ts_module}: {e}. "
+            "Try: pip install --upgrade tree-sitter tree-sitter-languages"
+        )
+        return {"nodes": [], "edges": [], "error": hint}
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 

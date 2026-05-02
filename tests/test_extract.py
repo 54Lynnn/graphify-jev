@@ -197,3 +197,35 @@ def test_cross_file_calls_skip_ambiguous_duplicate_labels(tmp_path):
         nodes[e["source"]]["label"] == "run()" and nodes[e["target"]]["label"] == "log()"
         for e in calls
     )
+
+
+def test_extract_generic_surfaces_tree_sitter_version_mismatch_hint(monkeypatch):
+    """When Language() raises TypeError (e.g. old tree-sitter binding meets a
+    new tree-sitter API), the error message should point users at the upgrade
+    path instead of leaving a bare 'missing 1 required positional argument'.
+    """
+    import sys
+    import types
+    from graphify.extract import _extract_generic, LanguageConfig
+
+    # Build a fake tree_sitter module whose Language() raises TypeError -
+    # this is exactly what users see when an older tree-sitter is paired
+    # with a newer language binding.
+    fake_ts = types.ModuleType("tree_sitter")
+    def _raise(*args, **kwargs):
+        raise TypeError("missing 1 required positional argument: 'name'")
+    fake_ts.Language = _raise
+    fake_ts.Parser = None
+    monkeypatch.setitem(sys.modules, "tree_sitter", fake_ts)
+
+    # Stub the language module so import_module returns something with .language
+    fake_lang_mod = types.ModuleType("fake_ts_lang")
+    fake_lang_mod.language = lambda: object()
+    monkeypatch.setitem(sys.modules, "fake_ts_lang", fake_lang_mod)
+
+    config = LanguageConfig(ts_module="fake_ts_lang", ts_language_fn="language")
+    result = _extract_generic(Path("dummy.txt"), config)
+
+    assert "error" in result
+    assert "tree-sitter version mismatch" in result["error"]
+    assert "pip install --upgrade" in result["error"]
