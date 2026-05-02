@@ -151,13 +151,16 @@ if cached_path.exists():
     all_hyperedges.extend(cached.get('hyperedges', []))
 
 # PASTE each subagent response here as chunk_1, chunk_2, etc.
+total_in, total_out = 0, 0
 for chunk_json in []:  # replace [] with your chunk results
     chunk = json.loads(chunk_json) if isinstance(chunk_json, str) else chunk_json
     all_nodes.extend(chunk.get('nodes', []))
     all_edges.extend(chunk.get('edges', []))
     all_hyperedges.extend(chunk.get('hyperedges', []))
+    total_in += chunk.get('input_tokens', 0)
+    total_out += chunk.get('output_tokens', 0)
 
-merged = {'nodes': all_nodes, 'edges': all_edges, 'hyperedges': all_hyperedges, 'input_tokens': 0, 'output_tokens': 0}
+merged = {'nodes': all_nodes, 'edges': all_edges, 'hyperedges': all_hyperedges, 'input_tokens': total_in, 'output_tokens': total_out}
 Path('graphify-out/.graphify_extract.json').write_text(json.dumps(merged, indent=2))
 print(f'Merged: {len(all_nodes)} nodes, {len(all_edges)} edges')
 "
