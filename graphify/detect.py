@@ -509,6 +509,115 @@ def _is_ignored(path: Path, root: Path, patterns: list[tuple[Path, str]]) -> boo
     return result
 
 
+def _load_graphifyinclude(root: Path) -> list[tuple[Path, str]]:
+    """Read .graphifyinclude allowlist patterns from root and ancestors.
+
+    Include patterns opt matching hidden files/dirs into traversal. Sensitive
+    files and hard-skipped noise directories are still excluded later.
+    Uses the same VCS-root ceiling logic as _load_graphifyignore.
+    """
+    root = root.resolve()
+    ceiling = _find_vcs_root(root) or root
+
+    dirs: list[Path] = []
+    current = root
+    while True:
+        dirs.append(current)
+        if current == ceiling:
+            break
+        current = current.parent
+    dirs.reverse()
+
+    patterns: list[tuple[Path, str]] = []
+    for d in dirs:
+        include_file = d / ".graphifyinclude"
+        if include_file.exists():
+            for raw in include_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = _parse_gitignore_line(raw)
+                if line:
+                    patterns.append((d, line))
+    return patterns
+
+
+def _is_included(path: Path, root: Path, patterns: list[tuple[Path, str]]) -> bool:
+    """Return True if path matches any .graphifyinclude allowlist pattern."""
+    if not patterns:
+        return False
+
+    def _matches(rel: str, p: str) -> bool:
+        parts = rel.split("/")
+        if fnmatch.fnmatch(rel, p):
+            return True
+        if fnmatch.fnmatch(path.name, p):
+            return True
+        for i, part in enumerate(parts):
+            if fnmatch.fnmatch(part, p):
+                return True
+            if fnmatch.fnmatch("/".join(parts[:i + 1]), p):
+                return True
+        return False
+
+    for anchor, pattern in patterns:
+        anchored = pattern.startswith("/")
+        p = pattern.strip("/")
+        if not p:
+            continue
+        if anchored:
+            try:
+                rel_anchor = str(path.relative_to(anchor)).replace(os.sep, "/")
+                if _matches(rel_anchor, p):
+                    return True
+            except ValueError:
+                pass
+        else:
+            try:
+                rel = str(path.relative_to(root)).replace(os.sep, "/")
+                if _matches(rel, p):
+                    return True
+            except ValueError:
+                pass
+            if anchor != root:
+                try:
+                    rel_anchor = str(path.relative_to(anchor)).replace(os.sep, "/")
+                    if _matches(rel_anchor, p):
+                        return True
+                except ValueError:
+                    pass
+    return False
+
+
+def _could_contain_included_path(path: Path, root: Path, patterns: list[tuple[Path, str]]) -> bool:
+    """Return True if a directory may contain files matched by .graphifyinclude."""
+    if not patterns:
+        return False
+
+    rels: list[str] = []
+    try:
+        rels.append(str(path.relative_to(root)).replace(os.sep, "/"))
+    except ValueError:
+        pass
+    for anchor, _ in patterns:
+        if anchor != root:
+            try:
+                rels.append(str(path.relative_to(anchor)).replace(os.sep, "/"))
+            except ValueError:
+                pass
+
+    for rel in rels:
+        rel = rel.strip("/")
+        if not rel:
+            return True
+        for _, pattern in patterns:
+            p = pattern.strip("/")
+            if not p:
+                continue
+            if p == rel or p.startswith(rel + "/"):
+                return True
+            if fnmatch.fnmatch(rel, p):
+                return True
+    return False
+
+
 def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
     root = root.resolve()
     files: dict[FileType, list[str]] = {
@@ -522,6 +631,7 @@ def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
 
     skipped_sensitive: list[str] = []
     ignore_patterns = _load_graphifyignore(root)
+    include_patterns = _load_graphifyinclude(root)
 
     # Always include graphify-out/memory/ - query results filed back into the graph
     memory_dir = root / "graphify-out" / "memory"
@@ -543,10 +653,12 @@ def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
                     dirnames.clear()
                     continue
             if not in_memory_tree:
-                # Prune noise dirs in-place so os.walk never descends into them
+                # Prune noise dirs in-place so os.walk never descends into them.
+                # Hidden dirs are allowed through if they could contain an
+                # explicitly included path (.graphifyinclude allowlist).
                 dirnames[:] = [
                     d for d in dirnames
-                    if not d.startswith(".")
+                    if (not d.startswith(".") or _could_contain_included_path(dp / d, root, include_patterns))
                     and not _is_noise_dir(d)
                     and not _is_ignored(dp / d, root, ignore_patterns)
                 ]
@@ -565,8 +677,9 @@ def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
         in_memory = memory_dir.exists() and str(p).startswith(str(memory_dir))
         if not in_memory:
             # Hidden files are already excluded via dir pruning above,
-            # but catch hidden files at the root level
-            if p.name.startswith("."):
+            # but catch hidden files at the root level. A .graphifyinclude
+            # entry can opt a specific hidden file back in.
+            if p.name.startswith(".") and not _is_included(p, root, include_patterns):
                 continue
             # Skip files inside our own converted/ dir (avoid re-processing sidecars)
             if str(p).startswith(str(converted_dir)):
@@ -623,7 +736,7 @@ def detect(root: Path, *, follow_symlinks: bool = False) -> dict:
 def _md5_file(path: Path) -> str:
     """MD5 of file contents streamed in 64KB chunks — for change detection only."""
     import hashlib as _hl
-    h = _hl.md5()
+    h = _hl.md5(usedforsecurity=False)
     try:
         with path.open("rb") as f:
             for chunk in iter(lambda: f.read(65536), b""):

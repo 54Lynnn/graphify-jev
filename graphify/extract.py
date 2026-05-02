@@ -182,6 +182,7 @@ def _import_python(node, source: bytes, file_nid: str, stem: str, edges: list, s
 
 
 def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> None:
+    resolved_path: "Path | None" = None
     for child in node.children:
         if child.type == "string":
             raw = _read_text(child, source).strip("'\"` ")
@@ -197,6 +198,7 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                 elif resolved.suffix == ".jsx":
                     resolved = resolved.with_suffix(".tsx")
                 tgt_nid = _make_id(str(resolved))
+                resolved_path = resolved
             else:
                 # Check tsconfig.json path aliases (e.g. "@/" → "src/") before treating as external (#575)
                 aliases = _load_tsconfig_aliases(Path(str_path).parent)
@@ -208,6 +210,7 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                         break
                 if resolved_alias is not None:
                     tgt_nid = _make_id(str(resolved_alias))
+                    resolved_path = resolved_alias
                 else:
                     # Bare/scoped import (node_modules) - use last segment; dropped as external
                     module_name = raw.split("/")[-1]
@@ -224,6 +227,32 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                 "weight": 1.0,
             })
             break
+
+    # Emit symbol-level edges for named imports from local/aliased files.
+    # e.g. `import { Foo, type Bar } from './bar'` → file → Foo, file → Bar (EXTRACTED)
+    # Uses the same _make_id(target_stem, name) key that _extract_generic emits when
+    # defining the symbol, so these edges wire importers directly to existing symbol nodes.
+    if resolved_path is not None:
+        target_stem = _file_stem(resolved_path)
+        line = node.start_point[0] + 1
+        for child in node.children:
+            if child.type == "import_clause":
+                for sub in child.children:
+                    if sub.type == "named_imports":
+                        for spec in sub.children:
+                            if spec.type == "import_specifier":
+                                name_node = spec.child_by_field_name("name")
+                                if name_node:
+                                    sym = _read_text(name_node, source)
+                                    edges.append({
+                                        "source": file_nid,
+                                        "target": _make_id(target_stem, sym),
+                                        "relation": "imports",
+                                        "confidence": "EXTRACTED",
+                                        "source_file": str_path,
+                                        "source_location": f"L{line}",
+                                        "weight": 1.0,
+                                    })
 
 
 def _import_java(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> None:
@@ -590,7 +619,11 @@ _KOTLIN_CONFIG = LanguageConfig(
     call_function_field="",
     call_accessor_node_types=frozenset({"navigation_expression"}),
     call_accessor_field="",
-    name_fallback_child_types=("simple_identifier",),
+    # Different tree-sitter-kotlin grammar versions name plain identifier
+    # nodes differently: PyPI's `tree_sitter_kotlin` uses `identifier`,
+    # older forks use `simple_identifier`. Accept both so the extractor
+    # works across grammar generations.
+    name_fallback_child_types=("simple_identifier", "identifier"),
     body_fallback_child_types=("function_body", "class_body"),
     function_boundary_types=frozenset({"function_declaration"}),
     import_handler=_import_kotlin,
@@ -1069,15 +1102,19 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                                     if sc.type == "simple_identifier":
                                         callee_name = _read_text(sc, source)
             elif config.ts_module == "tree_sitter_kotlin":
-                # Kotlin: first child may be simple_identifier or navigation_expression
+                # Kotlin: first child may be simple_identifier/identifier or
+                # navigation_expression. PyPI's `tree_sitter_kotlin` produces
+                # `identifier` for plain identifier nodes; older grammar
+                # versions (including the JVM `io.github.bonede:tree-sitter-kotlin`
+                # binding) produce `simple_identifier`. Accept both.
                 first = node.children[0] if node.children else None
                 if first:
-                    if first.type == "simple_identifier":
+                    if first.type in ("simple_identifier", "identifier"):
                         callee_name = _read_text(first, source)
                     elif first.type == "navigation_expression":
                         is_member_call = True
                         for child in reversed(first.children):
-                            if child.type == "simple_identifier":
+                            if child.type in ("simple_identifier", "identifier"):
                                 callee_name = _read_text(child, source)
                                 break
             elif config.ts_module == "tree_sitter_scala":
@@ -2830,8 +2867,17 @@ def _resolve_cross_file_imports(
             stem = Path(src).stem
             label = node.get("label", "")
             nid = node.get("id", "")
-            # Only index real classes/functions (not file nodes, not method stubs)
-            if label and not label.endswith((")", ".py")) and "_" not in label[:1]:
+            # Index class-level entities only. Function/method labels end in "()"
+            # so are excluded by the `endswith(")")` filter; file nodes end in ".py";
+            # private/internal labels start with "_"; rationale nodes carry
+            # file_type=="rationale" and must never participate in cross-file
+            # import resolution (#563).
+            if (
+                label
+                and not label.endswith((")", ".py"))
+                and "_" not in label[:1]
+                and node.get("file_type") != "rationale"
+            ):
                 stem_to_entities.setdefault(stem, {})[label] = nid
 
     # Pass 2: for each file, find `from .X import A, B, C` and resolve
@@ -2842,12 +2888,15 @@ def _resolve_cross_file_imports(
         stem = _file_stem(path)
         str_path = str(path)
 
-        # Find all classes defined in this file (the importers)
+        # Find all classes defined in this file (the importers).
+        # Excludes rationale nodes whose labels happen not to end in ")" or ".py"
+        # but which must never be treated as importing entities (#563).
         local_classes = [
             n["id"] for n in file_result.get("nodes", [])
             if n.get("source_file") == str_path
             and not n["label"].endswith((")", ".py"))
             and n["id"] != _make_id(stem)  # exclude file-level node
+            and n.get("file_type") != "rationale"
         ]
         if not local_classes:
             continue
@@ -3697,12 +3746,21 @@ def extract(
     # Cross-file call resolution for all languages
     # Each extractor saved unresolved calls in raw_calls. Now that we have all
     # nodes from all files, resolve any callee that exists in another file.
-    global_label_to_nid: dict[str, str] = {}
+    # Build name → ALL matching node IDs so we can skip ambiguous common names
+    # (e.g. "log", "execute", "find") that appear in multiple files — resolving
+    # those inflates god_nodes ranking with spurious cross-file edges.
+    # Build label -> node_id index for cross-file call resolution.
+    # Skip rationale nodes (their labels are docstring text, not callable
+    # identifiers, and they were polluting matches for short names — #563).
+    global_label_to_nids: dict[str, list[str]] = {}
     for n in all_nodes:
+        if n.get("file_type") == "rationale":
+            continue
         raw = n.get("label", "")
         normalised = raw.strip("()").lstrip(".")
         if normalised:
-            global_label_to_nid[normalised.lower()] = n["id"]
+            key = normalised.lower()
+            global_label_to_nids.setdefault(key, []).append(n["id"])
 
     existing_pairs = {(e["source"], e["target"]) for e in all_edges}
     for result in per_file:
@@ -3714,9 +3772,15 @@ def extract(
             # and collides with any top-level function named "log" in the corpus.
             if rc.get("is_member_call"):
                 continue
-            tgt = global_label_to_nid.get(callee.lower())
+            candidates = global_label_to_nids.get(callee.lower(), [])
+            # Skip ambiguous names that resolve to multiple nodes — these are
+            # common short names (log, execute, find) with no import evidence
+            # to pick the right target; emitting all edges inflates god_nodes.
+            if len(candidates) != 1:
+                continue
+            tgt = candidates[0]
             caller = rc["caller_nid"]
-            if tgt and tgt != caller and (caller, tgt) not in existing_pairs:
+            if tgt != caller and (caller, tgt) not in existing_pairs:
                 existing_pairs.add((caller, tgt))
                 all_edges.append({
                     "source": caller,

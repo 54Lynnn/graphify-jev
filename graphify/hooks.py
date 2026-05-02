@@ -61,7 +61,13 @@ fi
 
 """ + _PYTHON_DETECT + """
 export GRAPHIFY_CHANGED="$CHANGED"
-$GRAPHIFY_PYTHON -c "
+
+# Run rebuild detached so git commit returns immediately.
+# Full repo rebuilds can take hours; blocking the post-commit hook stalls the shell.
+_GRAPHIFY_LOG="${HOME}/.cache/graphify-rebuild.log"
+mkdir -p "$(dirname "$_GRAPHIFY_LOG")"
+echo "[graphify hook] launching background rebuild (log: $_GRAPHIFY_LOG)"
+nohup $GRAPHIFY_PYTHON -c "
 import os, sys
 from pathlib import Path
 
@@ -74,12 +80,15 @@ if not changed:
 print(f'[graphify hook] {len(changed)} file(s) changed - rebuilding graph...')
 
 try:
+    import os as _os
     from graphify.watch import _rebuild_code
-    _rebuild_code(Path('.'))
+    _force = _os.environ.get('GRAPHIFY_FORCE', '').lower() in ('1', 'true', 'yes')
+    _rebuild_code(Path('.'), force=_force)
 except Exception as exc:
     print(f'[graphify hook] Rebuild failed: {exc}')
     sys.exit(1)
-"
+" > "$_GRAPHIFY_LOG" 2>&1 < /dev/null &
+disown 2>/dev/null || true
 # graphify-hook-end
 """
 
@@ -111,17 +120,21 @@ GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
 [ -f "$GIT_DIR/CHERRY_PICK_HEAD" ] && exit 0
 
 """ + _PYTHON_DETECT + """
-echo "[graphify] Branch switched - rebuilding knowledge graph (code files)..."
-$GRAPHIFY_PYTHON -c "
+_GRAPHIFY_LOG="${HOME}/.cache/graphify-rebuild.log"
+mkdir -p "$(dirname "$_GRAPHIFY_LOG")"
+echo "[graphify] Branch switched - launching background rebuild (log: $_GRAPHIFY_LOG)"
+nohup $GRAPHIFY_PYTHON -c "
 from graphify.watch import _rebuild_code
 from pathlib import Path
-import sys
+import os, sys
 try:
-    _rebuild_code(Path('.'))
+    _force = os.environ.get('GRAPHIFY_FORCE', '').lower() in ('1', 'true', 'yes')
+    _rebuild_code(Path('.'), force=_force)
 except Exception as exc:
     print(f'[graphify] Rebuild failed: {exc}')
     sys.exit(1)
-"
+" > "$_GRAPHIFY_LOG" 2>&1 < /dev/null &
+disown 2>/dev/null || true
 # graphify-checkout-hook-end
 """
 

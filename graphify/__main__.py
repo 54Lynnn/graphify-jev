@@ -124,6 +124,11 @@ _PLATFORM_CONFIG: dict[str, dict] = {
         "skill_dst": Path(".kiro") / "skills" / "graphify" / "SKILL.md",
         "claude_md": False,
     },
+    "pi": {
+        "skill_file": "skill-pi.md",
+        "skill_dst": Path(".pi") / "agent" / "skills" / "graphify" / "SKILL.md",
+        "claude_md": False,
+    },
     "antigravity": {
         "skill_file": "skill.md",
         "skill_dst": Path(".agents") / "skills" / "graphify" / "SKILL.md",
@@ -718,11 +723,11 @@ _CODEX_HOOK = {
                 "hooks": [
                     {
                         "type": "command",
-                        "command": (
-                            "[ -f graphify-out/graph.json ] && "
-                            r"""echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files."}}' """
-                            "|| true"
-                        ),
+                        # Use the graphify CLI itself so the hook is shell-agnostic:
+                        # no [ -f ] bash syntax, no python3 vs python Conda issue,
+                        # no JSON escaping inside PowerShell strings. Works on
+                        # Windows (PowerShell/cmd.exe), macOS, and Linux.
+                        "command": "graphify hook-check",
                     }
                 ],
             }
@@ -989,7 +994,7 @@ def main() -> None:
         print("Usage: graphify <command>")
         print()
         print("Commands:")
-        print("  install [--platform P]  copy skill to platform config dir (claude|windows|codex|opencode|aider|claw|droid|trae|trae-cn|gemini|cursor|antigravity|hermes|kiro)")
+        print("  install [--platform P]  copy skill to platform config dir (claude|windows|codex|opencode|aider|claw|droid|trae|trae-cn|gemini|cursor|antigravity|hermes|kiro|pi)")
         print("  path \"A\" \"B\"            shortest path between two nodes in graph.json")
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
         print("  explain \"X\"             plain-language explanation of a node and its neighbors")
@@ -1005,7 +1010,10 @@ def main() -> None:
         print("    --dir <path>            target directory (default: ./raw)")
         print("  watch <path>            watch a folder and rebuild the graph on code changes")
         print("  update <path>           re-extract code files and update the graph (no LLM needed)")
+        print("    --force                 overwrite graph.json even if the rebuild has fewer nodes")
+        print("                            (also: GRAPHIFY_FORCE=1 env var; use after refactors that delete code)")
         print("  cluster-only <path>     rerun clustering on an existing graph.json and regenerate report")
+        print("    --no-viz                skip graph.html generation (useful for >5000 node graphs / CI)")
         print("  query \"<question>\"       BFS traversal of graph.json for a question")
         print("    --dfs                   use depth-first instead of breadth-first")
         print("    --budget N              cap output at N tokens (default 2000)")
@@ -1051,6 +1059,8 @@ def main() -> None:
         print("  hermes uninstall        remove skill from ~/.hermes/skills/graphify/")
         print("  kiro install            write skill to .kiro/skills/graphify/ + steering file (Kiro IDE/CLI)")
         print("  kiro uninstall          remove skill + steering file")
+        print("  pi install              write skill to ~/.pi/agent/skills/graphify/ (Pi coding agent)")
+        print("  pi uninstall            remove skill from ~/.pi/agent/skills/graphify/")
         print()
         return
 
@@ -1137,6 +1147,26 @@ def main() -> None:
             _kiro_uninstall(Path("."))
         else:
             print("Usage: graphify kiro [install|uninstall]", file=sys.stderr)
+            sys.exit(1)
+    elif cmd == "pi":
+        subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
+        if subcmd == "install":
+            install("pi")
+        elif subcmd == "uninstall":
+            skill_dst = Path.home() / ".pi" / "agent" / "skills" / "graphify" / "SKILL.md"
+            if skill_dst.exists():
+                skill_dst.unlink()
+                print(f"  skill removed    ->  {skill_dst}")
+            version_file = skill_dst.parent / ".graphify_version"
+            if version_file.exists():
+                version_file.unlink()
+            for d in (skill_dst.parent, skill_dst.parent.parent, skill_dst.parent.parent.parent):
+                try:
+                    d.rmdir()
+                except OSError:
+                    break
+        else:
+            print("Usage: graphify pi [install|uninstall]", file=sys.stderr)
             sys.exit(1)
     elif cmd in ("aider", "codex", "opencode", "claw", "droid", "trae", "trae-cn", "hermes"):
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -1383,6 +1413,7 @@ def main() -> None:
 
     elif cmd == "cluster-only":
         watch_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(".")
+        no_viz = "--no-viz" in sys.argv
         graph_json = watch_path / "graphify-out" / "graph.json"
         if not graph_json.exists():
             print(f"error: no graph found at {graph_json} — run /graphify first", file=sys.stderr)
@@ -1412,12 +1443,34 @@ def main() -> None:
         out = watch_path / "graphify-out"
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
         to_json(G, communities, str(out / "graph.json"))
-        to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
-        print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
+
+        # Mirror watch.py pattern: gate to_html so core outputs (graph.json +
+        # GRAPH_REPORT.md) always land. Honor --no-viz explicitly; otherwise
+        # fall back to ValueError handling so an oversized graph doesn't crash
+        # the CLI mid-write and leave a stale graph.html on disk.
+        html_target = out / "graph.html"
+        if no_viz:
+            if html_target.exists():
+                html_target.unlink()
+            print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated (--no-viz; graph.html removed).")
+        else:
+            try:
+                to_html(G, communities, str(html_target), community_labels=labels or None)
+                print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
+            except ValueError as viz_err:
+                if html_target.exists():
+                    html_target.unlink()
+                print(f"Skipped graph.html: {viz_err}")
+                print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated.")
 
     elif cmd == "update":
-        if len(sys.argv) > 2:
-            watch_path = Path(sys.argv[2])
+        force = os.environ.get("GRAPHIFY_FORCE", "").lower() in ("1", "true", "yes")
+        argv = list(sys.argv)
+        if "--force" in argv[2:]:
+            force = True
+            argv = [a for a in argv if a != "--force"]
+        if len(argv) > 2:
+            watch_path = Path(argv[2])
         else:
             # Try to recover the scan root saved by the last full build
             saved = Path("graphify-out/.graphify_root")
@@ -1430,7 +1483,7 @@ def main() -> None:
             sys.exit(1)
         from graphify.watch import _rebuild_code
         print(f"Re-extracting code files in {watch_path} (no LLM needed)...")
-        ok = _rebuild_code(watch_path)
+        ok = _rebuild_code(watch_path, force=force)
         if ok:
             print("Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.")
             if not os.environ.get("MOONSHOT_API_KEY") and not os.environ.get("GRAPHIFY_NO_TIPS"):
@@ -1439,6 +1492,25 @@ def main() -> None:
             print("Nothing to update or rebuild failed — check output above.", file=sys.stderr)
             sys.exit(1)
 
+    elif cmd == "hook-check":
+        # Shell-agnostic PreToolUse hook entry point for Codex (and any platform
+        # where embedding Python/bash inline in a JSON hook command is fragile).
+        # Prints the hookSpecificOutput JSON if graph.json exists, exits 0 silently
+        # if not. Works on Windows PowerShell, cmd.exe, macOS, and Linux.
+        graph = Path("graphify-out") / "graph.json"
+        if graph.exists():
+            import json as _json
+            print(_json.dumps({
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "additionalContext": (
+                        "graphify: Knowledge graph exists. "
+                        "Read graphify-out/GRAPH_REPORT.md for god nodes and "
+                        "community structure before searching raw files."
+                    ),
+                }
+            }))
+        sys.exit(0)
     elif cmd == "check-update":
         if len(sys.argv) < 3:
             print("Usage: graphify check-update <path>", file=sys.stderr)
