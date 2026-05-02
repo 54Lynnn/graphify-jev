@@ -1412,7 +1412,10 @@ def main() -> None:
         out = watch_path / "graphify-out"
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
         to_json(G, communities, str(out / "graph.json"))
-        to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
+        try:
+            to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
+        except ValueError as _viz_err:
+            print(f"[graphify] Skipped graph.html: {_viz_err}")
         print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
 
     elif cmd == "update":

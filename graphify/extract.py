@@ -3567,12 +3567,16 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
     # Cross-file call resolution for all languages
     # Each extractor saved unresolved calls in raw_calls. Now that we have all
     # nodes from all files, resolve any callee that exists in another file.
-    global_label_to_nid: dict[str, str] = {}
+    # Build name → ALL matching node IDs so we can skip ambiguous common names
+    # (e.g. "log", "execute", "find") that appear in multiple files — resolving
+    # those inflates god_nodes ranking with spurious cross-file edges.
+    global_label_to_nids: dict[str, list[str]] = {}
     for n in all_nodes:
         raw = n.get("label", "")
         normalised = raw.strip("()").lstrip(".")
         if normalised:
-            global_label_to_nid[normalised.lower()] = n["id"]
+            key = normalised.lower()
+            global_label_to_nids.setdefault(key, []).append(n["id"])
 
     existing_pairs = {(e["source"], e["target"]) for e in all_edges}
     for result in per_file:
@@ -3584,9 +3588,15 @@ def extract(paths: list[Path], cache_root: Path | None = None) -> dict:
             # and collides with any top-level function named "log" in the corpus.
             if rc.get("is_member_call"):
                 continue
-            tgt = global_label_to_nid.get(callee.lower())
+            candidates = global_label_to_nids.get(callee.lower(), [])
+            # Skip ambiguous names that resolve to multiple nodes — these are
+            # common short names (log, execute, find) with no import evidence
+            # to pick the right target; emitting all edges inflates god_nodes.
+            if len(candidates) != 1:
+                continue
+            tgt = candidates[0]
             caller = rc["caller_nid"]
-            if tgt and tgt != caller and (caller, tgt) not in existing_pairs:
+            if tgt != caller and (caller, tgt) not in existing_pairs:
                 existing_pairs.add((caller, tgt))
                 all_edges.append({
                     "source": caller,
