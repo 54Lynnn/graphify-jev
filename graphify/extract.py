@@ -1553,6 +1553,11 @@ def _extract_python_rationale(path: Path, result: dict) -> None:
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+def extract_vbnet(path: Path) -> dict:
+    """Extract classes, modules, functions, and imports from a .vb file."""
+    return _extract_generic(path, _VBNET_CONFIG)
+
+
 def extract_python(path: Path) -> dict:
     """Extract classes, functions, and imports from a .py file via tree-sitter AST."""
     result = _extract_generic(path, _PYTHON_CONFIG)
