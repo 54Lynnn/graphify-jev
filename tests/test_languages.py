@@ -1,14 +1,20 @@
-"""Tests for language extractors: Java, C, C++, Ruby, C#, Kotlin, Scala, PHP, Swift, Go, Julia, VB.NET."""
+"""Tests for language extractors: Java, C, C++, Ruby, C#, Kotlin, Scala, PHP, Swift, Go, Julia, VB.NET, JS/TS."""
 from __future__ import annotations
 from pathlib import Path
 import pytest
 from graphify.extract import (
     extract_java, extract_c, extract_cpp, extract_ruby,
     extract_csharp, extract_kotlin, extract_scala, extract_php,
-    extract_swift, extract_go, extract_julia, extract_vbnet,
+    extract_swift, extract_go, extract_julia, extract_vbnet, extract_js,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+import importlib.util
+vbnet_available = pytest.mark.skipif(
+    importlib.util.find_spec("tree_sitter_vbnet") is None,
+    reason="tree-sitter-vbnet not on PyPI yet"
+)
 
 
 def _labels(r):
@@ -525,45 +531,55 @@ def test_swift_emits_calls():
 
 # ── VB.NET ─────────────────────────────────────────────────────────────────────────
 
+@vbnet_available
 def test_vbnet_no_error():
     r = extract_vbnet(FIXTURES / "sample.vb")
     assert "error" not in r
 
+@vbnet_available
 def test_vbnet_finds_class():
     r = extract_vbnet(FIXTURES / "sample.vb")
     assert any("DataProcessor" in l for l in _labels(r))
 
+@vbnet_available
 def test_vbnet_finds_interface():
     r = extract_vbnet(FIXTURES / "sample.vb")
     assert any("IProcessor" in l for l in _labels(r))
 
+@vbnet_available
 def test_vbnet_finds_module():
     r = extract_vbnet(FIXTURES / "sample.vb")
     assert any("AppHelper" in l for l in _labels(r))
 
+@vbnet_available
 def test_vbnet_finds_structure():
     r = extract_vbnet(FIXTURES / "sample.vb")
     assert any("Point" in l for l in _labels(r))
 
+@vbnet_available
 def test_vbnet_finds_methods():
     r = extract_vbnet(FIXTURES / "sample.vb")
     labels = _labels(r)
     assert any("Process" in l for l in labels)
     assert any("Validate" in l for l in labels)
 
+@vbnet_available
 def test_vbnet_finds_sub():
     r = extract_vbnet(FIXTURES / "sample.vb")
     assert any("Run" in l for l in _labels(r))
 
+@vbnet_available
 def test_vbnet_finds_imports():
     r = extract_vbnet(FIXTURES / "sample.vb")
     assert "imports" in _relations(r)
 
+@vbnet_available
 def test_vbnet_inherits_edge():
     r = extract_vbnet(FIXTURES / "sample.vb")
     inherits = [e for e in r["edges"] if e["relation"] == "inherits"]
     assert len(inherits) >= 1
 
+@vbnet_available
 def test_vbnet_inherits_baseprovessor():
     r = extract_vbnet(FIXTURES / "sample.vb")
     node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
@@ -574,11 +590,13 @@ def test_vbnet_inherits_baseprovessor():
     )
     assert found, "DataProcessor should have inherits edge to BaseProcessor"
 
+@vbnet_available
 def test_vbnet_implements_edge():
     r = extract_vbnet(FIXTURES / "sample.vb")
     implements = [e for e in r["edges"] if e["relation"] == "implements"]
     assert len(implements) >= 1
 
+@vbnet_available
 def test_vbnet_implements_iprocessor():
     r = extract_vbnet(FIXTURES / "sample.vb")
     node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
@@ -589,6 +607,7 @@ def test_vbnet_implements_iprocessor():
     )
     assert found, "DataProcessor should have implements edge to IProcessor"
 
+@vbnet_available
 def test_vbnet_no_dangling_edges():
     r = extract_vbnet(FIXTURES / "sample.vb")
     node_ids = {n["id"] for n in r["nodes"]}
@@ -791,3 +810,68 @@ def test_julia_no_dangling_edges():
     node_ids = {n["id"] for n in r["nodes"]}
     for e in r["edges"]:
         assert e["source"] in node_ids, f"Dangling source: {e}"
+
+
+# ── TypeScript dynamic imports ───────────────────────────────────────────────
+
+def test_ts_dynamic_import_no_error():
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    assert "error" not in r
+
+def test_ts_dynamic_import_extracts_edges():
+    """Dynamic import() calls inside functions should produce imports_from edges."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    dyn_edges = [e for e in r["edges"] if e["relation"] == "imports_from"]
+    targets = {e["target"] for e in dyn_edges}
+    # Should find: static ./logger, dynamic ./mayaEngine.js, dynamic ./queue.js
+    assert any("logger" in t for t in targets), f"Missing static import of logger: {targets}"
+    assert any("mayaengine" in t.lower() for t in targets), f"Missing dynamic import of mayaEngine: {targets}"
+    assert any("queue" in t.lower() for t in targets), f"Missing dynamic import of queue: {targets}"
+
+def test_ts_dynamic_import_confidence():
+    """Dynamic imports should have EXTRACTED confidence (they are deterministic string literals)."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    dyn_edges = [e for e in r["edges"]
+                 if e["relation"] == "imports_from"
+                 and "mayaengine" in e["target"].lower()]
+    assert len(dyn_edges) >= 1
+    assert dyn_edges[0]["confidence"] == "EXTRACTED"
+
+def test_ts_dynamic_import_source_is_function():
+    """Dynamic import edge source should be the enclosing function, not the file."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    node_labels = {n["id"]: n["label"] for n in r["nodes"]}
+    dyn_edges = [e for e in r["edges"]
+                 if e["relation"] == "imports_from"
+                 and "mayaengine" in e["target"].lower()]
+    assert len(dyn_edges) >= 1
+    src_label = node_labels.get(dyn_edges[0]["source"], "")
+    assert "processInbound" in src_label, f"Expected processInbound as source, got {src_label}"
+
+def test_ts_no_dynamic_import_in_sync_fn():
+    """Functions without dynamic imports should not get spurious imports_from edges."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    node_ids = {n["label"]: n["id"] for n in r["nodes"]}
+    sync_nid = node_ids.get("syncOnly()")
+    if sync_nid:
+        sync_imports = [e for e in r["edges"]
+                        if e["source"] == sync_nid and e["relation"] == "imports_from"]
+        assert len(sync_imports) == 0
+
+def test_ts_dynamic_template_literal_skipped():
+    """Dynamic template literals (with ${}) must not produce an imports_from edge."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    targets = {e["target"] for e in r["edges"] if e["relation"] == "imports_from"}
+    # loadHandler uses `./handlers/${handlerName}` — no static path, must be absent
+    assert not any("handler" in t.lower() and "$" in t for t in targets), \
+        f"Garbage edge from dynamic template literal found: {targets}"
+    # More robust: no target should contain a brace character
+    assert not any("{" in t or "}" in t for t in targets), \
+        f"Target contains unresolved template expression: {targets}"
+
+def test_ts_static_template_literal_resolved():
+    """Static template literals (no ${}) should resolve the same as a plain string."""
+    r = extract_js(FIXTURES / "dynamic_import.ts")
+    targets = {e["target"] for e in r["edges"] if e["relation"] == "imports_from"}
+    assert any("statichelper" in t.lower() for t in targets), \
+        f"Static template literal import not resolved: {targets}"

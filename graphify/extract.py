@@ -259,6 +259,85 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                                     })
 
 
+def _dynamic_import_js(node, source: bytes, caller_nid: str, str_path: str, edges: list,
+                       seen_dyn_pairs: set) -> bool:
+    """Detect dynamic import() calls in JS/TS and emit imports_from edges.
+
+    Handles patterns like:
+      await import('./foo.js')
+      import('./foo.js').then(...)
+      const m = await import(`./foo`)
+
+    Returns True if the node was a dynamic import (caller should skip normal call handling).
+    """
+    # Dynamic import is a call_expression whose function child is the keyword "import".
+    # tree-sitter-typescript parses `import('...')` as call_expression with first child
+    # being an "import" token (type="import").
+    func_node = node.child_by_field_name("function")
+    if func_node is None:
+        # Fallback: check first child directly (some TS versions)
+        if node.children and _read_text(node.children[0], source) == "import":
+            func_node = node.children[0]
+        else:
+            return False
+    if _read_text(func_node, source) != "import":
+        return False
+
+    # Extract the module path from the arguments
+    args = node.child_by_field_name("arguments")
+    if args is None:
+        return True  # It's an import() but no args — skip
+    for arg in args.children:
+        if arg.type == "template_string":
+            # Skip dynamic template literals — path can't be statically resolved
+            if any(c.type == "template_substitution" for c in arg.children):
+                break
+            raw = _read_text(arg, source).strip("`")
+        elif arg.type == "string":
+            raw = _read_text(arg, source).strip("'\" ")
+        else:
+            continue
+        if not raw:
+            break
+        # Resolve path using the same logic as static imports
+        if raw.startswith("."):
+            resolved = Path(os.path.normpath(Path(str_path).parent / raw))
+            if resolved.suffix == ".js":
+                resolved = resolved.with_suffix(".ts")
+            elif resolved.suffix == ".jsx":
+                resolved = resolved.with_suffix(".tsx")
+            tgt_nid = _make_id(str(resolved))
+        else:
+            aliases = _load_tsconfig_aliases(Path(str_path).parent)
+            resolved_alias = None
+            for alias_prefix, alias_base in aliases.items():
+                if raw == alias_prefix or raw.startswith(alias_prefix + "/"):
+                    rest = raw[len(alias_prefix):].lstrip("/")
+                    resolved_alias = Path(os.path.normpath(Path(alias_base) / rest))
+                    break
+            if resolved_alias is not None:
+                tgt_nid = _make_id(str(resolved_alias))
+            else:
+                module_name = raw.split("/")[-1]
+                if not module_name:
+                    break
+                tgt_nid = _make_id(module_name)
+        pair = (caller_nid, tgt_nid)
+        if pair not in seen_dyn_pairs:
+            seen_dyn_pairs.add(pair)
+            edges.append({
+                "source": caller_nid,
+                "target": tgt_nid,
+                "relation": "imports_from",
+                "confidence": "EXTRACTED",
+                "source_file": str_path,
+                "source_location": f"L{node.start_point[0] + 1}",
+                "weight": 1.0,
+            })
+        break
+    return True
+
+
 def _import_java(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> None:
     def _walk_scoped(n) -> str:
         parts: list[str] = []
@@ -1228,6 +1307,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
         label_to_nid[normalised.lower()] = n["id"]
 
     seen_call_pairs: set[tuple[str, str]] = set()
+    seen_dyn_import_pairs: set[tuple[str, str]] = set()
     seen_static_ref_pairs: set[tuple[str, str, str]] = set()
     seen_helper_ref_pairs: set[tuple[str, str, str]] = set()
     seen_bind_pairs: set[tuple[str, str, str]] = set()
@@ -1249,6 +1329,15 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
             return
 
         if node.type in config.call_types:
+            # JS/TS dynamic imports: await import('./foo.js')
+            if config.ts_module in ("tree_sitter_javascript", "tree_sitter_typescript"):
+                if _dynamic_import_js(node, source, caller_nid, str_path,
+                                      edges, seen_dyn_import_pairs):
+                    # Still recurse into children (import().then(...) may have calls)
+                    for child in node.children:
+                        walk_calls(child, caller_nid)
+                    return
+
             callee_name: str | None = None
             is_member_call: bool = False
 
