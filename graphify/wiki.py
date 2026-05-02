@@ -7,7 +7,18 @@ import networkx as nx
 
 
 def _safe_filename(name: str) -> str:
-    return name.replace("/", "-").replace(" ", "_").replace(":", "-")
+    """Make a label safe for use as a filename across platforms.
+
+    Substitutes characters that Windows reserves in filenames
+    (< > : " / \\ | ? *) and strips trailing dots/spaces, also reserved.
+    Falls back to 'unnamed' for empty results and caps length at 200
+    chars to stay well under common filesystem limits.
+    """
+    import re
+    s = name.replace("/", "-").replace(" ", "_").replace(":", "-")
+    s = re.sub(r'[<>:"/\\|?*]', '_', s)
+    s = s.strip('. ')
+    return s[:200] if s else 'unnamed'
 
 
 def _cross_community_links(G: nx.Graph, nodes: list[str], own_cid: int, labels: dict[int, str]) -> list[tuple[str, int]]:
@@ -184,6 +195,15 @@ def to_wiki(
     """
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
+
+    # Clear stale .md files from previous runs to prevent orphan accumulation.
+    # Community labels are LLM-generated (per skill.md Step 5) and non-deterministic
+    # across runs — the same conceptual community may be named differently each time
+    # (e.g. "AutoAgent Skills" → "AutoAgent Methodology"), leaving the previous file
+    # as an orphan. Since to_wiki() owns wiki/ entirely (always writes the full set),
+    # it can safely clear .md files at the start of each call.
+    for old_article in out.glob("*.md"):
+        old_article.unlink()
 
     labels = community_labels or {cid: f"Community {cid}" for cid in communities}
     cohesion = cohesion or {}
