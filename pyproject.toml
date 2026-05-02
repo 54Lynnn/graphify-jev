@@ -50,10 +50,10 @@ svg = ["matplotlib"]
 leiden = ["graspologic; python_version < '3.13'"]
 office = ["python-docx", "openpyxl"]
 video = ["faster-whisper", "yt-dlp"]
-kimi = ["openai"]
+kimi = ["openai", "tiktoken"]
 sql = ["tree-sitter-sql"]
 vbnet = ["tree-sitter-vbnet"]
-all = ["mcp", "neo4j", "pypdf", "markdownify", "watchdog", "graspologic; python_version < '3.13'", "python-docx", "openpyxl", "faster-whisper", "yt-dlp", "matplotlib", "openai", "tree-sitter-sql", "tree-sitter-vbnet"]
+all = ["mcp", "neo4j", "pypdf", "markdownify", "watchdog", "graspologic; python_version < '3.13'", "python-docx", "openpyxl", "faster-whisper", "yt-dlp", "matplotlib", "openai", "tiktoken", "tree-sitter-sql", "tree-sitter-vbnet"]
 
 [project.scripts]
 graphify = "graphify.__main__:main"
