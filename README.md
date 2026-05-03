@@ -293,11 +293,11 @@ graphify cluster-only ./my-project
 
 ## Built on graphify — Penpax
 
-[**Penpax**](https://safishamsi.github.io/penpax.ai) is the always-on layer built on top of graphify — it applies the same graph approach to your entire working life: meetings, browser history, emails, files, and code, updating continuously in the background.
+[**Penpax**](https://graphifylabs.ai) is the always-on layer built on top of graphify — it applies the same graph approach to your entire working life: meetings, browser history, emails, files, and code, updating continuously in the background.
 
 Built for people whose work lives across hundreds of conversations and documents they can never fully reconstruct. No cloud, fully on-device.
 
-**Free trial launching soon.** [Join the waitlist →](https://safishamsi.github.io/penpax.ai)
+**Free trial launching soon.** [Join the waitlist →](https://graphifylabs.ai)
 
 ---
 
