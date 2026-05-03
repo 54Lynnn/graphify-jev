@@ -252,9 +252,13 @@ _GEMINI_HOOK = {
         {
             "type": "command",
             "command": (
-                "[ -f graphify-out/graph.json ] && "
-                r"""echo '{"decision":"allow","additionalContext":"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files."}' """
-                r"""|| echo '{"decision":"allow"}'"""
+                'python -c "'
+                "import sys,pathlib,json;"
+                "e=pathlib.Path('graphify-out/graph.json').exists();"
+                "d={'decision':'allow'};"
+                "e and d.update({'additionalContext':'graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files.'});"
+                "sys.stdout.write(json.dumps(d))"
+                '"'
             ),
         }
     ],
@@ -448,11 +452,13 @@ Rules:
 """
 
 _ANTIGRAVITY_WORKFLOW = """\
-# Workflow: graphify
-**Command:** /graphify
-**Description:** Turn any folder of files into a navigable knowledge graph
+---
+name: graphify
+description: Turn any folder of files into a navigable knowledge graph
+---
 
-## Steps
+# Workflow: graphify
+
 Follow the graphify skill installed at ~/.agents/skills/graphify/SKILL.md to run the full pipeline.
 
 If no path argument is given, use `.` (current directory).
