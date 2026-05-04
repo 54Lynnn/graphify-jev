@@ -9,6 +9,16 @@ from pathlib import Path
 _GRAPHIFY_OUT = os.environ.get("GRAPHIFY_OUT", "graphify-out")
 
 
+def _git_head() -> str | None:
+    """Return current git HEAD commit hash, or None outside a repo."""
+    import subprocess as _sp
+    try:
+        r = _sp.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=3)
+        return r.stdout.strip() if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
 from graphify.detect import CODE_EXTENSIONS, DOC_EXTENSIONS, PAPER_EXTENSIONS, IMAGE_EXTENSIONS
 
 _WATCHED_EXTENSIONS = CODE_EXTENSIONS | DOC_EXTENSIONS | PAPER_EXTENSIONS | IMAGE_EXTENSIONS
@@ -64,6 +74,7 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False, force: boo
             print("[graphify watch] No code files found - nothing to rebuild.")
             return False
 
+        commit = _git_head()
         result = extract(code_files, cache_root=watch_root)
 
         # Preserve semantic nodes/edges from a previous full run.
@@ -106,13 +117,22 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False, force: boo
         cohesion = score_all(G, communities)
         gods = god_nodes(G)
         surprises = surprising_connections(G, communities)
-        labels = {cid: "Community " + str(cid) for cid in communities}
+        labels_file = out / ".graphify_labels.json"
+        try:
+            raw = json.loads(labels_file.read_text(encoding="utf-8")) if labels_file.exists() else {}
+            labels = {int(k): v for k, v in raw.items() if int(k) in communities}
+        except Exception:
+            raw = {}
+            labels = {}
+        for cid in communities:
+            if cid not in labels:
+                labels[cid] = "Community " + str(cid)
         questions = suggest_questions(G, communities, labels)
 
         out.mkdir(exist_ok=True)
         (out / ".graphify_root").write_text(str(watch_root), encoding="utf-8")
 
-        json_written = to_json(G, communities, str(out / "graph.json"), force=force)
+        json_written = to_json(G, communities, str(out / "graph.json"), force=force, built_at_commit=commit)
         if not json_written:
             return False
 
@@ -123,7 +143,8 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False, force: boo
             pass
 
         report = generate(G, communities, cohesion, labels, gods, surprises, detection,
-                          {"input": 0, "output": 0}, report_root, suggested_questions=questions)
+                          {"input": 0, "output": 0}, report_root, suggested_questions=questions,
+                          built_at_commit=commit)
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
 
         # to_html raises ValueError for graphs > MAX_NODES_FOR_VIZ (5000).
@@ -241,10 +262,12 @@ def watch(watch_path: Path, debounce: float = 3.0) -> None:
                 batch = list(changed)
                 changed.clear()
                 print(f"\n[graphify watch] {len(batch)} file(s) changed")
-                if _has_non_code(batch):
-                    _notify_only(watch_path)
-                else:
+                has_non_code = _has_non_code(batch)
+                has_code = any(p.suffix.lower() in _CODE_EXTENSIONS for p in batch)
+                if has_code:
                     _rebuild_code(watch_path)
+                if has_non_code:
+                    _notify_only(watch_path)
     except KeyboardInterrupt:
         print("\n[graphify watch] Stopped.")
     finally:

@@ -7,6 +7,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 - Feat: `graphify extract` now runs incrementally - auto-detects prior `manifest.json` and re-extracts only changed/new files; semantic results cached by content hash so unchanged docs cost zero LLM tokens on repeat runs (#698)
 - Feat: Entity deduplication pipeline runs on every build - entropy gate + MinHash/LSH blocking + Jaro-Winkler verification + same-community boost collapses near-duplicate entities (typos, spacing, plurals) before clustering
 - Feat: `--dedup-llm` flag for `graphify extract` - optional LLM tiebreaker for ambiguous entity pairs (~$0.01 for 10k-node graphs), off by default
+- Fix: `graphify hook install` rebuild now preserves human-readable community labels from `.graphify_labels.json` instead of resetting to generic "Community N" names on every commit (#705)
+- Fix: `graphify install --platform gemini` now works correctly (#706)
 - Deps: `datasketch` and `rapidfuzz` added as base dependencies
 
 ## 0.7.4 (2026-05-04)
