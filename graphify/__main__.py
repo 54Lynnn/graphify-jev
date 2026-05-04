@@ -1910,6 +1910,7 @@ def main() -> None:
         backend: str | None = None
         out_dir: Path | None = None
         no_cluster = False
+        dedup_llm = False
         args = sys.argv[3:]
         i = 0
         while i < len(args):
@@ -1924,6 +1925,8 @@ def main() -> None:
                 out_dir = Path(a.split("=", 1)[1]); i += 1
             elif a == "--no-cluster":
                 no_cluster = True; i += 1
+            elif a == "--dedup-llm":
+                dedup_llm = True; i += 1
             else:
                 i += 1
 
@@ -1968,20 +1971,52 @@ def main() -> None:
         graphify_out = out_root / "graphify-out"
         graphify_out.mkdir(parents=True, exist_ok=True)
 
-        from graphify.detect import detect as _detect
-        print(f"[graphify extract] scanning {target}")
-        detection = _detect(target)
-        files_by_type = detection.get("files", {})
-        code_files = [Path(p) for p in files_by_type.get("code", [])]
-        doc_files = [Path(p) for p in files_by_type.get("document", [])]
-        paper_files = [Path(p) for p in files_by_type.get("paper", [])]
-        image_files = [Path(p) for p in files_by_type.get("image", [])]
-        semantic_files = doc_files + paper_files + image_files
-        print(
-            f"[graphify extract] found {len(code_files)} code, "
-            f"{len(doc_files)} docs, {len(paper_files)} papers, "
-            f"{len(image_files)} images"
+        from graphify.detect import (
+            detect as _detect,
+            detect_incremental as _detect_incremental,
+            save_manifest as _save_manifest,
         )
+        manifest_path = graphify_out / "manifest.json"
+        existing_graph_path = graphify_out / "graph.json"
+        incremental_mode = manifest_path.exists() and existing_graph_path.exists()
+
+        if incremental_mode:
+            print(f"[graphify extract] incremental scan of {target}")
+            detection = _detect_incremental(target, manifest_path=str(manifest_path))
+        else:
+            print(f"[graphify extract] scanning {target}")
+            detection = _detect(target)
+
+        files_by_type = detection.get("files", {})
+        if incremental_mode:
+            new_by_type = detection.get("new_files", {})
+            code_files = [Path(p) for p in new_by_type.get("code", [])]
+            doc_files = [Path(p) for p in new_by_type.get("document", [])]
+            paper_files = [Path(p) for p in new_by_type.get("paper", [])]
+            image_files = [Path(p) for p in new_by_type.get("image", [])]
+            deleted_files = list(detection.get("deleted_files", []))
+            unchanged_total = sum(len(v) for v in detection.get("unchanged_files", {}).values())
+        else:
+            code_files = [Path(p) for p in files_by_type.get("code", [])]
+            doc_files = [Path(p) for p in files_by_type.get("document", [])]
+            paper_files = [Path(p) for p in files_by_type.get("paper", [])]
+            image_files = [Path(p) for p in files_by_type.get("image", [])]
+            deleted_files = []
+            unchanged_total = 0
+
+        semantic_files = doc_files + paper_files + image_files
+        if incremental_mode:
+            print(
+                f"[graphify extract] {len(code_files)} code, {len(doc_files)} docs, "
+                f"{len(paper_files)} papers, {len(image_files)} images changed; "
+                f"{unchanged_total} unchanged; {len(deleted_files)} deleted"
+            )
+        else:
+            print(
+                f"[graphify extract] found {len(code_files)} code, "
+                f"{len(doc_files)} docs, {len(paper_files)} papers, "
+                f"{len(image_files)} images"
+            )
 
         # AST extraction on code files. Empty code list (docs-only corpus) is
         # the issue #698 case — skip cleanly instead of crashing inside extract().
@@ -1995,32 +2030,61 @@ def main() -> None:
                 print(f"[graphify extract] AST extraction failed: {exc}", file=sys.stderr)
                 ast_result = {"nodes": [], "edges": [], "input_tokens": 0, "output_tokens": 0}
 
-        # Semantic extraction on docs/papers/images. Skip if there's nothing
-        # for the LLM — saves an empty API call and prevents BACKENDS validation
-        # from firing on a no-op.
+        # Semantic extraction on docs/papers/images. Check cache first.
+        from graphify.cache import (
+            check_semantic_cache as _check_semantic_cache,
+            save_semantic_cache as _save_semantic_cache,
+        )
         sem_result: dict = {
             "nodes": [], "edges": [], "hyperedges": [],
             "input_tokens": 0, "output_tokens": 0,
         }
+        sem_cache_hits = 0
+        sem_cache_misses = 0
         if semantic_files:
-            print(
-                f"[graphify extract] semantic extraction on "
-                f"{len(semantic_files)} files via {backend}..."
+            sem_paths_str = [str(p) for p in semantic_files]
+            cached_nodes, cached_edges, cached_hyperedges, uncached_paths = (
+                _check_semantic_cache(sem_paths_str, root=target)
             )
-            try:
-                sem_result = _extract_corpus_parallel(
-                    semantic_files,
-                    backend=backend,
-                    root=target,
-                )
-            except ImportError as exc:
-                print(f"error: {exc}", file=sys.stderr)
-                sys.exit(1)
-            except Exception as exc:
-                print(
-                    f"[graphify extract] semantic extraction failed: {exc}",
-                    file=sys.stderr,
-                )
+            sem_cache_hits = len(semantic_files) - len(uncached_paths)
+            sem_cache_misses = len(uncached_paths)
+            sem_result["nodes"].extend(cached_nodes)
+            sem_result["edges"].extend(cached_edges)
+            sem_result["hyperedges"].extend(cached_hyperedges)
+            if sem_cache_hits:
+                print(f"[graphify extract] semantic cache: {sem_cache_hits} hit / {sem_cache_misses} miss")
+
+            if uncached_paths:
+                print(f"[graphify extract] semantic extraction on {len(uncached_paths)} files via {backend}...")
+                try:
+                    fresh = _extract_corpus_parallel(
+                        [Path(p) for p in uncached_paths],
+                        backend=backend,
+                        root=target,
+                    )
+                except ImportError as exc:
+                    print(f"error: {exc}", file=sys.stderr)
+                    sys.exit(1)
+                except Exception as exc:
+                    print(
+                        f"[graphify extract] semantic extraction failed: {exc}",
+                        file=sys.stderr,
+                    )
+                    fresh = {"nodes": [], "edges": [], "hyperedges": [], "input_tokens": 0, "output_tokens": 0}
+                try:
+                    _save_semantic_cache(
+                        fresh.get("nodes", []),
+                        fresh.get("edges", []),
+                        fresh.get("hyperedges", []),
+                        root=target,
+                    )
+                except Exception as exc:
+                    print(f"[graphify extract] warning: could not write semantic cache: {exc}", file=sys.stderr)
+                sem_result["nodes"].extend(fresh.get("nodes", []))
+                sem_result["edges"].extend(fresh.get("edges", []))
+                sem_result["hyperedges"].extend(fresh.get("hyperedges", []))
+                sem_result["input_tokens"] += fresh.get("input_tokens", 0)
+                sem_result["output_tokens"] += fresh.get("output_tokens", 0)
 
         # Merge AST + semantic. Order matters for deduplication: passing AST
         # first means semantic node attributes win on collision (richer labels
@@ -2061,12 +2125,23 @@ def main() -> None:
             sys.exit(0)
 
         # Build graph + cluster + score + write.
-        from graphify.build import build_from_json as _build_from_json
+        from graphify.build import (
+            build_from_json as _build_from_json,
+            build_merge as _build_merge,
+        )
         from graphify.cluster import cluster as _cluster, score_all as _score_all
         from graphify.export import to_json as _to_json
         from graphify.analyze import god_nodes as _god_nodes, surprising_connections as _surprising
 
-        G = _build_from_json(merged)
+        if incremental_mode:
+            G = _build_merge(
+                [merged],
+                graph_path=existing_graph_path,
+                prune_sources=deleted_files or None,
+                dedup=True,
+            )
+        else:
+            G = _build_from_json(merged)
         if G.number_of_nodes() == 0:
             print(
                 "[graphify extract] graph is empty — extraction produced no nodes. "
@@ -2099,6 +2174,10 @@ def main() -> None:
             },
         }
         analysis_path.write_text(json.dumps(analysis, indent=2), encoding="utf-8")
+        try:
+            _save_manifest(files_by_type, manifest_path=str(manifest_path))
+        except Exception as exc:
+            print(f"[graphify extract] warning: could not write manifest: {exc}", file=sys.stderr)
 
         cost = _estimate_cost(backend, merged["input_tokens"], merged["output_tokens"])
         print(
@@ -2107,6 +2186,15 @@ def main() -> None:
             f"{len(communities)} communities"
         )
         print(f"[graphify extract] wrote {analysis_path}")
+        if incremental_mode:
+            print(
+                f"[graphify extract] incremental summary: "
+                f"{sem_cache_hits + unchanged_total} files cached/unchanged, "
+                f"{len(code_files) + sem_cache_misses} re-extracted, "
+                f"{len(deleted_files)} deleted"
+            )
+        elif sem_cache_hits:
+            print(f"[graphify extract] semantic cache: {sem_cache_hits} cached, {sem_cache_misses} re-extracted")
         if merged["input_tokens"] or merged["output_tokens"]:
             print(
                 f"[graphify extract] tokens: "
