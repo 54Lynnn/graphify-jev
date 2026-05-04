@@ -458,6 +458,55 @@ def test_resolve_chain_alias_and_extension_compose(tmp_path):
 # ── End-to-end: dynamic_import in .svelte regex pass uses resolver ──────────
 
 
+def test_ts_dynamic_import_bare_path_resolves(tmp_path):
+    """Real-world repro: a TS file uses `await import('./foo')` (no extension)
+    to lazy-load a sibling module. The dynamic-import handler in JS/TS files
+    has its own copy of the resolution logic — distinct from the static-import
+    handler and from the Svelte regex pass — and was missing the bare-path
+    extension append, silently dropping every such edge."""
+    target = _write(tmp_path / "profanity.ts",
+                    "export const hasProfanity = (s: string) => false")
+    importer = _write(tmp_path / "auth-validators.ts", """\
+export async function validate(name: string) {
+    const { hasProfanity } = await import('./profanity')
+    return hasProfanity(name)
+}
+""")
+    result = extract_js(importer)
+    expected = _make_id(str(target))
+    targets = {str(e.get("target") or "") for e in result["edges"]
+               if e.get("relation") in ("imports", "imports_from")}
+    assert expected in targets, (
+        f"Bare-path TS dynamic import failed to resolve; "
+        f"expected {expected}; got {targets}"
+    )
+
+
+def test_ts_dynamic_import_alias_with_bare_path_resolves(tmp_path):
+    """The other branch of the dynamic-import handler — alias resolution —
+    also needs the same fixups. `import('$lib/foo')` should resolve to
+    `$lib/foo.ts` after both alias substitution and extension append."""
+    src = tmp_path / "src"
+    target = _write(src / "lib" / "lazy-module.ts", "export const x = 1")
+    _write(tmp_path / "tsconfig.json",
+           '{"compilerOptions":{"paths":{"$lib":["./src/lib"],'
+           '"$lib/*":["./src/lib/*"]}}}')
+    importer = _write(src / "routes" / "page.ts", """\
+export async function load() {
+    const m = await import('$lib/lazy-module')
+    return m.x
+}
+""")
+    result = extract_js(importer)
+    expected = _make_id(str(target))
+    targets = {str(e.get("target") or "") for e in result["edges"]
+               if e.get("relation") in ("imports", "imports_from")}
+    assert expected in targets, (
+        f"Alias + bare-path dynamic import failed to resolve; "
+        f"expected {expected}; got {targets}"
+    )
+
+
 def test_dynamic_import_bare_path_resolves(tmp_path):
     """The regex pass for `import('...')` in .svelte files must also use
     the new resolver — otherwise dynamic imports of bare paths still
