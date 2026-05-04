@@ -221,7 +221,7 @@ The MCP server gives your assistant structured access: `query_graph`, `get_node`
 
 - **Code files** — processed locally via tree-sitter. Nothing leaves your machine.
 - **Video / audio** — transcribed locally with faster-whisper. Nothing leaves your machine.
-- **Docs, PDFs, images** — sent to Anthropic (`ANTHROPIC_API_KEY`) or Kimi (`MOONSHOT_API_KEY`) for semantic extraction using your own API key.
+- **Docs, PDFs, images** — sent to your AI assistant for semantic extraction (via the `/graphify` skill, using whatever model your IDE session runs). Headless `graphify extract` requires `ANTHROPIC_API_KEY` or `MOONSHOT_API_KEY`.
 - No telemetry, no usage tracking, no analytics.
 
 ---
