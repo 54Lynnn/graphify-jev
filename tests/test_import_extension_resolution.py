@@ -233,6 +233,127 @@ def test_alias_import_with_bare_path_resolves(tmp_path):
     )
 
 
+# ── Edge cases — exhaustiveness ──────────────────────────────────────────────
+
+
+def test_type_only_import_with_bare_path_resolves(tmp_path):
+    """`import type { X } from './foo'` — type-only imports must go through
+    the same resolution path as regular imports. Common in TS codebases
+    that separate types into their own module."""
+    target = _write(tmp_path / "type-helpers.ts",
+                    "export type GetNestedType<T> = T")
+    importer = _write(tmp_path / "page.ts",
+                      "import type { GetNestedType } from './type-helpers'\n")
+    result = extract_js(importer)
+    expected = _make_id(str(target))
+    assert expected in _import_targets(result), (
+        f"Type-only import with bare path failed to resolve; "
+        f"expected {expected}; got {_import_targets(result)}"
+    )
+
+
+def test_named_imports_emit_symbol_edges_after_resolution(tmp_path):
+    """`import { foo, bar } from './module'` should emit per-symbol `imports`
+    edges to `module.foo` and `module.bar`, not just the file-level
+    `imports_from`. The symbol-edge target_stem comes from _file_stem(resolved),
+    which depends on resolution succeeding first."""
+    _write(tmp_path / "utils.ts", "export const foo = 1\nexport const bar = 2")
+    importer = _write(tmp_path / "page.ts",
+                      "import { foo, bar } from './utils'\n")
+    result = extract_js(importer)
+    sym_edges = [e for e in result["edges"] if e.get("relation") == "imports"]
+    targets = {str(e.get("target") or "") for e in sym_edges}
+    # Target ids look like "<dir>_utils_foo" — substring-match the symbol names
+    assert any("_foo" in t for t in targets), (
+        f"Per-symbol `imports` edge for `foo` missing; got {targets}"
+    )
+    assert any("_bar" in t for t in targets), (
+        f"Per-symbol `imports` edge for `bar` missing; got {targets}"
+    )
+
+
+def test_alias_directory_import_resolves_to_index_ts(tmp_path):
+    """`from '$lib/queue'` where queue/ is a directory under src/lib/."""
+    src = tmp_path / "src"
+    target = _write(src / "lib" / "queue" / "index.ts",
+                    "export const enqueue = () => {}")
+    _write(tmp_path / "tsconfig.json",
+           '{"compilerOptions":{"paths":{"$lib":["./src/lib"],'
+           '"$lib/*":["./src/lib/*"]}}}')
+    importer = _write(src / "routes" / "page.ts",
+                      "import { enqueue } from '$lib/queue'\n")
+    result = extract_js(importer)
+    expected = _make_id(str(target))
+    assert expected in _import_targets(result), (
+        f"Alias + directory resolution failed; "
+        f"expected {expected}; got {_import_targets(result)}"
+    )
+
+
+def test_resolve_does_not_match_partial_directory_name(tmp_path):
+    """Regression guard: `from './foo'` where './foo' doesn't exist but
+    './foo-extra.ts' does must NOT accidentally resolve to the latter.
+    `.with_suffix(".ts")` on 'foo' produces 'foo.ts' — not 'foo-extra.ts',
+    but worth pinning down."""
+    _write(tmp_path / "foo-extra.ts", "export const x = 1")
+    bare = tmp_path / "foo"
+    resolved = _resolve_with_extensions(bare)
+    # Not a real file → nothing matches → returns input unchanged
+    assert resolved == bare, (
+        f"Partial-name match must not happen; got {resolved}"
+    )
+
+
+def test_resolve_directory_without_index_returns_unchanged(tmp_path):
+    """A directory with no index file should fall through to the
+    \"return as-is\" path, not pick a non-index file from inside."""
+    pkg = tmp_path / "pkg"
+    _write(pkg / "not-index.ts", "export const x = 1")
+    resolved = _resolve_with_extensions(pkg)
+    assert resolved == pkg, (
+        f"Directory without index.* must return unchanged; got {resolved}"
+    )
+
+
+def test_resolve_handles_subpath_into_directory_with_index(tmp_path):
+    """`./foo/sub` where ./foo/sub/index.ts exists — nested subpath.
+    Common pattern for sub-modules inside a package."""
+    target = _write(tmp_path / "foo" / "sub" / "index.ts",
+                    "export const x = 1")
+    sub = tmp_path / "foo" / "sub"
+    assert _resolve_with_extensions(sub) == target
+
+
+def test_resolve_does_not_treat_dotfile_as_extension(tmp_path):
+    """Edge case: `.eslintrc` and similar dotfiles. Path('.eslintrc').suffix
+    returns '' on Python 3.x for files starting with `.`. Make sure we
+    don't accidentally treat a real file as bare and try to append .ts."""
+    target = _write(tmp_path / ".env-types.ts",
+                    "export const x = 1")
+    # Path('.env-types.ts').suffix is '.ts' — not a problem
+    assert _resolve_with_extensions(target) == target
+
+
+def test_resolve_chain_alias_and_extension_compose(tmp_path):
+    """Alias → bare path → .svelte.ts. Two layers of resolution must
+    compose correctly: tsconfig alias maps `$lib/...` to a real dir,
+    then extension resolution finds the actual file."""
+    src = tmp_path / "src"
+    target = _write(src / "lib" / "hooks" / "is-mobile.svelte.ts",
+                    "export const isMobile = () => true")
+    _write(tmp_path / "tsconfig.json",
+           '{"compilerOptions":{"paths":{"$lib":["./src/lib"],'
+           '"$lib/*":["./src/lib/*"]}}}')
+    importer = _write(src / "routes" / "page.ts",
+                      "import { isMobile } from '$lib/hooks/is-mobile.svelte'\n")
+    result = extract_js(importer)
+    expected = _make_id(str(target))
+    assert expected in _import_targets(result), (
+        f"Alias + .svelte→.svelte.ts chain failed to compose; "
+        f"expected {expected}; got {_import_targets(result)}"
+    )
+
+
 # ── End-to-end: dynamic_import in .svelte regex pass uses resolver ──────────
 
 
