@@ -118,3 +118,20 @@ def test_dedup_llm_flag_accepted():
     edges = []
     result_nodes, _ = deduplicate_entities(nodes, edges, communities={}, dedup_llm_backend=None)
     assert len(result_nodes) == 2
+
+
+# ── build integration ─────────────────────────────────────────────────────────
+
+def test_build_calls_dedup():
+    """build() should deduplicate near-identical nodes across extractions."""
+    from graphify.build import build
+    chunk1 = {
+        "nodes": [{"id": "graphextractor", "label": "GraphExtractor", "source_file": "a.py"}],
+        "edges": [],
+    }
+    chunk2 = {
+        "nodes": [{"id": "graph_extractor", "label": "Graph Extractor", "source_file": "b.py"}],
+        "edges": [],
+    }
+    G = build([chunk1, chunk2])
+    assert G.number_of_nodes() == 1

@@ -116,17 +116,19 @@ def build_from_json(extraction: dict, *, directed: bool = False) -> nx.Graph:
     return G
 
 
-def build(extractions: list[dict], *, directed: bool = False) -> nx.Graph:
+def build(extractions: list[dict], *, directed: bool = False, dedup: bool = True) -> nx.Graph:
     """Merge multiple extraction results into one graph.
 
     directed=True produces a DiGraph that preserves edge direction (source→target).
     directed=False (default) produces an undirected Graph for backward compatibility.
+    dedup=True (default) runs entity deduplication before building the graph.
 
     Extractions are merged in order. For nodes with the same ID, the last
     extraction's attributes win (NetworkX add_node overwrites). Pass AST
     results before semantic results so semantic labels take precedence, or
     reverse the order if you prefer AST source_location precision to win.
     """
+    from graphify.dedup import deduplicate_entities
     combined: dict = {"nodes": [], "edges": [], "hyperedges": [], "input_tokens": 0, "output_tokens": 0}
     for ext in extractions:
         combined["nodes"].extend(ext.get("nodes", []))
@@ -134,6 +136,10 @@ def build(extractions: list[dict], *, directed: bool = False) -> nx.Graph:
         combined["hyperedges"].extend(ext.get("hyperedges", []))
         combined["input_tokens"] += ext.get("input_tokens", 0)
         combined["output_tokens"] += ext.get("output_tokens", 0)
+    if dedup and combined["nodes"]:
+        combined["nodes"], combined["edges"] = deduplicate_entities(
+            combined["nodes"], combined["edges"], communities={}
+        )
     return build_from_json(combined, directed=directed)
 
 
@@ -194,6 +200,7 @@ def build_merge(
     prune_sources: list[str] | None = None,
     *,
     directed: bool = False,
+    dedup: bool = True,
 ) -> nx.Graph:
     """Load existing graph.json, merge new chunks into it, and save back.
 
@@ -219,7 +226,7 @@ def build_merge(
         base = []
 
     all_chunks = base + list(new_chunks)
-    G = build(all_chunks, directed=directed)
+    G = build(all_chunks, directed=directed, dedup=dedup)
 
     # Prune nodes from deleted source files
     if prune_sources:
@@ -232,7 +239,8 @@ def build_merge(
             print(f"[graphify] Pruned {len(to_remove)} node(s) from deleted sources.", file=sys.stderr)
 
     # Safety check: refuse to shrink the graph silently (#479)
-    if graph_path.exists():
+    # Skip when dedup or prune_sources is active — shrinkage is intentional there.
+    if graph_path.exists() and not dedup and not prune_sources:
         existing_n = len(existing_nodes)
         new_n = G.number_of_nodes()
         if new_n < existing_n:
