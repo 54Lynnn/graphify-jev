@@ -12,7 +12,7 @@ from pathlib import Path
 
 from graphify.extract import (
     _make_id,
-    _resolve_with_extensions,
+    _resolve_js_module_path,
     extract_js,
     extract_svelte,
 )
@@ -29,30 +29,30 @@ def _import_targets(result: dict) -> set[str]:
             if e.get("relation") in ("imports", "imports_from")}
 
 
-# ── _resolve_with_extensions unit tests ──────────────────────────────────────
+# ── _resolve_js_module_path unit tests ──────────────────────────────────────
 
 
 def test_resolve_returns_existing_path_unchanged(tmp_path):
     p = _write(tmp_path / "foo.ts", "export const x = 1")
-    assert _resolve_with_extensions(p) == p
+    assert _resolve_js_module_path(p) == p
 
 
 def test_resolve_bare_path_to_ts(tmp_path):
     target = _write(tmp_path / "foo.ts", "export const x = 1")
     bare = tmp_path / "foo"
-    assert _resolve_with_extensions(bare) == target
+    assert _resolve_js_module_path(bare) == target
 
 
 def test_resolve_bare_path_to_tsx(tmp_path):
     target = _write(tmp_path / "Component.tsx", "export const x = 1")
     bare = tmp_path / "Component"
-    assert _resolve_with_extensions(bare) == target
+    assert _resolve_js_module_path(bare) == target
 
 
 def test_resolve_bare_path_to_svelte(tmp_path):
     target = _write(tmp_path / "Card.svelte", "<div></div>")
     bare = tmp_path / "Card"
-    assert _resolve_with_extensions(bare) == target
+    assert _resolve_js_module_path(bare) == target
 
 
 def test_resolve_prefers_ts_over_svelte_when_both_exist(tmp_path):
@@ -60,20 +60,20 @@ def test_resolve_prefers_ts_over_svelte_when_both_exist(tmp_path):
     ts_target = _write(tmp_path / "foo.ts", "export const x = 1")
     _write(tmp_path / "foo.svelte", "<div></div>")
     bare = tmp_path / "foo"
-    assert _resolve_with_extensions(bare) == ts_target
+    assert _resolve_js_module_path(bare) == ts_target
 
 
 def test_resolve_directory_to_index_ts(tmp_path):
     pkg = tmp_path / "queue"
     target = _write(pkg / "index.ts", "export const x = 1")
-    assert _resolve_with_extensions(pkg) == target
+    assert _resolve_js_module_path(pkg) == target
 
 
 def test_resolve_directory_prefers_index_ts_over_index_js(tmp_path):
     pkg = tmp_path / "queue"
     target = _write(pkg / "index.ts", "export const x = 1")
     _write(pkg / "index.js", "module.exports = {}")
-    assert _resolve_with_extensions(pkg) == target
+    assert _resolve_js_module_path(pkg) == target
 
 
 def test_resolve_svelte_to_svelte_ts_for_rune_files(tmp_path):
@@ -83,7 +83,7 @@ def test_resolve_svelte_to_svelte_ts_for_rune_files(tmp_path):
     target = _write(tmp_path / "is-mobile.svelte.ts",
                     "export const isMobile = () => true")
     written_as = tmp_path / "is-mobile.svelte"
-    resolved = _resolve_with_extensions(written_as)
+    resolved = _resolve_js_module_path(written_as)
     assert resolved == target, (
         f"Expected resolution to is-mobile.svelte.ts; got {resolved}"
     )
@@ -93,27 +93,27 @@ def test_resolve_js_to_ts_when_real_file_is_ts(tmp_path):
     """TS ESM convention: imports written as .js but the actual file is .ts."""
     target = _write(tmp_path / "foo.ts", "export const x = 1")
     written_as = tmp_path / "foo.js"
-    assert _resolve_with_extensions(written_as) == target
+    assert _resolve_js_module_path(written_as) == target
 
 
 def test_resolve_jsx_to_tsx_when_real_file_is_tsx(tmp_path):
     target = _write(tmp_path / "Component.tsx", "export const x = 1")
     written_as = tmp_path / "Component.jsx"
-    assert _resolve_with_extensions(written_as) == target
+    assert _resolve_js_module_path(written_as) == target
 
 
 def test_resolve_returns_unchanged_when_nothing_matches(tmp_path):
     """External / truly missing paths fall back to the input — preserves
     pre-#716 behavior of becoming an external phantom edge."""
     nothing = tmp_path / "does_not_exist"
-    assert _resolve_with_extensions(nothing) == nothing
+    assert _resolve_js_module_path(nothing) == nothing
 
 
 def test_resolve_real_js_stays_js_when_ts_does_not_exist(tmp_path):
     """If `.js` exists and `.ts` does not, keep the `.js` rewrite from
     triggering — return the existing file."""
     target = _write(tmp_path / "foo.js", "module.exports = 1")
-    assert _resolve_with_extensions(target) == target
+    assert _resolve_js_module_path(target) == target
 
 
 # ── End-to-end: bare-path imports in pure TS files ───────────────────────────
@@ -297,7 +297,7 @@ def test_resolve_does_not_match_partial_directory_name(tmp_path):
     but worth pinning down."""
     _write(tmp_path / "foo-extra.ts", "export const x = 1")
     bare = tmp_path / "foo"
-    resolved = _resolve_with_extensions(bare)
+    resolved = _resolve_js_module_path(bare)
     # Not a real file → nothing matches → returns input unchanged
     assert resolved == bare, (
         f"Partial-name match must not happen; got {resolved}"
@@ -309,7 +309,7 @@ def test_resolve_directory_without_index_returns_unchanged(tmp_path):
     \"return as-is\" path, not pick a non-index file from inside."""
     pkg = tmp_path / "pkg"
     _write(pkg / "not-index.ts", "export const x = 1")
-    resolved = _resolve_with_extensions(pkg)
+    resolved = _resolve_js_module_path(pkg)
     assert resolved == pkg, (
         f"Directory without index.* must return unchanged; got {resolved}"
     )
@@ -321,7 +321,7 @@ def test_resolve_handles_subpath_into_directory_with_index(tmp_path):
     target = _write(tmp_path / "foo" / "sub" / "index.ts",
                     "export const x = 1")
     sub = tmp_path / "foo" / "sub"
-    assert _resolve_with_extensions(sub) == target
+    assert _resolve_js_module_path(sub) == target
 
 
 def test_resolve_does_not_treat_dotfile_as_extension(tmp_path):
@@ -331,7 +331,49 @@ def test_resolve_does_not_treat_dotfile_as_extension(tmp_path):
     target = _write(tmp_path / ".env-types.ts",
                     "export const x = 1")
     # Path('.env-types.ts').suffix is '.ts' — not a problem
-    assert _resolve_with_extensions(target) == target
+    assert _resolve_js_module_path(target) == target
+
+
+def test_resolve_multi_dot_helper_file(tmp_path):
+    """Common patterns: foo.shared.ts, foo.config.ts, foo.compile.ts,
+    foo.integration.ts, foo.triggers.ts. Imports written as
+    `from './foo.shared'` (preserving the meaningful suffix) must resolve
+    to foo.shared.ts.
+
+    Before this rule, .suffix was '.shared' so neither the bare-path branch
+    nor the .js/.jsx branches matched, and the import dropped to a phantom."""
+    target = _write(tmp_path / "tag-action.shared.ts",
+                    "export const apply = () => {}")
+    written_as = tmp_path / "tag-action.shared"
+    assert _resolve_js_module_path(written_as) == target
+
+
+def test_resolve_multi_dot_with_explicit_extension_still_works(tmp_path):
+    """Sanity: `from './foo.shared.ts'` (explicit) still wins over implicit."""
+    target = _write(tmp_path / "foo.shared.ts", "export const x = 1")
+    assert _resolve_js_module_path(target) == target
+
+
+def test_resolve_ambient_d_ts_via_bare_path(tmp_path):
+    """Ambient TS declaration files (foo.d.ts) — bare import `./foo.d`
+    should resolve to `./foo.d.ts` because `name + '.ts'` gives `foo.d.ts`."""
+    target = _write(tmp_path / "ambient.d.ts", "declare const X: string")
+    written_as = tmp_path / "ambient.d"
+    assert _resolve_js_module_path(written_as) == target
+
+
+def test_end_to_end_multi_dot_import_resolves(tmp_path):
+    """End-to-end sanity for the multi-dot pattern via the import handler."""
+    target = _write(tmp_path / "tag-action.shared.ts",
+                    "export const apply = () => {}")
+    importer = _write(tmp_path / "page.ts",
+                      "import { apply } from './tag-action.shared'\n")
+    result = extract_js(importer)
+    expected = _make_id(str(target))
+    assert expected in _import_targets(result), (
+        f"Multi-dot import failed end-to-end; "
+        f"expected {expected}; got {_import_targets(result)}"
+    )
 
 
 def test_resolve_chain_alias_and_extension_compose(tmp_path):
