@@ -188,6 +188,72 @@ class LanguageConfig:
 
 # ── Generic helpers ───────────────────────────────────────────────────────────
 
+# Vite/TS resolver order. Used by _resolve_with_extensions() to map TypeScript
+# bare-path imports onto real files on disk, so the resulting node id matches
+# the one _extract_generic creates for the target file (#716).
+_TS_RESOLVE_EXTS = (".ts", ".tsx", ".svelte", ".js", ".jsx", ".mjs")
+_TS_INDEX_FILES = ("index.ts", "index.tsx", "index.js", "index.jsx")
+
+
+def _resolve_with_extensions(p: Path) -> Path:
+    """Resolve a TypeScript-style import path to an actual file on disk.
+
+    TS / SvelteKit / Vite let you write imports without a file extension and
+    auto-resolve via a fixed extension order. The pre-existing .js→.ts and
+    .jsx→.tsx rewrites only covered the TS-ESM-via-.js convention; everything
+    else dropped to a phantom node id and the edge was lost in build_from_json.
+
+    Order, mirroring Vite's resolver:
+      1. exact path (if it exists)
+      2. .js  → .ts   (TS ESM convention; written as .js, file is .ts)
+      3. .jsx → .tsx
+      4. bare path → try .ts/.tsx/.svelte/.js/.jsx/.mjs
+      5. bare path → try directory's index.{ts,tsx,js,jsx}
+      6. .svelte path that isn't a real .svelte file → try the same name
+         with .ts appended (Svelte 5 rune-only files like foo.svelte.ts —
+         imports are written as './foo.svelte' but the file is .svelte.ts)
+
+    Falls back to the original path on no match — the edge will be dropped
+    as external by build_from_json, matching pre-#716 behaviour for cases
+    we genuinely can't resolve (truly external modules).
+    """
+    # Existing FILE wins — directory matches must fall through to index lookup,
+    # otherwise `from './queue'` (where queue/ is a real directory) would
+    # short-circuit and never resolve to queue/index.ts.
+    if p.is_file():
+        return p
+    # Directory imports: try index.{ts,tsx,js,jsx}
+    if p.is_dir():
+        for idx in _TS_INDEX_FILES:
+            c = p / idx
+            if c.is_file():
+                return c
+        return p
+    if p.suffix == ".js":
+        c = p.with_suffix(".ts")
+        if c.is_file():
+            return c
+    if p.suffix == ".jsx":
+        c = p.with_suffix(".tsx")
+        if c.is_file():
+            return c
+    if p.suffix == "":
+        for ext in _TS_RESOLVE_EXTS:
+            c = p.with_suffix(ext)
+            if c.is_file():
+                return c
+    if p.suffix == ".svelte":
+        # SvelteKit imports written as `from './foo.svelte'` may actually point
+        # at `foo.svelte.ts` (a Svelte 5 rune file). Append .ts to the FULL
+        # filename rather than swapping the suffix — `with_suffix(".svelte.ts")`
+        # would replace `.svelte` with `.svelte.ts`, but `with_suffix` only
+        # replaces the final segment.
+        c = p.parent / (p.name + ".ts")
+        if c.is_file():
+            return c
+    return p
+
+
 def _read_text(node, source: bytes) -> str:
     return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
 
@@ -275,11 +341,9 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                 # Relative import - resolve to full path so IDs match file node IDs
                 # normpath removes ".." segments so the ID matches the target file's own node ID
                 resolved = Path(os.path.normpath(Path(str_path).parent / raw))
-                # TypeScript ESM: imports written as .js but actual file is .ts/.tsx
-                if resolved.suffix == ".js":
-                    resolved = resolved.with_suffix(".ts")
-                elif resolved.suffix == ".jsx":
-                    resolved = resolved.with_suffix(".tsx")
+                # TS / SvelteKit resolver: try .ts/.tsx/.svelte/.svelte.ts/index.{ts,…}
+                # so bare-path and Svelte-5-rune imports land on the right node id (#716)
+                resolved = _resolve_with_extensions(resolved)
                 tgt_nid = _make_id(str(resolved))
                 resolved_path = resolved
             else:
@@ -292,6 +356,9 @@ def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_p
                         resolved_alias = Path(os.path.normpath(Path(alias_base) / rest))
                         break
                 if resolved_alias is not None:
+                    # Same resolver fixups as the relative branch — alias targets
+                    # are equally likely to be bare paths / .svelte.ts / index.ts (#716)
+                    resolved_alias = _resolve_with_extensions(resolved_alias)
                     tgt_nid = _make_id(str(resolved_alias))
                     resolved_path = resolved_alias
                 else:
@@ -1761,11 +1828,10 @@ def extract_svelte(path: Path) -> dict:
             if raw.startswith("."):
                 # Relative import - resolve to full path so IDs match file node IDs.
                 resolved = Path(os.path.normpath(path.parent / raw))
-                # TypeScript ESM: imports written as .js but actual file is .ts/.tsx
-                if resolved.suffix == ".js":
-                    resolved = resolved.with_suffix(".ts")
-                elif resolved.suffix == ".jsx":
-                    resolved = resolved.with_suffix(".tsx")
+                # Apply same TS/Svelte resolver fixups as static imports so dynamic
+                # imports of bare paths and .svelte.ts rune files land on real
+                # file nodes instead of phantom ids (#716).
+                resolved = _resolve_with_extensions(resolved)
                 node_id = _make_id(str(resolved))
             else:
                 # Check tsconfig.json path aliases (e.g. "$lib/" -> "src/lib/", "@/" -> "src/")
@@ -1778,6 +1844,7 @@ def extract_svelte(path: Path) -> dict:
                         resolved_alias = Path(os.path.normpath(Path(alias_base) / rest))
                         break
                 if resolved_alias is not None:
+                    resolved_alias = _resolve_with_extensions(resolved_alias)
                     node_id = _make_id(str(resolved_alias))
                 else:
                     # Bare/scoped import (node_modules) - use last segment;
