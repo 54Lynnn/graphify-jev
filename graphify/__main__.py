@@ -1094,6 +1094,10 @@ def main() -> None:
         print("    --max-children N        cap children per node (default 200)")
         print("    --top-k-edges N         per-symbol outbound edges in inspector (default 12)")
         print("    --label NAME            project label in header")
+        print("  extract <path>          headless full extraction (AST + semantic LLM) for CI/scripts")
+        print("    --backend B             kimi|claude (default: whichever API key is set)")
+        print("    --out DIR               output dir (default: <path>); writes <DIR>/graphify-out/")
+        print("    --no-cluster            skip clustering, write raw extraction only")
         print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
         print("  hook install            install post-commit/post-checkout git hooks (all platforms)")
         print("  hook uninstall          remove git hooks")
@@ -1882,6 +1886,235 @@ def main() -> None:
                 pass
         result = run_benchmark(graph_path, corpus_words=corpus_words)
         print_benchmark(result)
+
+    elif cmd == "extract":
+        # Headless full-pipeline extraction for CI / scripts (#698).
+        # Runs detect -> AST extraction on code -> semantic LLM extraction on
+        # docs/papers/images -> merge -> build -> cluster -> write outputs.
+        # Unlike the skill.md path (which runs through Claude Code subagents),
+        # this calls extract_corpus_parallel directly using whichever backend
+        # has an API key set.
+        if len(sys.argv) < 3:
+            print(
+                "Usage: graphify extract <path> [--backend kimi|claude] "
+                "[--out DIR] [--no-cluster]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        target = Path(sys.argv[2]).resolve()
+        if not target.exists():
+            print(f"error: path not found: {target}", file=sys.stderr)
+            sys.exit(1)
+
+        backend: str | None = None
+        out_dir: Path | None = None
+        no_cluster = False
+        args = sys.argv[3:]
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a == "--backend" and i + 1 < len(args):
+                backend = args[i + 1]; i += 2
+            elif a.startswith("--backend="):
+                backend = a.split("=", 1)[1]; i += 1
+            elif a == "--out" and i + 1 < len(args):
+                out_dir = Path(args[i + 1]); i += 2
+            elif a.startswith("--out="):
+                out_dir = Path(a.split("=", 1)[1]); i += 1
+            elif a == "--no-cluster":
+                no_cluster = True; i += 1
+            else:
+                i += 1
+
+        # Backend resolution. If user did not pass --backend, sniff env.
+        # If backend was explicitly requested, validate its key is present
+        # and surface a clear error early — don't let extract_corpus_parallel
+        # raise mid-run after we've spent time on AST extraction.
+        from graphify.llm import (
+            BACKENDS as _BACKENDS,
+            detect_backend as _detect_backend,
+            estimate_cost as _estimate_cost,
+            extract_corpus_parallel as _extract_corpus_parallel,
+        )
+        if backend is None:
+            backend = _detect_backend()
+            if backend is None:
+                print(
+                    "error: no LLM API key found. Set MOONSHOT_API_KEY (kimi) "
+                    "or ANTHROPIC_API_KEY (claude), or pass --backend.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+        if backend not in _BACKENDS:
+            print(
+                f"error: unknown backend '{backend}'. "
+                f"Available: {', '.join(sorted(_BACKENDS))}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        env_key = _BACKENDS[backend]["env_key"]
+        if not os.environ.get(env_key):
+            print(
+                f"error: backend '{backend}' requires {env_key} to be set.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        # Resolve output dir. The user-facing contract is "<out>/graphify-out/"
+        # so a fresh checkout writes graphify-out/ at the project root, matching
+        # the skill.md pipeline.
+        out_root = (out_dir.resolve() if out_dir else target)
+        graphify_out = out_root / "graphify-out"
+        graphify_out.mkdir(parents=True, exist_ok=True)
+
+        from graphify.detect import detect as _detect
+        print(f"[graphify extract] scanning {target}")
+        detection = _detect(target)
+        files_by_type = detection.get("files", {})
+        code_files = [Path(p) for p in files_by_type.get("code", [])]
+        doc_files = [Path(p) for p in files_by_type.get("document", [])]
+        paper_files = [Path(p) for p in files_by_type.get("paper", [])]
+        image_files = [Path(p) for p in files_by_type.get("image", [])]
+        semantic_files = doc_files + paper_files + image_files
+        print(
+            f"[graphify extract] found {len(code_files)} code, "
+            f"{len(doc_files)} docs, {len(paper_files)} papers, "
+            f"{len(image_files)} images"
+        )
+
+        # AST extraction on code files. Empty code list (docs-only corpus) is
+        # the issue #698 case — skip cleanly instead of crashing inside extract().
+        ast_result: dict = {"nodes": [], "edges": [], "input_tokens": 0, "output_tokens": 0}
+        if code_files:
+            from graphify.extract import extract as _ast_extract
+            print(f"[graphify extract] AST extraction on {len(code_files)} code files...")
+            try:
+                ast_result = _ast_extract(code_files, cache_root=target)
+            except Exception as exc:
+                print(f"[graphify extract] AST extraction failed: {exc}", file=sys.stderr)
+                ast_result = {"nodes": [], "edges": [], "input_tokens": 0, "output_tokens": 0}
+
+        # Semantic extraction on docs/papers/images. Skip if there's nothing
+        # for the LLM — saves an empty API call and prevents BACKENDS validation
+        # from firing on a no-op.
+        sem_result: dict = {
+            "nodes": [], "edges": [], "hyperedges": [],
+            "input_tokens": 0, "output_tokens": 0,
+        }
+        if semantic_files:
+            print(
+                f"[graphify extract] semantic extraction on "
+                f"{len(semantic_files)} files via {backend}..."
+            )
+            try:
+                sem_result = _extract_corpus_parallel(
+                    semantic_files,
+                    backend=backend,
+                    root=target,
+                )
+            except ImportError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                sys.exit(1)
+            except Exception as exc:
+                print(
+                    f"[graphify extract] semantic extraction failed: {exc}",
+                    file=sys.stderr,
+                )
+
+        # Merge AST + semantic. Order matters for deduplication: passing AST
+        # first means semantic node attributes win on collision (richer labels
+        # for symbols also referenced in docs). Hyperedges only come from the
+        # semantic side.
+        merged: dict = {
+            "nodes": list(ast_result.get("nodes", [])) + list(sem_result.get("nodes", [])),
+            "edges": list(ast_result.get("edges", [])) + list(sem_result.get("edges", [])),
+            "hyperedges": list(sem_result.get("hyperedges", [])),
+            "input_tokens": ast_result.get("input_tokens", 0) + sem_result.get("input_tokens", 0),
+            "output_tokens": ast_result.get("output_tokens", 0) + sem_result.get("output_tokens", 0),
+        }
+
+        graph_json_path = graphify_out / "graph.json"
+        analysis_path = graphify_out / ".graphify_analysis.json"
+
+        if no_cluster:
+            # --no-cluster: dump the raw merged extraction as graph.json.
+            # No NetworkX, no community detection, no analysis sidecar.
+            graph_json_path.write_text(
+                json.dumps(merged, indent=2), encoding="utf-8"
+            )
+            cost = _estimate_cost(
+                backend, merged["input_tokens"], merged["output_tokens"]
+            )
+            print(
+                f"[graphify extract] wrote {graph_json_path} — "
+                f"{len(merged['nodes'])} nodes, {len(merged['edges'])} edges "
+                f"(no clustering)"
+            )
+            if merged["input_tokens"] or merged["output_tokens"]:
+                print(
+                    f"[graphify extract] tokens: "
+                    f"{merged['input_tokens']:,} in / "
+                    f"{merged['output_tokens']:,} out, "
+                    f"est. cost: ${cost:.4f}"
+                )
+            sys.exit(0)
+
+        # Build graph + cluster + score + write.
+        from graphify.build import build_from_json as _build_from_json
+        from graphify.cluster import cluster as _cluster, score_all as _score_all
+        from graphify.export import to_json as _to_json
+        from graphify.analyze import god_nodes as _god_nodes, surprising_connections as _surprising
+
+        G = _build_from_json(merged)
+        if G.number_of_nodes() == 0:
+            print(
+                "[graphify extract] graph is empty — extraction produced no nodes. "
+                "Possible causes: all files skipped, binary-only corpus, or LLM "
+                "returned no edges.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        communities = _cluster(G)
+        cohesion = _score_all(G, communities)
+        try:
+            gods = _god_nodes(G)
+        except Exception:
+            gods = []
+        try:
+            surprises = _surprising(G, communities)
+        except Exception:
+            surprises = []
+
+        _to_json(G, communities, str(graph_json_path), force=True)
+        analysis = {
+            "communities": {str(k): v for k, v in communities.items()},
+            "cohesion": {str(k): v for k, v in cohesion.items()},
+            "gods": gods,
+            "surprises": surprises,
+            "tokens": {
+                "input": merged["input_tokens"],
+                "output": merged["output_tokens"],
+            },
+        }
+        analysis_path.write_text(json.dumps(analysis, indent=2), encoding="utf-8")
+
+        cost = _estimate_cost(backend, merged["input_tokens"], merged["output_tokens"])
+        print(
+            f"[graphify extract] wrote {graph_json_path}: "
+            f"{G.number_of_nodes()} nodes, {G.number_of_edges()} edges, "
+            f"{len(communities)} communities"
+        )
+        print(f"[graphify extract] wrote {analysis_path}")
+        if merged["input_tokens"] or merged["output_tokens"]:
+            print(
+                f"[graphify extract] tokens: "
+                f"{merged['input_tokens']:,} in / "
+                f"{merged['output_tokens']:,} out, "
+                f"est. cost (~{backend}): ${cost:.4f}"
+            )
+
     else:
         print(f"error: unknown command '{cmd}'", file=sys.stderr)
         print("Run 'graphify --help' for usage.", file=sys.stderr)
