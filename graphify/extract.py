@@ -225,15 +225,6 @@ def _resolve_js_module_path(p: Path) -> Path:
     """
     if p.is_file():
         return p
-    # Directory imports must be handled before any suffix logic, otherwise
-    # `from './queue'` (where queue/ is a real directory) would short-circuit
-    # on .is_file() = False and never reach the index lookup.
-    if p.is_dir():
-        for idx in _JS_INDEX_FILES:
-            c = p / idx
-            if c.is_file():
-                return c
-        return p
     # TS ESM convention: import path written with .js but the real file is .ts.
     # Apply BEFORE the generic append loop so we don't accidentally match
     # foo.js → foo.js.ts when the real file is foo.ts.
@@ -245,17 +236,24 @@ def _resolve_js_module_path(p: Path) -> Path:
         c = p.with_suffix(".tsx")
         if c.is_file():
             return c
-    # Try appending extensions to the FULL filename. Covers bare paths,
-    # multi-dot helper files, Svelte 5 rune files, config files, etc.
+    # Try appending extensions to the FULL filename BEFORE checking for a
+    # directory import. Both TypeScript and Vite resolvers prefer a file
+    # match over a directory match — projects routinely have a `foo.ts`
+    # file living alongside a `foo/` directory of sub-modules (e.g.
+    # `auth.ts` next to `auth/`). If we checked the directory first, those
+    # file imports would silently lose to a directory with no `index.*`.
     for ext in _JS_RESOLVE_EXTS:
         c = p.parent / (p.name + ext)
         if c.is_file():
             return c
-    # Treat as a not-yet-existing directory import: ./<name>/index.{ts,…}
-    for idx in _JS_INDEX_FILES:
-        c = p / idx
-        if c.is_file():
-            return c
+    # Directory imports: try ./<name>/index.{ts,tsx,js,jsx}. Reached only
+    # after every file-extension candidate has been ruled out, matching the
+    # resolver fallback chain.
+    if p.is_dir():
+        for idx in _JS_INDEX_FILES:
+            c = p / idx
+            if c.is_file():
+                return c
     return p
 
 

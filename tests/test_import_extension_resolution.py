@@ -63,6 +63,20 @@ def test_resolve_prefers_ts_over_svelte_when_both_exist(tmp_path):
     assert _resolve_js_module_path(bare) == ts_target
 
 
+def test_resolve_file_wins_over_sibling_directory(tmp_path):
+    """Real-world repro: a project has both `auth.ts` (file) and `auth/`
+    (directory of sub-modules) at the same path. Both TypeScript and Vite
+    prefer the file match. If the resolver checks the directory first and
+    falls back on a missing index, every `from './auth'` import silently
+    drops because the directory has no index.{ts,…}."""
+    file_target = _write(tmp_path / "auth.ts", "export const x = 1")
+    sibling_dir = tmp_path / "auth"
+    sibling_dir.mkdir()
+    _write(sibling_dir / "helpers.ts", "export const y = 2")
+    bare = tmp_path / "auth"
+    assert _resolve_js_module_path(bare) == file_target
+
+
 def test_resolve_directory_to_index_ts(tmp_path):
     pkg = tmp_path / "queue"
     target = _write(pkg / "index.ts", "export const x = 1")
