@@ -2126,22 +2126,24 @@ def main() -> None:
 
         # Build graph + cluster + score + write.
         from graphify.build import (
+            build as _build,
             build_from_json as _build_from_json,
             build_merge as _build_merge,
         )
         from graphify.cluster import cluster as _cluster, score_all as _score_all
         from graphify.export import to_json as _to_json
         from graphify.analyze import god_nodes as _god_nodes, surprising_connections as _surprising
-
+        dedup_backend = backend if dedup_llm else None
         if incremental_mode:
             G = _build_merge(
                 [merged],
                 graph_path=existing_graph_path,
                 prune_sources=deleted_files or None,
                 dedup=True,
+                dedup_llm_backend=dedup_backend,
             )
         else:
-            G = _build_from_json(merged)
+            G = _build([merged], dedup=True, dedup_llm_backend=dedup_backend)
         if G.number_of_nodes() == 0:
             print(
                 "[graphify extract] graph is empty — extraction produced no nodes. "

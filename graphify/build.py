@@ -116,12 +116,20 @@ def build_from_json(extraction: dict, *, directed: bool = False) -> nx.Graph:
     return G
 
 
-def build(extractions: list[dict], *, directed: bool = False, dedup: bool = True) -> nx.Graph:
+def build(
+    extractions: list[dict],
+    *,
+    directed: bool = False,
+    dedup: bool = True,
+    dedup_llm_backend: str | None = None,
+) -> nx.Graph:
     """Merge multiple extraction results into one graph.
 
     directed=True produces a DiGraph that preserves edge direction (source→target).
     directed=False (default) produces an undirected Graph for backward compatibility.
     dedup=True (default) runs entity deduplication before building the graph.
+    dedup_llm_backend: if set (e.g. "claude" or "kimi"), uses LLM to resolve
+        ambiguous pairs in the 75–92 Jaro-Winkler score zone.
 
     Extractions are merged in order. For nodes with the same ID, the last
     extraction's attributes win (NetworkX add_node overwrites). Pass AST
@@ -138,7 +146,8 @@ def build(extractions: list[dict], *, directed: bool = False, dedup: bool = True
         combined["output_tokens"] += ext.get("output_tokens", 0)
     if dedup and combined["nodes"]:
         combined["nodes"], combined["edges"] = deduplicate_entities(
-            combined["nodes"], combined["edges"], communities={}
+            combined["nodes"], combined["edges"], communities={},
+            dedup_llm_backend=dedup_llm_backend,
         )
     return build_from_json(combined, directed=directed)
 
@@ -201,6 +210,7 @@ def build_merge(
     *,
     directed: bool = False,
     dedup: bool = True,
+    dedup_llm_backend: str | None = None,
 ) -> nx.Graph:
     """Load existing graph.json, merge new chunks into it, and save back.
 
@@ -226,7 +236,7 @@ def build_merge(
         base = []
 
     all_chunks = base + list(new_chunks)
-    G = build(all_chunks, directed=directed, dedup=dedup)
+    G = build(all_chunks, directed=directed, dedup=dedup, dedup_llm_backend=dedup_llm_backend)
 
     # Prune nodes from deleted source files
     if prune_sources:
