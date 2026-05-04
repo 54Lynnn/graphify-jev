@@ -24,6 +24,7 @@ def generate(
     root: str,
     suggested_questions: list[dict] | None = None,
     min_community_size: int = 3,
+    built_at_commit: str | None = None,
 ) -> str:
     today = date.today().isoformat()
 
@@ -53,15 +54,30 @@ def generate(
     from .analyze import _is_file_node as _ifn
     non_empty = {cid: nodes for cid, nodes in communities.items()
                  if any(not _ifn(G, n) for n in nodes)}
+    thin_count_summary = sum(
+        1 for nodes in communities.values()
+        if 0 < sum(1 for n in nodes if not _ifn(G, n)) < min_community_size
+    )
+    shown_count = len(communities) - thin_count_summary
 
     lines += [
         "",
         "## Summary",
-        f"- {G.number_of_nodes()} nodes · {G.number_of_edges()} edges · {len(non_empty)} communities detected",
+        f"- {G.number_of_nodes()} nodes · {G.number_of_edges()} edges · {len(communities)} communities"
+        + (f" ({shown_count} shown, {thin_count_summary} thin omitted)" if thin_count_summary else ""),
         f"- Extraction: {ext_pct}% EXTRACTED · {inf_pct}% INFERRED · {amb_pct}% AMBIGUOUS"
         + (f" · INFERRED: {len(inf_edges)} edges (avg confidence: {inf_avg})" if inf_avg is not None else ""),
         f"- Token cost: {token_cost.get('input', 0):,} input · {token_cost.get('output', 0):,} output",
     ]
+
+    if built_at_commit:
+        lines += [
+            "",
+            "## Graph Freshness",
+            f"- Built from commit: `{built_at_commit[:8]}`",
+            "- Run `git rev-parse HEAD` and compare to check if the graph is stale.",
+            "- Run `graphify update .` after code changes (no API cost).",
+        ]
 
     # Community hub navigation - links to _COMMUNITY_*.md files in the Obsidian vault.
     # Without these, GRAPH_REPORT.md is a dead-end and the vault splits into disconnected components.
@@ -109,11 +125,7 @@ def generate(
             conf_tag = f"{conf} {cscore:.2f}" if cscore is not None else conf
             lines.append(f"- **{h.get('label', h.get('id', ''))}** — {node_labels} [{conf_tag}]")
 
-    thin_count = sum(
-        1 for nodes in communities.values()
-        if 0 < sum(1 for n in nodes if not _ifn(G, n)) < min_community_size
-    )
-    lines += ["", f"## Communities ({len(communities)} total, {thin_count} thin omitted)"]
+    lines += ["", f"## Communities ({len(communities)} total, {thin_count_summary} thin omitted)"]
     for cid, nodes in communities.items():
         label = community_labels.get(cid, f"Community {cid}")
         score = cohesion_scores.get(cid, 0.0)
