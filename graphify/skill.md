@@ -43,18 +43,7 @@ Turn any folder of files into a navigable knowledge graph with community detecti
 
 ## What graphify is for
 
-graphify is built around Andrej Karpathy's /raw folder workflow: drop anything into a folder - papers, tweets, screenshots, code, notes - and get a structured knowledge graph that shows you what you didn't know was connected.
-
-Three things it does that Claude alone cannot:
-1. **Persistent graph** - relationships are stored in `graphify-out/graph.json` and survive across sessions. Ask questions weeks later without re-reading everything.
-2. **Honest audit trail** - every edge is tagged EXTRACTED, INFERRED, or AMBIGUOUS. You know what was found vs invented.
-3. **Cross-document surprise** - community detection finds connections between concepts in different files that you would never think to ask about directly.
-
-Use it for:
-- A codebase you're new to (understand architecture before touching anything)
-- A reading list (papers + tweets + notes → one navigable graph)
-- A research corpus (citation graph + concept graph in one)
-- Your personal /raw folder (drop everything in, let it grow, query it)
+Drop any folder of code, docs, papers, images, or video into graphify and get a queryable knowledge graph. Persistent across sessions, honest audit trail (EXTRACTED/INFERRED/AMBIGUOUS), community detection surfaces cross-document connections you wouldn't think to ask about.
 
 ## What You Must Do When Invoked
 
@@ -566,84 +555,18 @@ Replace INPUT_PATH with the actual path.
 
 If `--obsidian` was given:
 
-- If `--obsidian-dir <path>` was also given, use that path as the vault directory. Otherwise default to `graphify-out/obsidian`.
+- If `--obsidian-dir <path>` was also given, pass it via `--dir`. Otherwise defaults to `graphify-out/obsidian`.
 
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-import sys, json
-from graphify.build import build_from_json
-from graphify.export import to_obsidian, to_canvas
-from pathlib import Path
-
-extraction = json.loads(Path('graphify-out/.graphify_extract.json').read_text())
-analysis   = json.loads(Path('graphify-out/.graphify_analysis.json').read_text())
-labels_raw = json.loads(Path('graphify-out/.graphify_labels.json').read_text()) if Path('graphify-out/.graphify_labels.json').exists() else {}
-
-G = build_from_json(extraction)
-communities = {int(k): v for k, v in analysis['communities'].items()}
-cohesion = {int(k): v for k, v in analysis['cohesion'].items()}
-labels = {int(k): v for k, v in labels_raw.items()}
-
-obsidian_dir = 'OBSIDIAN_DIR'  # replace with --obsidian-dir value, or 'graphify-out/obsidian' if not given
-
-n = to_obsidian(G, communities, obsidian_dir, community_labels=labels or None, cohesion=cohesion)
-print(f'Obsidian vault: {n} notes in {obsidian_dir}/')
-
-to_canvas(G, communities, f'{obsidian_dir}/graph.canvas', community_labels=labels or None)
-print(f'Canvas: {obsidian_dir}/graph.canvas - open in Obsidian for structured community layout')
-print()
-print(f'Open {obsidian_dir}/ as a vault in Obsidian.')
-print('  Graph view   - nodes colored by community (set automatically)')
-print('  graph.canvas - structured layout with communities as groups')
-print('  _COMMUNITY_* - overview notes with cohesion scores and dataview queries')
-"
+graphify export obsidian
+# or with custom dir: graphify export obsidian --dir ~/vaults/my-project
 ```
 
 Generate the HTML graph (always, unless `--no-viz`):
 
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-import sys, json
-from graphify.build import build_from_json
-from graphify.export import to_html
-from pathlib import Path
-
-extraction = json.loads(Path('graphify-out/.graphify_extract.json').read_text())
-analysis   = json.loads(Path('graphify-out/.graphify_analysis.json').read_text())
-labels_raw = json.loads(Path('graphify-out/.graphify_labels.json').read_text()) if Path('graphify-out/.graphify_labels.json').exists() else {}
-
-G = build_from_json(extraction)
-communities = {int(k): v for k, v in analysis['communities'].items()}
-labels = {int(k): v for k, v in labels_raw.items()}
-
-NODE_LIMIT = 5000
-if G.number_of_nodes() > NODE_LIMIT:
-    from collections import Counter
-    print(f'Graph has {G.number_of_nodes()} nodes (above {NODE_LIMIT} limit). Building aggregated community view...')
-    node_to_community = {nid: cid for cid, members in communities.items() for nid in members}
-    import networkx as nx_meta
-    meta = nx_meta.Graph()
-    for cid, members in communities.items():
-        meta.add_node(str(cid), label=labels.get(cid, f'Community {cid}'))
-    edge_counts = Counter()
-    for u, v in G.edges():
-        cu, cv = node_to_community.get(u), node_to_community.get(v)
-        if cu is not None and cv is not None and cu != cv:
-            edge_counts[(min(cu, cv), max(cu, cv))] += 1
-    for (cu, cv), w in edge_counts.items():
-        meta.add_edge(str(cu), str(cv), weight=w, relation=f'{w} cross-community edges', confidence='AGGREGATED')
-    if meta.number_of_nodes() > 1:
-        meta_communities = {cid: [str(cid)] for cid in communities}
-        member_counts = {cid: len(members) for cid, members in communities.items()}
-        to_html(meta, meta_communities, 'graphify-out/graph.html', community_labels=labels or None, member_counts=member_counts)
-        print(f'graph.html written (aggregated: {meta.number_of_nodes()} community nodes, {meta.number_of_edges()} cross-community edges)')
-        print('Tip: run with --obsidian for full node-level detail.')
-    else:
-        print('Single community — aggregated view not useful. Skipping graph.html.')
-else:
-    to_html(G, communities, 'graphify-out/graph.html', community_labels=labels or None)
-    print('graph.html written - open in any browser, no server needed')
-"
+graphify export html  # auto-aggregates to community view if graph > 5000 nodes
+# or: graphify export html --no-viz
 ```
 
 ### Step 6b - Wiki (only if --wiki flag)
@@ -653,27 +576,7 @@ else:
 Run this before Step 9 (cleanup) so `.graphify_labels.json` is still available.
 
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-import json
-from graphify.build import build_from_json
-from graphify.wiki import to_wiki
-from graphify.analyze import god_nodes
-from pathlib import Path
-
-extraction = json.loads(Path('graphify-out/.graphify_extract.json').read_text())
-analysis   = json.loads(Path('graphify-out/.graphify_analysis.json').read_text())
-labels_raw = json.loads(Path('graphify-out/.graphify_labels.json').read_text()) if Path('graphify-out/.graphify_labels.json').exists() else {}
-
-G = build_from_json(extraction)
-communities = {int(k): v for k, v in analysis['communities'].items()}
-cohesion = {int(k): v for k, v in analysis['cohesion'].items()}
-labels = {int(k): v for k, v in labels_raw.items()}
-gods = god_nodes(G)
-
-n = to_wiki(G, communities, 'graphify-out/wiki', community_labels=labels or None, cohesion=cohesion, god_nodes_data=gods)
-print(f'Wiki: {n} articles written to graphify-out/wiki/')
-print('  graphify-out/wiki/index.md  ->  agent entry point')
-"
+graphify export wiki
 ```
 
 ### Step 7 - Neo4j export (only if --neo4j or --neo4j-push flag)
@@ -681,80 +584,27 @@ print('  graphify-out/wiki/index.md  ->  agent entry point')
 **If `--neo4j`** - generate a Cypher file for manual import:
 
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-import sys, json
-from graphify.build import build_from_json
-from graphify.export import to_cypher
-from pathlib import Path
-
-G = build_from_json(json.loads(Path('graphify-out/.graphify_extract.json').read_text()))
-to_cypher(G, 'graphify-out/cypher.txt')
-print('cypher.txt written - import with: cypher-shell < graphify-out/cypher.txt')
-"
+graphify export neo4j
 ```
 
 **If `--neo4j-push <uri>`** - push directly to a running Neo4j instance. Ask the user for credentials if not provided:
 
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-import sys, json
-from graphify.build import build_from_json
-from graphify.cluster import cluster
-from graphify.export import push_to_neo4j
-from pathlib import Path
-
-extraction = json.loads(Path('graphify-out/.graphify_extract.json').read_text())
-analysis   = json.loads(Path('graphify-out/.graphify_analysis.json').read_text())
-G = build_from_json(extraction)
-communities = {int(k): v for k, v in analysis['communities'].items()}
-
-result = push_to_neo4j(G, uri='NEO4J_URI', user='NEO4J_USER', password='NEO4J_PASSWORD', communities=communities)
-print(f'Pushed to Neo4j: {result[\"nodes\"]} nodes, {result[\"edges\"]} edges')
-"
+graphify export neo4j --push bolt://localhost:7687 --user neo4j --password PASSWORD
 ```
 
-Replace `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` with actual values. Default URI is `bolt://localhost:7687`, default user is `neo4j`. Uses MERGE - safe to re-run without creating duplicates.
+Default URI is `bolt://localhost:7687`, default user is `neo4j`. Uses MERGE - safe to re-run without creating duplicates.
 
 ### Step 7b - SVG export (only if --svg flag)
 
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-import sys, json
-from graphify.build import build_from_json
-from graphify.export import to_svg
-from pathlib import Path
-
-extraction = json.loads(Path('graphify-out/.graphify_extract.json').read_text())
-analysis   = json.loads(Path('graphify-out/.graphify_analysis.json').read_text())
-labels_raw = json.loads(Path('graphify-out/.graphify_labels.json').read_text()) if Path('graphify-out/.graphify_labels.json').exists() else {}
-
-G = build_from_json(extraction)
-communities = {int(k): v for k, v in analysis['communities'].items()}
-labels = {int(k): v for k, v in labels_raw.items()}
-
-to_svg(G, communities, 'graphify-out/graph.svg', community_labels=labels or None)
-print('graph.svg written - embeds in Obsidian, Notion, GitHub READMEs')
-"
+graphify export svg
 ```
 
 ### Step 7c - GraphML export (only if --graphml flag)
 
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-import json
-from graphify.build import build_from_json
-from graphify.export import to_graphml
-from pathlib import Path
-
-extraction = json.loads(Path('graphify-out/.graphify_extract.json').read_text())
-analysis   = json.loads(Path('graphify-out/.graphify_analysis.json').read_text())
-
-G = build_from_json(extraction)
-communities = {int(k): v for k, v in analysis['communities'].items()}
-
-to_graphml(G, communities, 'graphify-out/graph.graphml')
-print('graph.graphml written - open in Gephi, yEd, or any GraphML tool')
-"
+graphify export graphml
 ```
 
 ### Step 7d - MCP server (only if --mcp flag)
@@ -782,15 +632,7 @@ To configure in Claude Desktop, add to `claude_desktop_config.json`:
 If `total_words` from `graphify-out/.graphify_detect.json` is greater than 5,000, run:
 
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-import json
-from graphify.benchmark import run_benchmark, print_benchmark
-from pathlib import Path
-
-detection = json.loads(Path('graphify-out/.graphify_detect.json').read_text())
-result = run_benchmark('graphify-out/graph.json', corpus_words=detection['total_words'])
-print_benchmark(result)
-"
+graphify benchmark
 ```
 
 Print the output directly in chat. If `total_words <= 5000`, skip silently - the graph value is structural clarity, not token compression, for small corpora.
@@ -916,7 +758,7 @@ import json
 from pathlib import Path
 
 result = json.loads(open('graphify-out/.graphify_incremental.json').read()) if Path('graphify-out/.graphify_incremental.json').exists() else {}
-code_exts = {'.py','.ts','.js','.go','.rs','.java','.cpp','.c','.rb','.swift','.kt','.cs','.scala','.php','.cc','.cxx','.hpp','.h','.kts','.lua','.toc'}
+code_exts = {'.py','.ts','.js','.go','.rs','.java','.cpp','.c','.rb','.swift','.kt','.cs','.scala','.php','.cc','.cxx','.hpp','.h','.kts','.lua','.toc','.f','.F','.f90','.F90','.f95','.F95','.f03','.F03','.f08','.F08'}
 new_files = result.get('new_files', {})
 all_changed = [f for files in new_files.values() for f in files]
 code_only = all(Path(f).suffix.lower() in code_exts for f in all_changed)
@@ -1019,45 +861,10 @@ Clean up after: `rm -f graphify-out/.graphify_old.json`
 
 ## For --cluster-only
 
-Skip Steps 1–3. Load the existing graph from `graphify-out/graph.json` and re-run clustering:
+Skip Steps 1–3. Re-run clustering on the existing graph:
 
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-import sys, json
-from graphify.cluster import cluster, score_all
-from graphify.analyze import god_nodes, surprising_connections
-from graphify.report import generate
-from graphify.export import to_json
-from networkx.readwrite import json_graph
-import networkx as nx
-from pathlib import Path
-
-data = json.loads(Path('graphify-out/graph.json').read_text())
-G = json_graph.node_link_graph(data, edges='links')
-
-detection = {'total_files': 0, 'total_words': 99999, 'needs_graph': True, 'warning': None,
-             'files': {'code': [], 'document': [], 'paper': []}}
-tokens = {'input': 0, 'output': 0}
-
-communities = cluster(G)
-cohesion = score_all(G, communities)
-gods = god_nodes(G)
-surprises = surprising_connections(G, communities)
-labels = {cid: 'Community ' + str(cid) for cid in communities}
-
-report = generate(G, communities, cohesion, labels, gods, surprises, detection, tokens, '.')
-Path('graphify-out/GRAPH_REPORT.md').write_text(report)
-to_json(G, communities, 'graphify-out/graph.json')
-
-analysis = {
-    'communities': {str(k): v for k, v in communities.items()},
-    'cohesion': {str(k): v for k, v in cohesion.items()},
-    'gods': gods,
-    'surprises': surprises,
-}
-Path('graphify-out/.graphify_analysis.json').write_text(json.dumps(analysis, indent=2))
-print(f'Re-clustered: {len(communities)} communities')
-"
+graphify cluster-only .
 ```
 
 Then run Steps 5–9 as normal (label communities, generate viz, benchmark, clean up, report).
@@ -1073,113 +880,12 @@ Two traversal modes - choose based on the question:
 | BFS (default) | _(none)_ | "What is X connected to?" - broad context, nearest neighbors first |
 | DFS | `--dfs` | "How does X reach Y?" - trace a specific chain or dependency path |
 
-First check the graph exists:
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-from pathlib import Path
-if not Path('graphify-out/graph.json').exists():
-    print('ERROR: No graph found. Run /graphify <path> first to build the graph.')
-    raise SystemExit(1)
-"
-```
-If it fails, stop and tell the user to run `/graphify <path>` first.
-
-Load `graphify-out/graph.json`, then:
-
-1. Find the 1-3 nodes whose label best matches key terms in the question.
-2. Run the appropriate traversal from each starting node.
-3. Read the subgraph - node labels, edge relations, confidence tags, source locations.
-4. Answer using **only** what the graph contains. Quote `source_location` when citing a specific fact.
-5. If the graph lacks enough information, say so - do not hallucinate edges.
-
-```bash
-$(cat graphify-out/.graphify_python) -c "
-import sys, json
-from networkx.readwrite import json_graph
-import networkx as nx
-from pathlib import Path
-
-data = json.loads(Path('graphify-out/graph.json').read_text())
-G = json_graph.node_link_graph(data, edges='links')
-
-question = 'QUESTION'
-mode = 'MODE'  # 'bfs' or 'dfs'
-terms = [t.lower() for t in question.split() if len(t) > 3]
-
-# Find best-matching start nodes
-scored = []
-for nid, ndata in G.nodes(data=True):
-    label = ndata.get('label', '').lower()
-    score = sum(1 for t in terms if t in label)
-    if score > 0:
-        scored.append((score, nid))
-scored.sort(reverse=True)
-start_nodes = [nid for _, nid in scored[:3]]
-
-if not start_nodes:
-    print('No matching nodes found for query terms:', terms)
-    sys.exit(0)
-
-subgraph_nodes = set()
-subgraph_edges = []
-
-if mode == 'dfs':
-    # DFS: follow one path as deep as possible before backtracking.
-    # Depth-limited to 6 to avoid traversing the whole graph.
-    visited = set()
-    stack = [(n, 0) for n in reversed(start_nodes)]
-    while stack:
-        node, depth = stack.pop()
-        if node in visited or depth > 6:
-            continue
-        visited.add(node)
-        subgraph_nodes.add(node)
-        for neighbor in G.neighbors(node):
-            if neighbor not in visited:
-                stack.append((neighbor, depth + 1))
-                subgraph_edges.append((node, neighbor))
-else:
-    # BFS: explore all neighbors layer by layer up to depth 3.
-    frontier = set(start_nodes)
-    subgraph_nodes = set(start_nodes)
-    for _ in range(3):
-        next_frontier = set()
-        for n in frontier:
-            for neighbor in G.neighbors(n):
-                if neighbor not in subgraph_nodes:
-                    next_frontier.add(neighbor)
-                    subgraph_edges.append((n, neighbor))
-        subgraph_nodes.update(next_frontier)
-        frontier = next_frontier
-
-# Token-budget aware output: rank by relevance, cut at budget (~4 chars/token)
-token_budget = BUDGET  # default 2000
-char_budget = token_budget * 4
-
-# Score each node by term overlap for ranked output
-def relevance(nid):
-    label = G.nodes[nid].get('label', '').lower()
-    return sum(1 for t in terms if t in label)
-
-ranked_nodes = sorted(subgraph_nodes, key=relevance, reverse=True)
-
-lines = [f'Traversal: {mode.upper()} | Start: {[G.nodes[n].get(\"label\",n) for n in start_nodes]} | {len(subgraph_nodes)} nodes']
-for nid in ranked_nodes:
-    d = G.nodes[nid]
-    lines.append(f'  NODE {d.get(\"label\", nid)} [src={d.get(\"source_file\",\"\")} loc={d.get(\"source_location\",\"\")}]')
-for u, v in subgraph_edges:
-    if u in subgraph_nodes and v in subgraph_nodes:
-        d = G.edges[u, v]
-        lines.append(f'  EDGE {G.nodes[u].get(\"label\",u)} --{d.get(\"relation\",\"\")} [{d.get(\"confidence\",\"\")}]--> {G.nodes[v].get(\"label\",v)}')
-
-output = '\n'.join(lines)
-if len(output) > char_budget:
-    output = output[:char_budget] + f'\n... (truncated at ~{token_budget} token budget - use --budget N for more)'
-print(output)
-"
+graphify query "QUESTION"
+# or: graphify query "QUESTION" --dfs --budget 3000
 ```
 
-Replace `QUESTION` with the user's actual question, `MODE` with `bfs` or `dfs`, and `BUDGET` with the token budget (default `2000`, or whatever `--budget N` specifies). Then answer based on the subgraph output above.
+Replace `QUESTION` with the user's actual question. Answer using **only** what the graph output contains. Quote `source_location` when citing a specific fact. If the graph lacks enough information, say so - do not hallucinate edges.
 
 After writing the answer, save it back into the graph so it improves future queries:
 
@@ -1195,66 +901,11 @@ Replace `QUESTION` with the question, `ANSWER` with your full answer text, `SOUR
 
 Find the shortest path between two named concepts in the graph.
 
-First check the graph exists:
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-from pathlib import Path
-if not Path('graphify-out/graph.json').exists():
-    print('ERROR: No graph found. Run /graphify <path> first to build the graph.')
-    raise SystemExit(1)
-"
-```
-If it fails, stop and tell the user to run `/graphify <path>` first.
-
-```bash
-$(cat graphify-out/.graphify_python) -c "
-import json, sys
-import networkx as nx
-from networkx.readwrite import json_graph
-from pathlib import Path
-
-data = json.loads(Path('graphify-out/graph.json').read_text())
-G = json_graph.node_link_graph(data, edges='links')
-
-a_term = 'NODE_A'
-b_term = 'NODE_B'
-
-def find_node(term):
-    term = term.lower()
-    scored = sorted(
-        [(sum(1 for w in term.split() if w in G.nodes[n].get('label','').lower()), n)
-         for n in G.nodes()],
-        reverse=True
-    )
-    return scored[0][1] if scored and scored[0][0] > 0 else None
-
-src = find_node(a_term)
-tgt = find_node(b_term)
-
-if not src or not tgt:
-    print(f'Could not find nodes matching: {a_term!r} or {b_term!r}')
-    sys.exit(0)
-
-try:
-    path = nx.shortest_path(G, src, tgt)
-    print(f'Shortest path ({len(path)-1} hops):')
-    for i, nid in enumerate(path):
-        label = G.nodes[nid].get('label', nid)
-        if i < len(path) - 1:
-            edge = G.edges[nid, path[i+1]]
-            rel = edge.get('relation', '')
-            conf = edge.get('confidence', '')
-            print(f'  {label} --{rel}--> [{conf}]')
-        else:
-            print(f'  {label}')
-except nx.NetworkXNoPath:
-    print(f'No path found between {a_term!r} and {b_term!r}')
-except nx.NodeNotFound as e:
-    print(f'Node not found: {e}')
-"
+graphify path "NODE_A" "NODE_B"
 ```
 
-Replace `NODE_A` and `NODE_B` with the actual concept names from the user. Then explain the path in plain language - what each hop means, why it's significant.
+Replace `NODE_A` and `NODE_B` with the actual concept names. Then explain the path in plain language - what each hop means, why it's significant.
 
 After writing the explanation, save it back:
 
@@ -1268,56 +919,8 @@ $(cat graphify-out/.graphify_python) -m graphify save-result --question "Path fr
 
 Give a plain-language explanation of a single node - everything connected to it.
 
-First check the graph exists:
 ```bash
-$(cat graphify-out/.graphify_python) -c "
-from pathlib import Path
-if not Path('graphify-out/graph.json').exists():
-    print('ERROR: No graph found. Run /graphify <path> first to build the graph.')
-    raise SystemExit(1)
-"
-```
-If it fails, stop and tell the user to run `/graphify <path>` first.
-
-```bash
-$(cat graphify-out/.graphify_python) -c "
-import json, sys
-import networkx as nx
-from networkx.readwrite import json_graph
-from pathlib import Path
-
-data = json.loads(Path('graphify-out/graph.json').read_text())
-G = json_graph.node_link_graph(data, edges='links')
-
-term = 'NODE_NAME'
-term_lower = term.lower()
-
-# Find best matching node
-scored = sorted(
-    [(sum(1 for w in term_lower.split() if w in G.nodes[n].get('label','').lower()), n)
-     for n in G.nodes()],
-    reverse=True
-)
-if not scored or scored[0][0] == 0:
-    print(f'No node matching {term!r}')
-    sys.exit(0)
-
-nid = scored[0][1]
-data_n = G.nodes[nid]
-print(f'NODE: {data_n.get(\"label\", nid)}')
-print(f'  source: {data_n.get(\"source_file\",\"unknown\")}')
-print(f'  type: {data_n.get(\"file_type\",\"unknown\")}')
-print(f'  degree: {G.degree(nid)}')
-print()
-print('CONNECTIONS:')
-for neighbor in G.neighbors(nid):
-    edge = G.edges[nid, neighbor]
-    nlabel = G.nodes[neighbor].get('label', neighbor)
-    rel = edge.get('relation', '')
-    conf = edge.get('confidence', '')
-    src_file = G.nodes[neighbor].get('source_file', '')
-    print(f'  --{rel}--> {nlabel} [{conf}] ({src_file})')
-"
+graphify explain "NODE_NAME"
 ```
 
 Replace `NODE_NAME` with the concept the user asked about. Then write a 3-5 sentence explanation of what this node is, what it connects to, and why those connections are significant. Use the source locations as citations.

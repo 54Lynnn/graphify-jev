@@ -1060,6 +1060,7 @@ def main() -> None:
         print("  explain \"X\"             plain-language explanation of a node and its neighbors")
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
         print("  clone <github-url>      clone a GitHub repo locally and print its path for /graphify")
+        print("  merge-driver <base> <current> <other>  git merge driver: union-merge two graph.json files (set up via hook install)")
         print("  merge-graphs <g1> <g2>  merge two or more graph.json files into one cross-repo graph")
         print("    --out <path>            output path (default: graphify-out/merged-graph.json)")
         print("    --branch <branch>       checkout a specific branch (default: repo default)")
@@ -1516,10 +1517,12 @@ def main() -> None:
         labels = {cid: f"Community {cid}" for cid in communities}
         questions = suggest_questions(G, communities, labels)
         tokens = {"input": 0, "output": 0}
+        from graphify.export import _git_head as _gh
+        _commit = _gh()
         report = generate(G, communities, cohesion, labels, gods, surprises,
                           {"warning": "cluster-only mode — file stats not available"},
                           tokens, str(watch_path), suggested_questions=questions,
-                          min_community_size=min_community_size)
+                          min_community_size=min_community_size, built_at_commit=_commit)
         out = watch_path / "graphify-out"
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
         to_json(G, communities, str(out / "graph.json"))
@@ -1640,6 +1643,37 @@ def main() -> None:
         print(f"open with: xdg-open {out}  (or file://{out.resolve()})")
         sys.exit(0)
 
+    elif cmd == "merge-driver":
+        # git merge driver for graph.json — takes (base, current, other) and writes
+        # the union of current+other nodes/edges back to current. Always exits 0
+        # so git never marks graph.json as conflicted.
+        # Usage: graphify merge-driver %O %A %B  (set in .git/config merge driver)
+        if len(sys.argv) < 5:
+            print("Usage: graphify merge-driver <base> <current> <other>", file=sys.stderr)
+            sys.exit(1)
+        _base_path, _current_path, _other_path = sys.argv[2], sys.argv[3], sys.argv[4]
+        import networkx as _nx
+        from networkx.readwrite import json_graph as _jg
+        def _load_graph(p: str):
+            data = json.loads(Path(p).read_text(encoding="utf-8"))
+            try:
+                return _jg.node_link_graph(data, edges="links"), data
+            except TypeError:
+                return _jg.node_link_graph(data), data
+        try:
+            G_cur, _ = _load_graph(_current_path)
+            G_oth, _ = _load_graph(_other_path)
+        except Exception as exc:
+            print(f"[graphify merge-driver] error loading graphs: {exc}", file=sys.stderr)
+            sys.exit(0)  # exit 0 so git doesn't block the merge
+        merged = _nx.compose(G_cur, G_oth)
+        try:
+            out_data = _jg.node_link_data(merged, edges="links")
+        except TypeError:
+            out_data = _jg.node_link_data(merged)
+        Path(_current_path).write_text(json.dumps(out_data, indent=2), encoding="utf-8")
+        sys.exit(0)
+
     elif cmd == "merge-graphs":
         # graphify merge-graphs graph1.json graph2.json ... --out merged.json
         args = sys.argv[2:]
@@ -1699,6 +1733,140 @@ def main() -> None:
                 i += 1
         local_path = _clone_repo(url, branch=branch, out_dir=out_dir)
         print(local_path)
+
+    elif cmd == "export":
+        subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
+        if subcmd not in ("html", "obsidian", "wiki", "svg", "graphml", "neo4j"):
+            print("Usage: graphify export <format>", file=sys.stderr)
+            print("  html      [--graph PATH] [--labels PATH] [--node-limit N] [--no-viz]", file=sys.stderr)
+            print("  obsidian  [--graph PATH] [--labels PATH] [--dir PATH]", file=sys.stderr)
+            print("  wiki      [--graph PATH] [--labels PATH]", file=sys.stderr)
+            print("  svg       [--graph PATH] [--labels PATH]", file=sys.stderr)
+            print("  graphml   [--graph PATH]", file=sys.stderr)
+            print("  neo4j     [--graph PATH] [--push URI] [--user U] [--password P]", file=sys.stderr)
+            sys.exit(1)
+
+        # Parse shared args
+        args = sys.argv[3:]
+        graph_path = Path(_GRAPHIFY_OUT) / "graph.json"
+        labels_path = Path(_GRAPHIFY_OUT) / ".graphify_labels.json"
+        analysis_path = Path(_GRAPHIFY_OUT) / ".graphify_analysis.json"
+        node_limit = 5000
+        no_viz = False
+        obsidian_dir = Path(_GRAPHIFY_OUT) / "obsidian"
+        neo4j_uri: str | None = None
+        neo4j_user = "neo4j"
+        neo4j_password: str | None = None
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a == "--graph" and i + 1 < len(args):
+                graph_path = Path(args[i + 1]); i += 2
+            elif a == "--labels" and i + 1 < len(args):
+                labels_path = Path(args[i + 1]); i += 2
+            elif a == "--node-limit" and i + 1 < len(args):
+                node_limit = int(args[i + 1]); i += 2
+            elif a == "--no-viz":
+                no_viz = True; i += 1
+            elif a == "--dir" and i + 1 < len(args):
+                obsidian_dir = Path(args[i + 1]); i += 2
+            elif a == "--push" and i + 1 < len(args):
+                neo4j_uri = args[i + 1]; i += 2
+            elif a == "--user" and i + 1 < len(args):
+                neo4j_user = args[i + 1]; i += 2
+            elif a == "--password" and i + 1 < len(args):
+                neo4j_password = args[i + 1]; i += 2
+            else:
+                i += 1
+
+        if not graph_path.exists():
+            print(f"error: graph not found: {graph_path}. Run /graphify <path> first.", file=sys.stderr)
+            sys.exit(1)
+
+        from networkx.readwrite import json_graph as _jg
+        from graphify.build import build_from_json as _bfj
+
+        _raw = json.loads(graph_path.read_text(encoding="utf-8"))
+        try:
+            G = _jg.node_link_graph(_raw, edges="links")
+        except TypeError:
+            G = _jg.node_link_graph(_raw)
+
+        # Load optional analysis/labels
+        communities: dict[int, list[str]] = {}
+        if analysis_path.exists():
+            _an = json.loads(analysis_path.read_text(encoding="utf-8"))
+            communities = {int(k): v for k, v in _an.get("communities", {}).items()}
+            cohesion: dict[int, float] = {int(k): v for k, v in _an.get("cohesion", {}).items()}
+            gods_data = _an.get("gods", [])
+        else:
+            cohesion = {}
+            gods_data = []
+
+        labels: dict[int, str] = {}
+        if labels_path.exists():
+            labels = {int(k): v for k, v in json.loads(labels_path.read_text(encoding="utf-8")).items()}
+
+        out_dir = graph_path.parent
+
+        if subcmd == "html":
+            from graphify.export import to_html as _to_html
+            if no_viz:
+                html_target = out_dir / "graph.html"
+                if html_target.exists():
+                    html_target.unlink()
+                print("--no-viz: skipped graph.html")
+            else:
+                _to_html(G, communities, str(out_dir / "graph.html"),
+                         community_labels=labels or None, node_limit=node_limit)
+                if G.number_of_nodes() <= node_limit:
+                    print(f"graph.html written - open in any browser, no server needed")
+
+        elif subcmd == "obsidian":
+            from graphify.export import to_obsidian as _to_obsidian, to_canvas as _to_canvas
+            n = _to_obsidian(G, communities, str(obsidian_dir),
+                             community_labels=labels or None, cohesion=cohesion or None)
+            print(f"Obsidian vault: {n} notes in {obsidian_dir}/")
+            _to_canvas(G, communities, str(obsidian_dir / "graph.canvas"),
+                       community_labels=labels or None)
+            print(f"Canvas: {obsidian_dir}/graph.canvas")
+            print(f"Open {obsidian_dir}/ as a vault in Obsidian.")
+
+        elif subcmd == "wiki":
+            from graphify.wiki import to_wiki as _to_wiki
+            from graphify.analyze import god_nodes as _god_nodes
+            if not gods_data:
+                gods_data = _god_nodes(G)
+            n = _to_wiki(G, communities, str(out_dir / "wiki"),
+                         community_labels=labels or None, cohesion=cohesion or None,
+                         god_nodes_data=gods_data)
+            print(f"Wiki: {n} articles written to {out_dir}/wiki/")
+            print(f"  {out_dir}/wiki/index.md  ->  agent entry point")
+
+        elif subcmd == "svg":
+            from graphify.export import to_svg as _to_svg
+            _to_svg(G, communities, str(out_dir / "graph.svg"),
+                    community_labels=labels or None)
+            print(f"graph.svg written - embeds in Obsidian, Notion, GitHub READMEs")
+
+        elif subcmd == "graphml":
+            from graphify.export import to_graphml as _to_graphml
+            _to_graphml(G, communities, str(out_dir / "graph.graphml"))
+            print(f"graph.graphml written - open in Gephi, yEd, or any GraphML tool")
+
+        elif subcmd == "neo4j":
+            if neo4j_uri:
+                from graphify.export import push_to_neo4j as _push
+                if neo4j_password is None:
+                    print("error: --password required for --push", file=sys.stderr)
+                    sys.exit(1)
+                result = _push(G, uri=neo4j_uri, user=neo4j_user,
+                               password=neo4j_password, communities=communities)
+                print(f"Pushed to Neo4j: {result['nodes']} nodes, {result['edges']} edges")
+            else:
+                from graphify.export import to_cypher as _to_cypher
+                _to_cypher(G, str(out_dir / "cypher.txt"))
+                print(f"cypher.txt written - import with: cypher-shell < {out_dir}/cypher.txt")
 
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark

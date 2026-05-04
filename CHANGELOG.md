@@ -2,6 +2,28 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.7.2 (2026-05-04)
+
+- Feat: Fortran support - extracts modules, subroutines, functions, programs, `use` imports, and `call` edges from `.f`, `.F`, `.f90`, `.F90`, `.f95`, `.F95`, `.f03`, `.F03`, `.f08`, `.F08` files; names are lowercased for case-insensitive matching (#694)
+
+## 0.7.1 (2026-05-04)
+
+- Fix: Obsidian export - community labels with `.`, `&`, `(`, `)` now produce valid Obsidian tags; only `[a-zA-Z0-9_\-/]` characters survive, preventing broken Dataview queries (#690)
+- Fix: `_load_tsconfig_aliases()` now follows tsconfig `extends` chains - SvelteKit, Nuxt, and NestJS path aliases defined in extended configs are no longer silently dropped (#691)
+- Fix: `.svelte` files now get a regex pass over the template layer after JS AST extraction - `{#await import('./X.svelte')}` markup-level dynamic imports are captured as edges (#692)
+- Fix: recursion limit raised to 10,000 at extract entry points (main process + each worker) with a `_safe_extract` wrapper that skips pathological files with a clear warning instead of crashing the whole run (#695)
+
+## 0.7.0 (2026-05-03)
+
+Multi-dev busy-repo support: four gaps that caused merge conflicts, stale graphs, and silent cache misses in team workflows.
+
+- Feat: `graphify hook install` now also configures a git merge driver for `graphify-out/graph.json` — union-merges two graph.json files so git never produces conflict markers in the knowledge graph; writes `.gitattributes` and registers `graphify merge-driver` in `.git/config`
+- Feat: `graphify merge-driver <base> <current> <other>` subcommand — takes two graph.json variants and writes their node/edge union back to `<current>`; always exits 0 so merge never blocks
+- Feat: Leiden community detection now seeded (`seed=42` when supported) for deterministic community IDs across parallel rebuilds — reduces JSON diff churn in multi-dev repos
+- Feat: `graph.json` now embeds `built_at_commit` (git HEAD) at write time; `GRAPH_REPORT.md` surfaces the commit hash and a freshness check hint
+- Fix: `file_hash` is now content-only (path removed from hash) — renamed files reuse their cache entry instead of re-extracting; cached `source_file` fields are updated to the new path on load
+- Fix: watch mode mixed-batch handling — commits with both code and non-code files now rebuild code immediately AND write `needs_update` flag; previously code changes were silently dropped in mixed batches
+
 ## 0.6.9 (2026-05-03)
 
 - Fix: `source_file` path separators normalized to forward slashes at graph ingestion — same physical file emitted with backslashes (Windows AST extractor) and forward slashes (semantic subagents) now merges into one node instead of splitting into two disconnected components (#683)

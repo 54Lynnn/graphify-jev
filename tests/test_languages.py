@@ -1,11 +1,11 @@
-"""Tests for language extractors: Java, C, C++, Ruby, C#, Kotlin, Scala, PHP, Swift, Go, Julia, JS/TS."""
+"""Tests for language extractors: Java, C, C++, Ruby, C#, Kotlin, Scala, PHP, Swift, Go, Julia, Fortran, JS/TS."""
 from __future__ import annotations
 from pathlib import Path
 import pytest
 from graphify.extract import (
     extract_java, extract_c, extract_cpp, extract_ruby,
     extract_csharp, extract_kotlin, extract_scala, extract_php,
-    extract_swift, extract_go, extract_julia, extract_js,
+    extract_swift, extract_go, extract_julia, extract_js, extract_fortran,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -719,6 +719,75 @@ def test_julia_no_dangling_edges():
     node_ids = {n["id"] for n in r["nodes"]}
     for e in r["edges"]:
         assert e["source"] in node_ids, f"Dangling source: {e}"
+
+
+# ── Fortran extractor ────────────────────────────────────────────────────────
+
+def test_fortran_finds_module():
+    r = extract_fortran(FIXTURES / "sample.f90")
+    assert "error" not in r
+    labels = [n["label"] for n in r["nodes"]]
+    assert "geometry" in labels
+
+
+def test_fortran_finds_subroutines():
+    r = extract_fortran(FIXTURES / "sample.f90")
+    labels = [n["label"] for n in r["nodes"]]
+    assert any("circle_area" in l for l in labels)
+    assert any("print_area" in l for l in labels)
+
+
+def test_fortran_finds_function():
+    r = extract_fortran(FIXTURES / "sample.f90")
+    labels = [n["label"] for n in r["nodes"]]
+    assert any("distance" in l for l in labels)
+
+
+def test_fortran_finds_program():
+    r = extract_fortran(FIXTURES / "sample.f90")
+    labels = [n["label"] for n in r["nodes"]]
+    assert "main" in labels
+
+
+def test_fortran_finds_use_imports():
+    r = extract_fortran(FIXTURES / "sample.f90")
+    import_edges = [e for e in r["edges"] if e["relation"] == "imports"]
+    assert len(import_edges) >= 2
+
+
+def test_fortran_use_edges_have_use_context():
+    r = extract_fortran(FIXTURES / "sample.f90")
+    import_edges = [e for e in r["edges"] if e["relation"] == "imports"]
+    assert all(e.get("context") == "use" for e in import_edges)
+
+
+def test_fortran_finds_calls():
+    r = extract_fortran(FIXTURES / "sample.f90")
+    call_edges = [e for e in r["edges"] if e["relation"] == "calls"]
+    assert len(call_edges) >= 1
+
+
+def test_fortran_case_insensitive_names():
+    r = extract_fortran(FIXTURES / "sample.f90")
+    labels = [n["label"] for n in r["nodes"]]
+    assert all(l == l.lower() or "(" in l for l in labels if l.endswith(("()", "")) and not "." in l)
+    assert "geometry" in labels
+    assert "main" in labels
+
+
+def test_fortran_no_dangling_edges():
+    r = extract_fortran(FIXTURES / "sample.f90")
+    node_ids = {n["id"] for n in r["nodes"]}
+    for e in r["edges"]:
+        assert e["source"] in node_ids, f"Dangling source: {e}"
+
+
+def test_fortran_capital_F_parses_preprocessed():
+    r = extract_fortran(FIXTURES / "sample.F90")
+    assert "error" not in r
+    labels = [n["label"] for n in r["nodes"]]
+    assert "shapes" in labels
+    assert any("compute_volume" in l for l in labels)
 
 
 # ── TypeScript dynamic imports ───────────────────────────────────────────────

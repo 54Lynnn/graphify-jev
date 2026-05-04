@@ -10,6 +10,24 @@ from pathlib import Path
 from typing import Callable, Any
 from .cache import load_cached, save_cached
 
+_RECURSION_LIMIT = 10_000
+
+
+def _raise_recursion_limit() -> None:
+    if sys.getrecursionlimit() < _RECURSION_LIMIT:
+        sys.setrecursionlimit(_RECURSION_LIMIT)
+
+
+def _safe_extract(extractor: Callable, path: Path) -> dict:
+    try:
+        return extractor(path)
+    except RecursionError:
+        print(f"  warning: skipped {path} (recursion limit exceeded)", file=sys.stderr, flush=True)
+        return {"nodes": [], "edges": [], "error": "recursion_limit_exceeded"}
+    except Exception as e:
+        print(f"  warning: skipped {path} ({type(e).__name__}: {e})", file=sys.stderr, flush=True)
+        return {"nodes": [], "edges": [], "error": f"{type(e).__name__}: {e}"}
+
 
 def _make_id(*parts: str) -> str:
     """Build a stable node ID from one or more name parts."""
@@ -30,9 +48,44 @@ def _file_stem(path: Path) -> str:
 _TSCONFIG_ALIAS_CACHE: dict[str, dict[str, str]] = {}
 
 
+def _read_tsconfig_aliases(tsconfig: Path, base_dir: Path, seen: set) -> dict[str, str]:
+    """Recursively read path aliases from a tsconfig, following extends chains.
+
+    Child config paths override parent. Circular extends are detected via seen set.
+    npm package configs (e.g. @tsconfig/svelte) are skipped since they're not on disk.
+    """
+    if str(tsconfig) in seen:
+        return {}
+    seen.add(str(tsconfig))
+    try:
+        data = json.loads(tsconfig.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+    aliases: dict[str, str] = {}
+    extends = data.get("extends")
+    if extends and not extends.startswith("@"):
+        extended_path = (base_dir / extends).resolve()
+        if not extended_path.suffix:
+            extended_path = extended_path.with_suffix(".json")
+        if extended_path.exists():
+            aliases.update(_read_tsconfig_aliases(extended_path, extended_path.parent, seen))
+
+    paths = data.get("compilerOptions", {}).get("paths", {})
+    for alias, targets in paths.items():
+        if not targets:
+            continue
+        alias_prefix = alias.rstrip("/*")
+        target_base = targets[0].rstrip("/*")
+        aliases[alias_prefix] = str(base_dir / target_base)
+
+    return aliases
+
+
 def _load_tsconfig_aliases(start_dir: Path) -> dict[str, str]:
     """Walk up from start_dir to find tsconfig.json and return compilerOptions.paths aliases.
 
+    Follows extends chains so SvelteKit/Nuxt/NestJS inherited aliases are included.
     Returns a dict mapping alias prefix (e.g. "@/") to resolved base dir (e.g. "src/").
     Result is cached by tsconfig path string.
     """
@@ -42,20 +95,7 @@ def _load_tsconfig_aliases(start_dir: Path) -> dict[str, str]:
         if tsconfig.exists():
             key = str(tsconfig)
             if key not in _TSCONFIG_ALIAS_CACHE:
-                try:
-                    data = json.loads(tsconfig.read_text(encoding="utf-8"))
-                    paths = data.get("compilerOptions", {}).get("paths", {})
-                    aliases: dict[str, str] = {}
-                    for alias, targets in paths.items():
-                        if not targets:
-                            continue
-                        # Strip trailing /* from alias and target
-                        alias_prefix = alias.rstrip("/*")
-                        target_base = targets[0].rstrip("/*")
-                        aliases[alias_prefix] = str(candidate / target_base)
-                    _TSCONFIG_ALIAS_CACHE[key] = aliases
-                except Exception:
-                    _TSCONFIG_ALIAS_CACHE[key] = {}
+                _TSCONFIG_ALIAS_CACHE[key] = _read_tsconfig_aliases(tsconfig, candidate, seen=set())
             return _TSCONFIG_ALIAS_CACHE[key]
     return {}
 
@@ -1656,6 +1696,42 @@ def extract_js(path: Path) -> dict:
     return _extract_generic(path, config)
 
 
+def extract_svelte(path: Path) -> dict:
+    """Extract imports from .svelte files: script-block via JS AST + template regex fallback.
+
+    Tree-sitter only sees the <script> block. Svelte template syntax like
+    {#await import('./X.svelte')} lives in the markup layer and is invisible
+    to the JS parser, so a regex pass covers those dynamic imports.
+    """
+    result = _extract_generic(path, _JS_CONFIG)
+    try:
+        import re as _re
+        src = path.read_text(encoding="utf-8", errors="replace")
+        existing_ids = {n["id"] for n in result.get("nodes", [])}
+        file_node_id = _make_id(path.stem, str(path))
+        for m in _re.finditer(r"""import\(\s*['"]([^'"]+)['"]\s*\)""", src):
+            raw = m.group(1)
+            if not raw.startswith("."):
+                continue
+            node_id = _make_id(raw, str(path))
+            if node_id in existing_ids:
+                continue
+            result.setdefault("nodes", []).append({
+                "id": node_id, "label": raw,
+                "file_type": "code", "source_file": str(path),
+                "confidence": "EXTRACTED",
+            })
+            result.setdefault("edges", []).append({
+                "source": file_node_id, "target": node_id,
+                "relation": "dynamic_import", "confidence": "EXTRACTED",
+                "source_file": str(path),
+            })
+            existing_ids.add(node_id)
+    except Exception:
+        pass
+    return result
+
+
 def extract_java(path: Path) -> dict:
     """Extract classes, interfaces, methods, constructors, and imports from a .java file."""
     return _extract_generic(path, _JAVA_CONFIG)
@@ -2253,6 +2329,203 @@ def extract_julia(path: Path) -> dict:
                     walk_calls(child, func_nid)
         else:
             walk_calls(body_node, func_nid)
+
+    return {"nodes": nodes, "edges": edges}
+
+
+_FORTRAN_CPP_EXTS = {".F", ".F90", ".F95", ".F03", ".F08"}
+
+
+def _cpp_preprocess(path: Path) -> bytes:
+    """Run cpp -w -P on a capital-F Fortran file and return preprocessed bytes.
+
+    Falls back to raw file bytes if cpp is not available. Capital-F extensions
+    conventionally require C preprocessor expansion (#ifdef MPI, #define REAL8, etc.)
+    before parsing.
+    """
+    import shutil
+    import subprocess
+    if not shutil.which("cpp"):
+        return path.read_bytes()
+    try:
+        result = subprocess.run(
+            ["cpp", "-w", "-P", str(path)],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout
+    except Exception:
+        pass
+    return path.read_bytes()
+
+
+def extract_fortran(path: Path) -> dict:
+    """Extract programs, modules, subroutines, functions, use statements, and calls from Fortran files.
+
+    Capital-F extensions (.F, .F90, etc.) are run through the C preprocessor before
+    parsing so #ifdef/#define macros are resolved.
+    """
+    try:
+        import tree_sitter_fortran as tsfortran
+        from tree_sitter import Language, Parser
+    except ImportError:
+        return {"nodes": [], "edges": [], "error": "tree-sitter-fortran not installed"}
+
+    try:
+        language = Language(tsfortran.language())
+        parser = Parser(language)
+        source = _cpp_preprocess(path) if path.suffix in _FORTRAN_CPP_EXTS else path.read_bytes()
+        tree = parser.parse(source)
+        root = tree.root_node
+    except Exception as e:
+        return {"nodes": [], "edges": [], "error": str(e)}
+
+    stem = _file_stem(path)
+    str_path = str(path)
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_ids: set[str] = set()
+    scope_bodies: list[tuple[str, object]] = []
+
+    def add_node(nid: str, label: str, line: int) -> None:
+        if nid not in seen_ids:
+            seen_ids.add(nid)
+            nodes.append({
+                "id": nid,
+                "label": label,
+                "file_type": "code",
+                "source_file": str_path,
+                "source_location": f"L{line}",
+            })
+
+    def add_edge(src: str, tgt: str, relation: str, line: int,
+                 confidence: str = "EXTRACTED", weight: float = 1.0,
+                 context: str | None = None) -> None:
+        edge = {
+            "source": src,
+            "target": tgt,
+            "relation": relation,
+            "confidence": confidence,
+            "source_file": str_path,
+            "source_location": f"L{line}",
+            "weight": weight,
+        }
+        if context:
+            edge["context"] = context
+        edges.append(edge)
+
+    file_nid = _make_id(str(path))
+    add_node(file_nid, path.name, 1)
+
+    def _fortran_name(stmt_node) -> str | None:
+        """Extract name from a *_statement node. Fortran is case-insensitive; lowercase."""
+        for child in stmt_node.children:
+            if child.type in ("name", "identifier"):
+                return _read_text(child, source).lower()
+        return None
+
+    def walk_calls(node, scope_nid: str) -> None:
+        if node is None:
+            return
+        t = node.type
+        if t in ("subroutine", "function", "module", "program", "internal_procedures"):
+            return
+        # call FOO(args) — tree-sitter-fortran uses subroutine_call
+        if t == "subroutine_call":
+            name_node = next((c for c in node.children if c.type == "identifier"), None)
+            if name_node:
+                callee = _read_text(name_node, source).lower()
+                target_nid = _make_id(stem, callee)
+                add_edge(scope_nid, target_nid, "calls", node.start_point[0] + 1,
+                         confidence="EXTRACTED", context="call")
+        for child in node.children:
+            walk_calls(child, scope_nid)
+
+    def walk(node, scope_nid: str) -> None:
+        t = node.type
+
+        if t == "program":
+            stmt = next((c for c in node.children if c.type == "program_statement"), None)
+            name = _fortran_name(stmt) if stmt else None
+            if name:
+                nid = _make_id(stem, name)
+                line = node.start_point[0] + 1
+                add_node(nid, name, line)
+                add_edge(file_nid, nid, "defines", line)
+                scope_bodies.append((nid, node))
+                for child in node.children:
+                    walk(child, nid)
+            return
+
+        if t == "module":
+            stmt = next((c for c in node.children if c.type == "module_statement"), None)
+            name = _fortran_name(stmt) if stmt else None
+            if name:
+                nid = _make_id(stem, name)
+                line = node.start_point[0] + 1
+                add_node(nid, name, line)
+                add_edge(file_nid, nid, "defines", line)
+                for child in node.children:
+                    walk(child, nid)
+            return
+
+        # subroutines/functions inside a module live under internal_procedures
+        if t == "internal_procedures":
+            for child in node.children:
+                walk(child, scope_nid)
+            return
+
+        if t == "subroutine":
+            stmt = next((c for c in node.children if c.type == "subroutine_statement"), None)
+            name = _fortran_name(stmt) if stmt else None
+            if name:
+                nid = _make_id(stem, name)
+                line = node.start_point[0] + 1
+                add_node(nid, f"{name}()", line)
+                add_edge(scope_nid, nid, "defines", line)
+                scope_bodies.append((nid, node))
+                for child in node.children:
+                    walk(child, nid)
+            return
+
+        if t == "function":
+            stmt = next((c for c in node.children if c.type == "function_statement"), None)
+            name = _fortran_name(stmt) if stmt else None
+            if name:
+                nid = _make_id(stem, name)
+                line = node.start_point[0] + 1
+                add_node(nid, f"{name}()", line)
+                add_edge(scope_nid, nid, "defines", line)
+                scope_bodies.append((nid, node))
+                for child in node.children:
+                    walk(child, nid)
+            return
+
+        if t == "use_statement":
+            line = node.start_point[0] + 1
+            # tree-sitter-fortran uses module_name node for the used module
+            name_node = next((c for c in node.children if c.type in ("module_name", "name", "identifier")), None)
+            if name_node:
+                mod_name = _read_text(name_node, source).lower()
+                imp_nid = _make_id(mod_name)
+                add_node(imp_nid, mod_name, line)
+                add_edge(scope_nid, imp_nid, "imports", line, context="use")
+            return
+
+        for child in node.children:
+            walk(child, scope_nid)
+
+    walk(root, file_nid)
+
+    _stmt_headers = {
+        "subroutine_statement", "function_statement",
+        "program_statement", "module_statement",
+    }
+    for scope_nid, body_node in scope_bodies:
+        for child in body_node.children:
+            if child.type not in _stmt_headers:
+                walk_calls(child, scope_nid)
 
     return {"nodes": nodes, "edges": edges}
 
@@ -3682,8 +3955,18 @@ _DISPATCH: dict[str, Any] = {
     ".m": extract_objc,
     ".mm": extract_objc,
     ".jl": extract_julia,
+    ".f": extract_fortran,
+    ".F": extract_fortran,
+    ".f90": extract_fortran,
+    ".F90": extract_fortran,
+    ".f95": extract_fortran,
+    ".F95": extract_fortran,
+    ".f03": extract_fortran,
+    ".F03": extract_fortran,
+    ".f08": extract_fortran,
+    ".F08": extract_fortran,
     ".vue": extract_js,
-    ".svelte": extract_js,
+    ".svelte": extract_svelte,
     ".dart": extract_dart,
     ".v": extract_verilog,
     ".sv": extract_verilog,
@@ -3713,6 +3996,7 @@ def _extract_single_file(args: tuple) -> tuple[int, dict]:
     idx, path_str, cache_root_str = args
     path = Path(path_str)
     cache_root = Path(cache_root_str)
+    _raise_recursion_limit()
 
     # Check cache first (avoid re-extraction)
     cached = load_cached(path, cache_root)
@@ -3723,7 +4007,7 @@ def _extract_single_file(args: tuple) -> tuple[int, dict]:
     if extractor is None:
         return idx, {"nodes": [], "edges": []}
 
-    result = extractor(path)
+    result = _safe_extract(extractor, path)
     if "error" not in result:
         save_cached(path, result, cache_root)
     return idx, result
@@ -3793,7 +4077,7 @@ def _extract_sequential(
         if extractor is None:
             per_file[idx] = {"nodes": [], "edges": []}
             continue
-        result = extractor(path)
+        result = _safe_extract(extractor, path)
         if "error" not in result:
             save_cached(path, result, effective_root)
         per_file[idx] = result
@@ -3828,6 +4112,7 @@ def extract(
         max_workers: max subprocess count. Defaults to min(cpu_count, 8).
     """
     _check_tree_sitter_version()
+    _raise_recursion_limit()
 
     # Infer a common root for cache keys (use first diverging segment, not sum of all matches)
     try:

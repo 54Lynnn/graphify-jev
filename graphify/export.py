@@ -11,6 +11,15 @@ from networkx.readwrite import json_graph
 from graphify.security import sanitize_label
 from graphify.analyze import _node_community_map
 
+def _obsidian_tag(name: str) -> str:
+    """Sanitize a community name for use as an Obsidian tag.
+
+    Obsidian tags only allow alphanumerics, hyphens, underscores, and slashes.
+    Spaces become underscores; everything else is stripped.
+    """
+    return re.sub(r"[^a-zA-Z0-9_\-/]", "", name.replace(" ", "_"))
+
+
 def _strip_diacritics(text: str) -> str:
     import unicodedata
     nfkd = unicodedata.normalize("NFKD", text)
@@ -340,7 +349,17 @@ def attach_hyperedges(G: nx.Graph, hyperedges: list) -> None:
     G.graph["hyperedges"] = existing
 
 
-def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str, *, force: bool = False) -> bool:
+def _git_head() -> str | None:
+    """Return the current git HEAD commit hash, or None if not in a git repo."""
+    import subprocess as _sp
+    try:
+        r = _sp.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, timeout=3)
+        return r.stdout.strip() if r.returncode == 0 else None
+    except Exception:
+        return None
+
+
+def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str, *, force: bool = False, built_at_commit: str | None = None) -> bool:
     # Safety check: refuse to silently shrink an existing graph (#479)
     existing_path = Path(output_path)
     if not force and existing_path.exists():
@@ -383,6 +402,9 @@ def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str, *,
             link["source"] = true_src
             link["target"] = true_tgt
     data["hyperedges"] = getattr(G, "graph", {}).get("hyperedges", [])
+    commit = built_at_commit if built_at_commit is not None else _git_head()
+    if commit:
+        data["built_at_commit"] = commit
     with open(output_path, "w", encoding="utf-8") as f:  # nosec
         json.dump(data, f, indent=2)
     return True
@@ -436,6 +458,7 @@ def to_html(
     output_path: str,
     community_labels: dict[int, str] | None = None,
     member_counts: dict[int, int] | None = None,
+    node_limit: int | None = None,
 ) -> None:
     """Generate an interactive vis.js HTML visualization of the graph.
 
@@ -445,9 +468,39 @@ def to_html(
 
     If member_counts is provided (aggregated community view), node sizes are
     based on community member counts rather than graph degree.
+
+    If node_limit is set and the graph exceeds it, automatically builds an
+    aggregated community-level meta-graph instead of raising ValueError.
     """
-    limit = _viz_node_limit()
+    limit = node_limit if node_limit is not None else _viz_node_limit()
     if G.number_of_nodes() > limit:
+        if node_limit is not None:
+            # Build aggregated community meta-graph
+            from collections import Counter as _Counter
+            import networkx as _nx
+            print(f"Graph has {G.number_of_nodes()} nodes (above {limit} limit). Building aggregated community view...")
+            node_to_community = {nid: cid for cid, members in communities.items() for nid in members}
+            meta = _nx.Graph()
+            for cid, members in communities.items():
+                meta.add_node(str(cid), label=(community_labels or {}).get(cid, f"Community {cid}"))
+            edge_counts = _Counter()
+            for u, v in G.edges():
+                cu, cv = node_to_community.get(u), node_to_community.get(v)
+                if cu is not None and cv is not None and cu != cv:
+                    edge_counts[(min(cu, cv), max(cu, cv))] += 1
+            for (cu, cv), w in edge_counts.items():
+                meta.add_edge(str(cu), str(cv), weight=w,
+                              relation=f"{w} cross-community edges", confidence="AGGREGATED")
+            if meta.number_of_nodes() <= 1:
+                print("Single community - aggregated view not useful. Skipping graph.html.")
+                return
+            meta_communities = {cid: [str(cid)] for cid in communities}
+            mc = {cid: len(members) for cid, members in communities.items()}
+            to_html(meta, meta_communities, output_path,
+                    community_labels=community_labels, member_counts=mc)
+            print(f"graph.html written (aggregated: {meta.number_of_nodes()} community nodes, {meta.number_of_edges()} cross-community edges)")
+            print("Tip: run with --obsidian for full node-level detail.")
+            return
         raise ValueError(
             f"Graph has {G.number_of_nodes()} nodes - too large for HTML viz "
             f"(limit: {limit}). Use --no-viz, raise GRAPHIFY_VIZ_NODE_LIMIT, "
@@ -639,7 +692,7 @@ def to_obsidian(
         ftype_tag = _FTYPE_TAG.get(ftype, f"graphify/{ftype}" if ftype else "graphify/document")
         dom_conf = _dominant_confidence(node_id)
         conf_tag = f"graphify/{dom_conf}"
-        comm_tag = f"community/{community_name.replace(' ', '_')}"
+        comm_tag = f"community/{_obsidian_tag(community_name)}"
         node_tags = [ftype_tag, conf_tag, comm_tag]
 
         lines: list[str] = []
@@ -751,7 +804,7 @@ def to_obsidian(
         lines.append("")
 
         # Dataview live query (improvement 2)
-        comm_tag_name = community_name.replace(" ", "_")
+        comm_tag_name = _obsidian_tag(community_name)
         lines.append("## Live Query (requires Dataview plugin)")
         lines.append("")
         lines.append("```dataview")

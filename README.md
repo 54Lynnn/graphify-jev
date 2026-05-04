@@ -124,7 +124,7 @@ Uninstall with the matching command (e.g. `graphify claude uninstall`).
 
 | Type | Extensions |
 |------|-----------|
-| Code (25 languages) | `.py .ts .js .jsx .tsx .go .rs .java .c .cpp .rb .cs .kt .scala .php .swift .lua .zig .ps1 .ex .exs .m .jl .vue .svelte .sql` |
+| Code (26 languages) | `.py .ts .js .jsx .tsx .go .rs .java .c .cpp .rb .cs .kt .scala .php .swift .lua .zig .ps1 .ex .exs .m .jl .vue .svelte .sql .f .F .f90 .F90 .f95 .F95 .f03 .F03 .f08 .F08` |
 | Docs | `.md .mdx .html .txt .rst .yaml .yml` |
 | Office | `.docx .xlsx` (requires `pip install graphifyy[office]`) |
 | PDFs | `.pdf` |
@@ -192,7 +192,7 @@ graphify-out/cost.json        # local only
 **Workflow:**
 1. One person runs `/graphify .` and commits `graphify-out/`.
 2. Everyone pulls — their assistant reads the graph immediately.
-3. Run `graphify hook install` to auto-rebuild after each commit (AST only, no API cost).
+3. Run `graphify hook install` to auto-rebuild after each commit (AST only, no API cost). This also sets up a git merge driver so `graph.json` is never left with conflict markers — two devs committing in parallel get their graphs union-merged automatically.
 4. When docs or papers change, run `/graphify --update` to refresh those nodes.
 
 ---
