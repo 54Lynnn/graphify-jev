@@ -611,7 +611,11 @@ def _get_cpp_func_name(node, source: bytes) -> str | None:
 def _js_extra_walk(node, source: bytes, file_nid: str, stem: str, str_path: str,
                    nodes: list, edges: list, seen_ids: set, function_bodies: list,
                    parent_class_nid: str | None, add_node_fn, add_edge_fn) -> bool:
-    """Handle lexical_declaration (arrow functions) for JS/TS. Returns True if handled."""
+    """Handle lexical_declaration for JS/TS:
+       - arrow functions / function expressions (existing behaviour)
+       - module-level const literals (object/array/string/call/new/etc.) — TS codebases
+         use these for configs, route maps, DI tokens, enum-like unions.
+    Returns True if handled."""
     if node.type == "lexical_declaration":
         for child in node.children:
             if child.type == "variable_declarator":
@@ -627,6 +631,18 @@ def _js_extra_walk(node, source: bytes, file_nid: str, stem: str, str_path: str,
                         body = value.child_by_field_name("body")
                         if body:
                             function_bodies.append((func_nid, body))
+                elif value and value.type in (
+                    "object", "array", "as_expression", "call_expression",
+                    "new_expression", "string", "template_string", "number",
+                ):
+                    # Module-level const with literal/object/array/factory value
+                    name_node = child.child_by_field_name("name")
+                    if name_node:
+                        const_name = _read_text(name_node, source)
+                        line = child.start_point[0] + 1
+                        const_nid = _make_id(stem, const_name)
+                        add_node_fn(const_nid, const_name, line)
+                        add_edge_fn(file_nid, const_nid, "contains", line)
         return True
     return False
 
@@ -692,7 +708,7 @@ _JS_CONFIG = LanguageConfig(
     class_types=frozenset({"class_declaration"}),
     function_types=frozenset({"function_declaration", "method_definition"}),
     import_types=frozenset({"import_statement"}),
-    call_types=frozenset({"call_expression"}),
+    call_types=frozenset({"call_expression", "new_expression"}),
     call_function_field="function",
     call_accessor_node_types=frozenset({"member_expression"}),
     call_accessor_field="property",
@@ -703,10 +719,15 @@ _JS_CONFIG = LanguageConfig(
 _TS_CONFIG = LanguageConfig(
     ts_module="tree_sitter_typescript",
     ts_language_fn="language_typescript",
-    class_types=frozenset({"class_declaration"}),
+    class_types=frozenset({
+        "class_declaration",
+        "interface_declaration",   # parity with Java/C#
+        "enum_declaration",        # named enums
+        "type_alias_declaration",  # named type aliases
+    }),
     function_types=frozenset({"function_declaration", "method_definition"}),
     import_types=frozenset({"import_statement"}),
-    call_types=frozenset({"call_expression"}),
+    call_types=frozenset({"call_expression", "new_expression"}),
     call_function_field="function",
     call_accessor_node_types=frozenset({"member_expression"}),
     call_accessor_field="property",
