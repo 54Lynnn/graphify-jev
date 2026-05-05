@@ -1720,6 +1720,10 @@ def main() -> None:
                 print(f"error: not found: {gp}", file=sys.stderr)
                 sys.exit(1)
             data = json.loads(gp.read_text(encoding="utf-8"))
+            # Normalize edges/links key before loading — graphify writes "links"
+            # via node_link_data but older runs may have used "edges" (#738).
+            if "links" not in data and "edges" in data:
+                data = dict(data, links=data["edges"])
             try:
                 G = _jg.node_link_graph(data, edges="links")
             except TypeError:
