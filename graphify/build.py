@@ -245,8 +245,19 @@ def build_merge(
             if d.get("source_file") in prune_sources
         ]
         G.remove_nodes_from(to_remove)
-        if to_remove:
-            print(f"[graphify] Pruned {len(to_remove)} node(s) from deleted sources.", file=sys.stderr)
+        n_files = len(prune_sources)
+        n_nodes = len(to_remove)
+        if n_nodes:
+            print(
+                f"[graphify] Pruned {n_nodes} node(s) from {n_files} deleted source file(s).",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"[graphify] {n_files} source file(s) deleted since last run — "
+                f"no matching nodes in graph, already clean.",
+                file=sys.stderr,
+            )
 
     # Safety check: refuse to shrink the graph silently (#479)
     # Skip when dedup or prune_sources is active — shrinkage is intentional there.

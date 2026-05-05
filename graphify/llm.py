@@ -50,6 +50,7 @@ BACKENDS: dict[str, dict] = {
         "env_key": "ANTHROPIC_API_KEY",
         "pricing": {"input": 3.0, "output": 15.0},  # USD per 1M tokens
         "temperature": 0,
+        "max_tokens": 16384,
     },
     "kimi": {
         "base_url": "https://api.moonshot.ai/v1",
@@ -57,8 +58,22 @@ BACKENDS: dict[str, dict] = {
         "env_key": "MOONSHOT_API_KEY",
         "pricing": {"input": 0.74, "output": 4.66},  # USD per 1M tokens
         "temperature": None,  # kimi-k2.6 enforces its own fixed temperature; sending any value raises 400
+        "max_tokens": 16384,
     },
 }
+
+
+def _resolve_max_tokens(default: int) -> int:
+    """Honour GRAPHIFY_MAX_OUTPUT_TOKENS env var override, else use backend default."""
+    raw = os.environ.get("GRAPHIFY_MAX_OUTPUT_TOKENS", "").strip()
+    if raw:
+        try:
+            v = int(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    return default
 
 _EXTRACTION_SYSTEM = """\
 You are a graphify semantic extraction agent. Extract a knowledge graph fragment from the files provided.
@@ -113,6 +128,7 @@ def _call_openai_compat(
     model: str,
     user_message: str,
     temperature: float | None = 0,
+    max_tokens: int = 8192,
 ) -> dict:
     """Call any OpenAI-compatible API (Kimi, OpenAI, etc.) and return parsed JSON."""
     try:
@@ -130,7 +146,7 @@ def _call_openai_compat(
             {"role": "system", "content": _EXTRACTION_SYSTEM},
             {"role": "user", "content": user_message},
         ],
-        "max_completion_tokens": 8192,
+        "max_completion_tokens": max_tokens,
     }
     if temperature is not None:
         kwargs["temperature"] = temperature
@@ -149,7 +165,7 @@ def _call_openai_compat(
     return result
 
 
-def _call_claude(api_key: str, model: str, user_message: str) -> dict:
+def _call_claude(api_key: str, model: str, user_message: str, max_tokens: int = 8192) -> dict:
     """Call Anthropic Claude directly (not via OpenAI compat layer)."""
     try:
         import anthropic
@@ -162,7 +178,7 @@ def _call_claude(api_key: str, model: str, user_message: str) -> dict:
     client = anthropic.Anthropic(api_key=api_key)
     resp = client.messages.create(
         model=model,
-        max_tokens=8192,
+        max_tokens=max_tokens,
         system=_EXTRACTION_SYSTEM,
         messages=[{"role": "user", "content": user_message}],
     )
@@ -201,11 +217,12 @@ def extract_files_direct(
         )
     mdl = model or cfg["default_model"]
     user_msg = _read_files(files, root)
+    max_out = _resolve_max_tokens(cfg.get("max_tokens", 8192))
 
     if backend == "claude":
-        return _call_claude(key, mdl, user_msg)
+        return _call_claude(key, mdl, user_msg, max_tokens=max_out)
     else:
-        return _call_openai_compat(cfg["base_url"], key, mdl, user_msg, temperature=cfg.get("temperature", 0))
+        return _call_openai_compat(cfg["base_url"], key, mdl, user_msg, temperature=cfg.get("temperature", 0), max_tokens=max_out)
 
 
 def _estimate_file_tokens(path: Path) -> int:

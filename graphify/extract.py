@@ -1767,6 +1767,7 @@ def extract_svelte(path: Path) -> dict:
                 elif resolved.suffix == ".jsx":
                     resolved = resolved.with_suffix(".tsx")
                 node_id = _make_id(str(resolved))
+                stub_source_file = str(resolved)
             else:
                 # Check tsconfig.json path aliases (e.g. "$lib/" -> "src/lib/", "@/" -> "src/")
                 # before treating as external. Mirrors _import_js logic so SvelteKit alias
@@ -1779,6 +1780,7 @@ def extract_svelte(path: Path) -> dict:
                         break
                 if resolved_alias is not None:
                     node_id = _make_id(str(resolved_alias))
+                    stub_source_file = str(resolved_alias)
                 else:
                     # Bare/scoped import (node_modules) - use last segment;
                     # build_from_json drops as external if no matching node exists.
@@ -1786,6 +1788,7 @@ def extract_svelte(path: Path) -> dict:
                     if not module_name:
                         continue
                     node_id = _make_id(module_name)
+                    stub_source_file = raw
             if node_id in existing_ids:
                 # Edge target already a real node - just add the edge, don't add a node.
                 result.setdefault("edges", []).append({
@@ -1796,7 +1799,7 @@ def extract_svelte(path: Path) -> dict:
                 continue
             result.setdefault("nodes", []).append({
                 "id": node_id, "label": raw,
-                "file_type": "code", "source_file": str(path),
+                "file_type": "code", "source_file": stub_source_file,
                 "confidence": "EXTRACTED",
             })
             result.setdefault("edges", []).append({
@@ -1805,6 +1808,65 @@ def extract_svelte(path: Path) -> dict:
                 "source_file": str(path),
             })
             existing_ids.add(node_id)
+        # Static imports inside <script> blocks. The JS tree-sitter parser fed
+        # the full .svelte file produces a top-level ERROR node (HTML markup
+        # is not valid JS), so import_statement nodes are never reached and
+        # static imports are silently dropped (#713). Regex over each script
+        # body recovers them.
+        script_re = _re.compile(
+            r"<script\b[^>]*>([\s\S]*?)</script\s*>", _re.IGNORECASE
+        )
+        static_import_re = _re.compile(
+            r"""import\s+(?:[^'"`;]+?\s+from\s+)?['"]([^'"]+)['"]"""
+        )
+        for script_match in script_re.finditer(src):
+            script_body = script_match.group(1)
+            for m in static_import_re.finditer(script_body):
+                raw = m.group(1)
+                if not raw:
+                    continue
+                if raw.startswith("."):
+                    resolved = Path(os.path.normpath(path.parent / raw))
+                    if resolved.suffix == ".js":
+                        resolved = resolved.with_suffix(".ts")
+                    elif resolved.suffix == ".jsx":
+                        resolved = resolved.with_suffix(".tsx")
+                    node_id = _make_id(str(resolved))
+                    stub_source_file = str(resolved)
+                else:
+                    resolved_alias = None
+                    for alias_prefix, alias_base in aliases.items():
+                        if raw == alias_prefix or raw.startswith(alias_prefix + "/"):
+                            rest = raw[len(alias_prefix):].lstrip("/")
+                            resolved_alias = Path(os.path.normpath(Path(alias_base) / rest))
+                            break
+                    if resolved_alias is not None:
+                        node_id = _make_id(str(resolved_alias))
+                        stub_source_file = str(resolved_alias)
+                    else:
+                        module_name = raw.split("/")[-1]
+                        if not module_name:
+                            continue
+                        node_id = _make_id(module_name)
+                        stub_source_file = raw
+                if node_id in existing_ids:
+                    result.setdefault("edges", []).append({
+                        "source": file_node_id, "target": node_id,
+                        "relation": "imports_from", "confidence": "EXTRACTED",
+                        "source_file": str(path),
+                    })
+                    continue
+                result.setdefault("nodes", []).append({
+                    "id": node_id, "label": raw,
+                    "file_type": "code", "source_file": stub_source_file,
+                    "confidence": "EXTRACTED",
+                })
+                result.setdefault("edges", []).append({
+                    "source": file_node_id, "target": node_id,
+                    "relation": "imports_from", "confidence": "EXTRACTED",
+                    "source_file": str(path),
+                })
+                existing_ids.add(node_id)
     except Exception:
         pass
     return result

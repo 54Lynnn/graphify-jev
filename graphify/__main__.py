@@ -1075,6 +1075,7 @@ def main() -> None:
         print("                            (also: GRAPHIFY_FORCE=1 env var; use after refactors that delete code)")
         print("  cluster-only <path>     rerun clustering on an existing graph.json and regenerate report")
         print("    --no-viz                skip graph.html generation (useful for >5000 node graphs / CI)")
+        print("    --graph <path>          path to graph.json (default <path>/graphify-out/graph.json)")
         print("  query \"<question>\"       BFS traversal of graph.json for a question")
         print("    --dfs                   use depth-first instead of breadth-first")
         print("    --context C             explicit edge-context filter (repeatable)")
@@ -1494,11 +1495,30 @@ def main() -> None:
             sys.exit(1)
 
     elif cmd == "cluster-only":
-        watch_path = Path(sys.argv[2]) if len(sys.argv) > 2 else Path(".")
+        # Mirror the tree/export arg-parsing pattern: walk argv so flags and
+        # the optional positional path can appear in any order (#724).
         no_viz = "--no-viz" in sys.argv
         _min_cs_arg = next((a for a in sys.argv if a.startswith("--min-community-size=")), None)
         min_community_size = int(_min_cs_arg.split("=")[1]) if _min_cs_arg else 3
-        graph_json = watch_path / "graphify-out" / "graph.json"
+        args = sys.argv[2:]
+        watch_path: Path | None = None
+        graph_override: Path | None = None
+        i_arg = 0
+        while i_arg < len(args):
+            a = args[i_arg]
+            if a == "--graph" and i_arg + 1 < len(args):
+                graph_override = Path(args[i_arg + 1]); i_arg += 2
+            elif a == "--no-viz" or a.startswith("--min-community-size="):
+                i_arg += 1
+            elif a.startswith("--"):
+                i_arg += 1
+            elif watch_path is None:
+                watch_path = Path(a); i_arg += 1
+            else:
+                i_arg += 1
+        if watch_path is None:
+            watch_path = Path(".")
+        graph_json = graph_override if graph_override is not None else watch_path / "graphify-out" / "graph.json"
         if not graph_json.exists():
             print(f"error: no graph found at {graph_json} — run /graphify first", file=sys.stderr)
             sys.exit(1)
@@ -2122,6 +2142,10 @@ def main() -> None:
                     f"{merged['output_tokens']:,} out, "
                     f"est. cost: ${cost:.4f}"
                 )
+            try:
+                _save_manifest(files_by_type, manifest_path=str(manifest_path))
+            except Exception as exc:
+                print(f"[graphify extract] warning: could not write manifest: {exc}", file=sys.stderr)
             sys.exit(0)
 
         # Build graph + cluster + score + write.

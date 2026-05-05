@@ -843,7 +843,10 @@ deleted = set(incremental.get('deleted_files', []))
 if deleted:
     to_remove = [n for n, d in G_existing.nodes(data=True) if d.get('source_file') in deleted]
     G_existing.remove_nodes_from(to_remove)
-    print(f'Pruned {len(to_remove)} ghost nodes from {len(deleted)} deleted file(s)')
+    if to_remove:
+        print(f'Pruned {len(to_remove)} ghost node(s) from {len(deleted)} deleted file(s).')
+    else:
+        print(f'{len(deleted)} file(s) deleted since last run — no ghost nodes in graph, already clean.')
 
 # Merge: new nodes/edges into existing graph
 G_existing.update(G_new)
