@@ -277,6 +277,7 @@ graphify extract ./docs                        # headless LLM extraction for CI 
 graphify extract ./docs --backend claude       # explicit backend: claude (ANTHROPIC_API_KEY) or kimi (MOONSHOT_API_KEY)
 graphify extract ./docs --no-cluster           # raw extraction only, skip clustering
 graphify extract ./docs --dedup-llm            # LLM tiebreaker for ambiguous entity pairs (uses same API key)
+GRAPHIFY_MAX_OUTPUT_TOKENS=32768 graphify extract ./docs --backend claude  # raise output cap for dense corpora
 
 graphify clone https://github.com/karpathy/nanoGPT
 graphify merge-graphs a.json b.json --out merged.json
@@ -284,6 +285,7 @@ graphify watch ./src
 graphify check-update ./src
 graphify update ./src
 graphify cluster-only ./my-project
+graphify cluster-only ./my-project --graph path/to/graph.json  # custom graph location
 ```
 
 ---
