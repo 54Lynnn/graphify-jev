@@ -103,6 +103,16 @@ def deduplicate_entities(
     Returns:
         (deduped_nodes, deduped_edges) with edges rewired to survivors
     """
+    # Guard: cross-project dedup is not supported — nodes from different repos
+    # share label names by coincidence and must never be merged by string similarity.
+    # If you need to dedup a global graph, run deduplicate_entities per-repo first.
+    repos_seen = {n.get("repo") for n in nodes if n.get("repo")}
+    if len(repos_seen) > 1:
+        raise ValueError(
+            f"deduplicate_entities: nodes span multiple repos {sorted(repos_seen)!r}. "
+            f"Cross-project dedup is disabled — run dedup per-repo before merging."
+        )
+
     if len(nodes) <= 1:
         return nodes, edges
 

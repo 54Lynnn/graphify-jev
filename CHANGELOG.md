@@ -2,6 +2,14 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.7.7 (2026-05-05)
+
+- Feat: Ollama backend for headless extraction -- `graphify extract ./docs --backend ollama`; auto-detected when `OLLAMA_BASE_URL` is set; defaults to `qwen2.5-coder:7b`; zero cost ($0.00); sentinel API key handles OpenAI client auth requirement (#729)
+- Feat: Cross-project global graph at `~/.graphify/global.json` -- `graphify global add/remove/list/path` to register multiple project graphs with `<repo>::<id>` prefixed node IDs, preventing silent collisions; hash-based skip avoids re-ingesting unchanged graphs (#729)
+- Feat: `graphify extract --global --as <tag>` flag -- after building a project graph, auto-registers it into the global graph in one step (#729)
+- Feat: `merge-graphs` now prefix-relabels each input graph before composing, preventing silent node ID collisions when two projects share entity names (#729)
+- Fix: `deduplicate_entities` raises `ValueError` if called with nodes spanning multiple repos (cross-project dedup disabled by design -- per-project graphs are deduplicated in isolation) (#729)
+
 ## 0.7.6 (2026-05-05)
 
 - Fix: `cluster-only` now accepts `--graph <path>` to specify a non-default graph.json location; positional path and flags can appear in any order (#724)

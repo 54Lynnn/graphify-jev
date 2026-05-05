@@ -221,7 +221,7 @@ The MCP server gives your assistant structured access: `query_graph`, `get_node`
 
 - **Code files** — processed locally via tree-sitter. Nothing leaves your machine.
 - **Video / audio** — transcribed locally with faster-whisper. Nothing leaves your machine.
-- **Docs, PDFs, images** — sent to your AI assistant for semantic extraction (via the `/graphify` skill, using whatever model your IDE session runs). Headless `graphify extract` requires `ANTHROPIC_API_KEY` (Claude) or `MOONSHOT_API_KEY` (Kimi). The `--dedup-llm` flag uses the same key.
+- **Docs, PDFs, images** — sent to your AI assistant for semantic extraction (via the `/graphify` skill, using whatever model your IDE session runs). Headless `graphify extract` requires `ANTHROPIC_API_KEY` (Claude), `MOONSHOT_API_KEY` (Kimi), or a running Ollama instance (`OLLAMA_BASE_URL`). The `--dedup-llm` flag uses the same key.
 - No telemetry, no usage tracking, no analytics.
 
 ---
@@ -275,9 +275,16 @@ graphify antigravity install / uninstall
 
 graphify extract ./docs                        # headless LLM extraction for CI (no IDE needed)
 graphify extract ./docs --backend claude       # explicit backend: claude (ANTHROPIC_API_KEY) or kimi (MOONSHOT_API_KEY)
+graphify extract ./docs --backend ollama       # local Ollama (set OLLAMA_BASE_URL / OLLAMA_MODEL)
 graphify extract ./docs --no-cluster           # raw extraction only, skip clustering
 graphify extract ./docs --dedup-llm            # LLM tiebreaker for ambiguous entity pairs (uses same API key)
+graphify extract ./docs --global --as myrepo   # extract and register into the cross-project global graph
 GRAPHIFY_MAX_OUTPUT_TOKENS=32768 graphify extract ./docs --backend claude  # raise output cap for dense corpora
+
+graphify global add graphify-out/graph.json myrepo   # register a project graph into ~/.graphify/global.json
+graphify global remove myrepo                         # remove a project from the global graph
+graphify global list                                  # show all registered repos + node/edge counts
+graphify global path                                  # print path to the global graph file
 
 graphify clone https://github.com/karpathy/nanoGPT
 graphify merge-graphs a.json b.json --out merged.json

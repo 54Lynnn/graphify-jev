@@ -1097,8 +1097,16 @@ def main() -> None:
         print("    --label NAME            project label in header")
         print("  extract <path>          headless full extraction (AST + semantic LLM) for CI/scripts")
         print("    --backend B             kimi|claude (default: whichever API key is set)")
+        print("    --model <name>          override the backend's default model")
         print("    --out DIR               output dir (default: <path>); writes <DIR>/graphify-out/")
         print("    --no-cluster            skip clustering, write raw extraction only")
+        print("    --global                also merge the resulting graph into the global graph")
+        print("    --as <tag>              repo tag for --global (default: target directory name)")
+        print("  global add <graph.json>  add/update a project graph in the global graph (~/.graphify/global-graph.json)")
+        print("    --as <tag>               repo tag (default: parent directory name)")
+        print("  global remove <tag>      remove a repo's nodes from the global graph")
+        print("  global list              list repos in the global graph")
+        print("  global path              print path to the global graph file")
         print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
         print("  hook install            install post-commit/post-checkout git hooks (all platforms)")
         print("  hook uninstall          remove git hooks")
@@ -1714,6 +1722,7 @@ def main() -> None:
             sys.exit(1)
         import networkx as _nx
         from networkx.readwrite import json_graph as _jg
+        from graphify.build import prefix_graph_for_global as _prefix
         graphs = []
         for gp in graph_paths:
             if not gp.exists():
@@ -1728,12 +1737,12 @@ def main() -> None:
                 G = _jg.node_link_graph(data, edges="links")
             except TypeError:
                 G = _jg.node_link_graph(data)
-            # Tag every node with which repo it came from
-            repo_tag = gp.parent.parent.name  # graphify-out/../ → repo dir name
-            for node in G.nodes:
-                G.nodes[node].setdefault("repo", repo_tag)
             graphs.append(G)
-        merged = _nx.compose_all(graphs)
+        merged = _nx.Graph()
+        for G, gp in zip(graphs, graph_paths):
+            repo_tag = gp.parent.parent.name  # graphify-out/../ → repo dir name
+            prefixed = _prefix(G, repo_tag)
+            merged = _nx.compose(merged, prefixed)
         try:
             out_data = _jg.node_link_data(merged, edges="links")
         except TypeError:
@@ -1911,6 +1920,62 @@ def main() -> None:
         result = run_benchmark(graph_path, corpus_words=corpus_words)
         print_benchmark(result)
 
+    elif cmd == "global":
+        subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
+        from graphify.global_graph import (
+            global_add as _global_add,
+            global_remove as _global_remove,
+            global_list as _global_list,
+            global_path as _global_path,
+        )
+        if subcmd == "add":
+            # graphify global add <graph.json> [--as <tag>]
+            args = sys.argv[3:]
+            source = None
+            tag = None
+            i = 0
+            while i < len(args):
+                if args[i] == "--as" and i + 1 < len(args):
+                    tag = args[i + 1]; i += 2
+                elif not source:
+                    source = Path(args[i]); i += 1
+                else:
+                    i += 1
+            if not source:
+                print("Usage: graphify global add <graph.json> [--as <repo-tag>]", file=sys.stderr)
+                sys.exit(1)
+            tag = tag or source.parent.parent.name
+            try:
+                result = _global_add(source, tag)
+                if result["skipped"]:
+                    print(f"'{tag}' unchanged since last add — global graph not modified.")
+                else:
+                    print(f"Added '{tag}' to global graph: +{result['nodes_added']} nodes, "
+                          f"-{result['nodes_removed']} pruned. Global: {_global_path()}")
+            except Exception as exc:
+                print(f"error: {exc}", file=sys.stderr); sys.exit(1)
+        elif subcmd == "remove":
+            tag = sys.argv[3] if len(sys.argv) > 3 else ""
+            if not tag:
+                print("Usage: graphify global remove <repo-tag>", file=sys.stderr); sys.exit(1)
+            try:
+                removed = _global_remove(tag)
+                print(f"Removed '{tag}' from global graph ({removed} nodes pruned).")
+            except KeyError as exc:
+                print(f"error: {exc}", file=sys.stderr); sys.exit(1)
+        elif subcmd == "list":
+            repos = _global_list()
+            if not repos:
+                print("Global graph is empty. Use 'graphify global add' to add a project.")
+            else:
+                print(f"Global graph: {_global_path()}")
+                for tag, info in repos.items():
+                    print(f"  {tag}: {info.get('node_count', '?')} nodes, added {info.get('added_at', '?')[:10]}")
+        elif subcmd == "path":
+            print(_global_path())
+        else:
+            print("Usage: graphify global [add|remove|list|path]", file=sys.stderr); sys.exit(1)
+
     elif cmd == "extract":
         # Headless full-pipeline extraction for CI / scripts (#698).
         # Runs detect -> AST extraction on code -> semantic LLM extraction on
@@ -1935,6 +2000,9 @@ def main() -> None:
         out_dir: Path | None = None
         no_cluster = False
         dedup_llm = False
+        model_override: str | None = None
+        global_merge = False
+        global_repo_tag: str | None = None
         args = sys.argv[3:]
         i = 0
         while i < len(args):
@@ -1943,6 +2011,10 @@ def main() -> None:
                 backend = args[i + 1]; i += 2
             elif a.startswith("--backend="):
                 backend = a.split("=", 1)[1]; i += 1
+            elif a == "--model" and i + 1 < len(args):
+                model_override = args[i + 1]; i += 2
+            elif a.startswith("--model="):
+                model_override = a.split("=", 1)[1]; i += 1
             elif a == "--out" and i + 1 < len(args):
                 out_dir = Path(args[i + 1]); i += 2
             elif a.startswith("--out="):
@@ -1951,6 +2023,10 @@ def main() -> None:
                 no_cluster = True; i += 1
             elif a == "--dedup-llm":
                 dedup_llm = True; i += 1
+            elif a == "--global":
+                global_merge = True; i += 1
+            elif a == "--as" and i + 1 < len(args):
+                global_repo_tag = args[i + 1]; i += 2
             else:
                 i += 1
 
@@ -2084,6 +2160,7 @@ def main() -> None:
                     fresh = _extract_corpus_parallel(
                         [Path(p) for p in uncached_paths],
                         backend=backend,
+                        model=model_override,
                         root=target,
                     )
                 except ImportError as exc:
@@ -2150,6 +2227,18 @@ def main() -> None:
                 _save_manifest(files_by_type, manifest_path=str(manifest_path))
             except Exception as exc:
                 print(f"[graphify extract] warning: could not write manifest: {exc}", file=sys.stderr)
+            if global_merge:
+                from graphify.global_graph import global_add as _global_add
+                _tag = global_repo_tag or target.name
+                try:
+                    result = _global_add(graphify_out / "graph.json", _tag)
+                    if result["skipped"]:
+                        print(f"[graphify global] '{_tag}' unchanged since last add — skipped.")
+                    else:
+                        print(f"[graphify global] '{_tag}' merged into global graph "
+                              f"(+{result['nodes_added']} nodes, -{result['nodes_removed']} pruned).")
+                except Exception as exc:
+                    print(f"[graphify global] warning: failed to merge into global graph: {exc}", file=sys.stderr)
             sys.exit(0)
 
         # Build graph + cluster + score + write.
@@ -2193,6 +2282,18 @@ def main() -> None:
             surprises = []
 
         _to_json(G, communities, str(graph_json_path), force=True)
+        if global_merge:
+            from graphify.global_graph import global_add as _global_add
+            _tag = global_repo_tag or target.name
+            try:
+                result = _global_add(graphify_out / "graph.json", _tag)
+                if result["skipped"]:
+                    print(f"[graphify global] '{_tag}' unchanged since last add — skipped.")
+                else:
+                    print(f"[graphify global] '{_tag}' merged into global graph "
+                          f"(+{result['nodes_added']} nodes, -{result['nodes_removed']} pruned).")
+            except Exception as exc:
+                print(f"[graphify global] warning: failed to merge into global graph: {exc}", file=sys.stderr)
         analysis = {
             "communities": {str(k): v for k, v in communities.items()},
             "cohesion": {str(k): v for k, v in cohesion.items()},

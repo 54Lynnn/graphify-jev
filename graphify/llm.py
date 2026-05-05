@@ -60,6 +60,14 @@ BACKENDS: dict[str, dict] = {
         "temperature": None,  # kimi-k2.6 enforces its own fixed temperature; sending any value raises 400
         "max_tokens": 16384,
     },
+    "ollama": {
+        "base_url": os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1"),
+        "default_model": os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:7b"),
+        "env_key": "OLLAMA_API_KEY",
+        "pricing": {"input": 0.0, "output": 0.0},
+        "temperature": 0,
+        "max_tokens": 16384,
+    },
 }
 
 
@@ -129,6 +137,8 @@ def _call_openai_compat(
     user_message: str,
     temperature: float | None = 0,
     max_tokens: int = 8192,
+    *,
+    backend: str = "",
 ) -> dict:
     """Call any OpenAI-compatible API (Kimi, OpenAI, etc.) and return parsed JSON."""
     try:
@@ -162,6 +172,14 @@ def _call_openai_compat(
     # mid-generation. The JSON we got back is truncated; callers should
     # treat this as a signal to retry with smaller input.
     result["finish_reason"] = resp.choices[0].finish_reason
+    output_tokens = result["output_tokens"]
+    if output_tokens < 50 and backend == "ollama":
+        print(
+            "[graphify] warning: ollama returned very few tokens — the model may be "
+            "too small or not following the JSON instruction format. "
+            "Try a larger model with --model (e.g. --model qwen2.5-coder:14b).",
+            file=sys.stderr,
+        )
     return result
 
 
@@ -210,6 +228,8 @@ def extract_files_direct(
 
     cfg = BACKENDS[backend]
     key = api_key or os.environ.get(cfg["env_key"], "")
+    if not key and backend == "ollama":
+        key = "ollama"  # Ollama ignores auth but openai client requires non-empty
     if not key:
         raise ValueError(
             f"No API key for backend '{backend}'. "
@@ -222,7 +242,7 @@ def extract_files_direct(
     if backend == "claude":
         return _call_claude(key, mdl, user_msg, max_tokens=max_out)
     else:
-        return _call_openai_compat(cfg["base_url"], key, mdl, user_msg, temperature=cfg.get("temperature", 0), max_tokens=max_out)
+        return _call_openai_compat(cfg["base_url"], key, mdl, user_msg, temperature=cfg.get("temperature", 0), max_tokens=max_out, backend=backend)
 
 
 def _estimate_file_tokens(path: Path) -> int:
@@ -485,11 +505,13 @@ def estimate_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
 def detect_backend() -> str | None:
     """Return the name of whichever backend has an API key set, or None.
 
-    Kimi is checked first (opt-in). Falls back to Claude if ANTHROPIC_API_KEY is set.
-    Claude is the default for the skill.md subagent pipeline and is never forced here.
+    Priority: kimi → ollama (if OLLAMA_BASE_URL set) → claude.
+    Ollama is opt-in via env var — never auto-probed.
     """
     if os.environ.get("MOONSHOT_API_KEY"):
         return "kimi"
+    if os.environ.get("OLLAMA_BASE_URL"):
+        return "ollama"
     if os.environ.get("ANTHROPIC_API_KEY"):
         return "claude"
     return None

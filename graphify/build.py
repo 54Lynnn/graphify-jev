@@ -271,3 +271,26 @@ def build_merge(
             )
 
     return G
+
+
+def prefix_graph_for_global(G: nx.Graph, repo_tag: str) -> nx.Graph:
+    """Return a copy of G with all node IDs prefixed with repo_tag::.
+
+    Labels are preserved unchanged (for display). A 'local_id' attribute
+    is added to each node so the original ID can be recovered. Edges are
+    rewritten to match the new prefixed IDs. The 'repo' attribute is set
+    on every node.
+    """
+    relabel = {n: f"{repo_tag}::{n}" for n in G.nodes}
+    H = nx.relabel_nodes(G, relabel, copy=True)
+    for node, data in H.nodes(data=True):
+        data["repo"] = repo_tag
+        data.setdefault("local_id", node.split("::", 1)[1])
+    return H
+
+
+def prune_repo_from_graph(G: nx.Graph, repo_tag: str) -> int:
+    """Remove all nodes tagged with repo_tag from G in-place. Returns count removed."""
+    to_remove = [n for n, d in G.nodes(data=True) if d.get("repo") == repo_tag]
+    G.remove_nodes_from(to_remove)
+    return len(to_remove)
