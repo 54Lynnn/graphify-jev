@@ -1,5 +1,6 @@
-# Direct LLM backend for semantic extraction — supports Claude and Kimi K2.6.
-# Used by `graphify . --backend kimi` and the benchmark scripts.
+# Direct LLM backend for semantic extraction — supports Claude, Kimi K2.6,
+# Gemini, and OpenAI.
+# Used by `graphify extract . --backend gemini` and the benchmark scripts.
 # The default graphify pipeline uses Claude Code subagents via skill.md;
 # this module provides a direct API path for non-Claude-Code environments.
 from __future__ import annotations
@@ -58,6 +59,21 @@ BACKENDS: dict[str, dict] = {
         "pricing": {"input": 0.74, "output": 4.66},  # USD per 1M tokens
         "temperature": None,  # kimi-k2.6 enforces its own fixed temperature; sending any value raises 400
     },
+    "gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "default_model": "gemini-2.5-flash",
+        "env_keys": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "pricing": {"input": 0.30, "output": 2.50},  # USD per 1M tokens
+        "temperature": 0,
+        "reasoning_effort": "none",
+    },
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "default_model": "gpt-4.1-mini",
+        "env_key": "OPENAI_API_KEY",
+        "pricing": {"input": 0.40, "output": 1.60},  # USD per 1M tokens
+        "temperature": 0,
+    },
 }
 
 _EXTRACTION_SYSTEM = """\
@@ -107,19 +123,43 @@ def _parse_llm_json(raw: str) -> dict:
         return {"nodes": [], "edges": [], "hyperedges": []}
 
 
+def _backend_env_keys(backend: str) -> list[str]:
+    """Return accepted API-key environment variables for a backend."""
+    cfg = BACKENDS[backend]
+    keys = cfg.get("env_keys")
+    if keys:
+        return list(keys)
+    return [cfg["env_key"]]
+
+
+def _get_backend_api_key(backend: str) -> str:
+    """Return the first configured API key for backend, or an empty string."""
+    for env_key in _backend_env_keys(backend):
+        value = os.environ.get(env_key)
+        if value:
+            return value
+    return ""
+
+
+def _format_backend_env_keys(backend: str) -> str:
+    """Return user-facing accepted API-key variable names."""
+    return " or ".join(_backend_env_keys(backend))
+
+
 def _call_openai_compat(
     base_url: str,
     api_key: str,
     model: str,
     user_message: str,
     temperature: float | None = 0,
+    reasoning_effort: str | None = None,
 ) -> dict:
     """Call any OpenAI-compatible API (Kimi, OpenAI, etc.) and return parsed JSON."""
     try:
         from openai import OpenAI
     except ImportError as exc:
         raise ImportError(
-            "Kimi/OpenAI-compatible extraction requires the openai package. "
+            "Gemini/Kimi/OpenAI-compatible extraction requires the openai package. "
             "Run: pip install openai"
         ) from exc
 
@@ -134,6 +174,8 @@ def _call_openai_compat(
     }
     if temperature is not None:
         kwargs["temperature"] = temperature
+    if reasoning_effort is not None:
+        kwargs["reasoning_effort"] = reasoning_effort
     # Kimi-k2.6 is a reasoning model — disable thinking so content isn't empty
     if "moonshot" in base_url:
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
@@ -193,11 +235,11 @@ def extract_files_direct(
         raise ValueError(f"Unknown backend {backend!r}. Available: {sorted(BACKENDS)}")
 
     cfg = BACKENDS[backend]
-    key = api_key or os.environ.get(cfg["env_key"], "")
+    key = api_key or _get_backend_api_key(backend)
     if not key:
         raise ValueError(
             f"No API key for backend '{backend}'. "
-            f"Set {cfg['env_key']} or pass api_key=."
+            f"Set {_format_backend_env_keys(backend)} or pass api_key=."
         )
     mdl = model or cfg["default_model"]
     user_msg = _read_files(files, root)
@@ -205,7 +247,14 @@ def extract_files_direct(
     if backend == "claude":
         return _call_claude(key, mdl, user_msg)
     else:
-        return _call_openai_compat(cfg["base_url"], key, mdl, user_msg, temperature=cfg.get("temperature", 0))
+        return _call_openai_compat(
+            cfg["base_url"],
+            key,
+            mdl,
+            user_msg,
+            temperature=cfg.get("temperature", 0),
+            reasoning_effort=cfg.get("reasoning_effort"),
+        )
 
 
 def _estimate_file_tokens(path: Path) -> int:
@@ -468,11 +517,10 @@ def estimate_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
 def detect_backend() -> str | None:
     """Return the name of whichever backend has an API key set, or None.
 
-    Kimi is checked first (opt-in). Falls back to Claude if ANTHROPIC_API_KEY is set.
+    Gemini is checked first, then Kimi, Claude, and OpenAI.
     Claude is the default for the skill.md subagent pipeline and is never forced here.
     """
-    if os.environ.get("MOONSHOT_API_KEY"):
-        return "kimi"
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "claude"
+    for backend in ("gemini", "kimi", "claude", "openai"):
+        if _get_backend_api_key(backend):
+            return backend
     return None

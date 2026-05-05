@@ -221,7 +221,7 @@ The MCP server gives your assistant structured access: `query_graph`, `get_node`
 
 - **Code files** — processed locally via tree-sitter. Nothing leaves your machine.
 - **Video / audio** — transcribed locally with faster-whisper. Nothing leaves your machine.
-- **Docs, PDFs, images** — sent to your AI assistant for semantic extraction (via the `/graphify` skill, using whatever model your IDE session runs). Headless `graphify extract` requires `ANTHROPIC_API_KEY` (Claude) or `MOONSHOT_API_KEY` (Kimi). The `--dedup-llm` flag uses the same key.
+- **Docs, PDFs, images** — sent to your AI assistant for semantic extraction (via the `/graphify` skill, using whatever model your IDE session runs). Headless `graphify extract` requires `GEMINI_API_KEY` / `GOOGLE_API_KEY` (Gemini), `MOONSHOT_API_KEY` (Kimi), `ANTHROPIC_API_KEY` (Claude), or `OPENAI_API_KEY` (OpenAI). The `--dedup-llm` flag uses the same key.
 - No telemetry, no usage tracking, no analytics.
 
 ---
@@ -274,7 +274,7 @@ graphify kiro install / uninstall
 graphify antigravity install / uninstall
 
 graphify extract ./docs                        # headless LLM extraction for CI (no IDE needed)
-graphify extract ./docs --backend claude       # explicit backend: claude (ANTHROPIC_API_KEY) or kimi (MOONSHOT_API_KEY)
+graphify extract ./docs --backend gemini       # explicit backend: gemini, kimi, claude, or openai
 graphify extract ./docs --no-cluster           # raw extraction only, skip clustering
 graphify extract ./docs --dedup-llm            # LLM tiebreaker for ambiguous entity pairs (uses same API key)
 

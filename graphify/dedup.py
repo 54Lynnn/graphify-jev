@@ -255,11 +255,13 @@ def _llm_tiebreak(
 ) -> None:
     """Batch-resolve ambiguous pairs (score in [low, high)) via LLM."""
     try:
-        from graphify.llm import BACKENDS
-        import os
-        env_key = BACKENDS.get(backend, {}).get("env_key", "")
-        if not os.environ.get(env_key):
-            print(f"[graphify] --dedup-llm: {env_key} not set, skipping LLM tiebreaker.", flush=True)
+        from graphify.llm import BACKENDS, _format_backend_env_keys, _get_backend_api_key
+        if backend not in BACKENDS:
+            print(f"[graphify] --dedup-llm: unknown backend {backend!r}, skipping LLM tiebreaker.", flush=True)
+            return
+        if not _get_backend_api_key(backend):
+            env_keys = _format_backend_env_keys(backend)
+            print(f"[graphify] --dedup-llm: {env_keys} not set, skipping LLM tiebreaker.", flush=True)
             return
     except ImportError:
         return

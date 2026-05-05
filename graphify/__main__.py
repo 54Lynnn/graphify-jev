@@ -1095,7 +1095,7 @@ def main() -> None:
         print("    --top-k-edges N         per-symbol outbound edges in inspector (default 12)")
         print("    --label NAME            project label in header")
         print("  extract <path>          headless full extraction (AST + semantic LLM) for CI/scripts")
-        print("    --backend B             kimi|claude (default: whichever API key is set)")
+        print("    --backend B             gemini|kimi|claude|openai (default: whichever API key is set)")
         print("    --out DIR               output dir (default: <path>); writes <DIR>/graphify-out/")
         print("    --no-cluster            skip clustering, write raw extraction only")
         print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
@@ -1573,8 +1573,13 @@ def main() -> None:
         ok = _rebuild_code(watch_path, force=force)
         if ok:
             print("Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.")
-            if not os.environ.get("MOONSHOT_API_KEY") and not os.environ.get("GRAPHIFY_NO_TIPS"):
-                print("Tip: set MOONSHOT_API_KEY to use Kimi K2.6 for semantic extraction — 3x cheaper, richer graphs. pip install 'graphifyy[kimi]'")
+            if not (
+                os.environ.get("GEMINI_API_KEY")
+                or os.environ.get("GOOGLE_API_KEY")
+                or os.environ.get("MOONSHOT_API_KEY")
+                or os.environ.get("GRAPHIFY_NO_TIPS")
+            ):
+                print("Tip: set GEMINI_API_KEY or GOOGLE_API_KEY to use Gemini for semantic extraction.")
         else:
             print("Nothing to update or rebuild failed — check output above.", file=sys.stderr)
             sys.exit(1)
@@ -1896,7 +1901,7 @@ def main() -> None:
         # has an API key set.
         if len(sys.argv) < 3:
             print(
-                "Usage: graphify extract <path> [--backend kimi|claude] "
+                "Usage: graphify extract <path> [--backend gemini|kimi|claude|openai] "
                 "[--out DIR] [--no-cluster]",
                 file=sys.stderr,
             )
@@ -1939,13 +1944,16 @@ def main() -> None:
             detect_backend as _detect_backend,
             estimate_cost as _estimate_cost,
             extract_corpus_parallel as _extract_corpus_parallel,
+            _format_backend_env_keys,
+            _get_backend_api_key,
         )
         if backend is None:
             backend = _detect_backend()
             if backend is None:
                 print(
-                    "error: no LLM API key found. Set MOONSHOT_API_KEY (kimi) "
-                    "or ANTHROPIC_API_KEY (claude), or pass --backend.",
+                    "error: no LLM API key found. Set GEMINI_API_KEY or GOOGLE_API_KEY "
+                    "(gemini), MOONSHOT_API_KEY (kimi), ANTHROPIC_API_KEY (claude), "
+                    "or OPENAI_API_KEY (openai), or pass --backend.",
                     file=sys.stderr,
                 )
                 sys.exit(1)
@@ -1956,10 +1964,9 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
-        env_key = _BACKENDS[backend]["env_key"]
-        if not os.environ.get(env_key):
+        if not _get_backend_api_key(backend):
             print(
-                f"error: backend '{backend}' requires {env_key} to be set.",
+                f"error: backend '{backend}' requires {_format_backend_env_keys(backend)} to be set.",
                 file=sys.stderr,
             )
             sys.exit(1)
