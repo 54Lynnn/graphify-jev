@@ -2,6 +2,19 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.7.6 (2026-05-05)
+
+- Fix: `cluster-only` now accepts `--graph <path>` to specify a non-default graph.json location; positional path and flags can appear in any order (#724)
+- Fix: `_is_sensitive()` no longer drops legitimate source files — word boundaries on the keyword pattern prevent false positives like `tokenizer.py`, `password_verification.py`, `SecretManager.java` (#718)
+- Fix: `graphify extract --backend claude/kimi` raises default `max_tokens` from 8192 → 16384, eliminating the truncation-then-recursive-split cascade on dense doc corpora; respects `GRAPHIFY_MAX_OUTPUT_TOKENS` env var (#730)
+- Fix: `--update` prune message now clearly distinguishes "N nodes pruned from M deleted files" from "M deletions detected but graph already clean — no drift" (#539)
+- Fix: `extract_svelte()` stub nodes now carry the resolved import path as `source_file` instead of the importer's path, preventing metadata corruption after merge (#712)
+- Fix: `extract_svelte()` now catches static `import X from './foo.svelte'` via a dedicated regex pass over `<script>` block content — previously tree-sitter's JS parser silently dropped all static imports in `.svelte` files (#713)
+- Fix: `graphify extract` (full rebuild path) now saves `manifest.json` on every successful run, not only on `--update`; prevents stale-manifest drift on subsequent incremental runs (#538)
+- Fix: `graphify antigravity install` now writes to `.agent/` (no trailing s) matching Antigravity's actual config paths (#704)
+- Fix: Pi skill YAML frontmatter description simplified to avoid "nested mappings" parse error on Pi startup (#737)
+- Fix: `--dedup-llm` flag now correctly threads LLM backend through to `deduplicate_entities` in both fresh and incremental extract paths; fresh extract path now also runs dedup (previously called `build_from_json` directly, bypassing dedup entirely)
+
 ## 0.7.5 (2026-05-04)
 
 - Feat: `graphify extract` now runs incrementally - auto-detects prior `manifest.json` and re-extracts only changed/new files; semantic results cached by content hash so unchanged docs cost zero LLM tokens on repeat runs (#698)
