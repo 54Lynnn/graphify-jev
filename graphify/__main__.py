@@ -1096,6 +1096,7 @@ def main() -> None:
         print("    --label NAME            project label in header")
         print("  extract <path>          headless full extraction (AST + semantic LLM) for CI/scripts")
         print("    --backend B             gemini|kimi|claude|openai (default: whichever API key is set)")
+        print("    --model M               override backend default model")
         print("    --out DIR               output dir (default: <path>); writes <DIR>/graphify-out/")
         print("    --no-cluster            skip clustering, write raw extraction only")
         print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
@@ -1913,6 +1914,7 @@ def main() -> None:
             sys.exit(1)
 
         backend: str | None = None
+        model: str | None = None
         out_dir: Path | None = None
         no_cluster = False
         dedup_llm = False
@@ -1924,6 +1926,10 @@ def main() -> None:
                 backend = args[i + 1]; i += 2
             elif a.startswith("--backend="):
                 backend = a.split("=", 1)[1]; i += 1
+            elif a == "--model" and i + 1 < len(args):
+                model = args[i + 1]; i += 2
+            elif a.startswith("--model="):
+                model = a.split("=", 1)[1]; i += 1
             elif a == "--out" and i + 1 < len(args):
                 out_dir = Path(args[i + 1]); i += 2
             elif a.startswith("--out="):
@@ -2067,6 +2073,7 @@ def main() -> None:
                     fresh = _extract_corpus_parallel(
                         [Path(p) for p in uncached_paths],
                         backend=backend,
+                        model=model,
                         root=target,
                     )
                 except ImportError as exc:

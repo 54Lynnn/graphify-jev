@@ -275,6 +275,7 @@ graphify antigravity install / uninstall
 
 graphify extract ./docs                        # headless LLM extraction for CI (no IDE needed)
 graphify extract ./docs --backend gemini       # explicit backend: gemini, kimi, claude, or openai
+graphify extract ./docs --backend gemini --model gemini-3.1-pro-preview
 graphify extract ./docs --no-cluster           # raw extraction only, skip clustering
 graphify extract ./docs --dedup-llm            # LLM tiebreaker for ambiguous entity pairs (uses same API key)
 

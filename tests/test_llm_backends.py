@@ -66,11 +66,26 @@ def test_extract_files_direct_routes_gemini_through_openai_compat(tmp_path, monk
     assert call.call_args.args[:4] == (
         "https://generativelanguage.googleapis.com/v1beta/openai/",
         "google-key",
-        "gemini-2.5-flash",
+        "gemini-3-flash-preview",
         "=== note.md ===\n# Architecture\n\nThe runner emits a snapshot.\n",
     )
     assert call.call_args.kwargs["temperature"] == 0
-    assert call.call_args.kwargs["reasoning_effort"] == "none"
+    assert call.call_args.kwargs["reasoning_effort"] == "low"
+    assert call.call_args.kwargs["max_completion_tokens"] == 16384
+
+
+def test_gemini_model_can_be_overridden_by_env(tmp_path, monkeypatch):
+    _clear_backend_env(monkeypatch)
+    monkeypatch.setenv("GOOGLE_API_KEY", "google-key")
+    monkeypatch.setenv("GRAPHIFY_GEMINI_MODEL", "gemini-3.1-pro-preview")
+    source = tmp_path / "note.md"
+    source.write_text("# Architecture\n")
+    result = {"nodes": [], "edges": [], "hyperedges": [], "input_tokens": 1, "output_tokens": 1}
+
+    with patch("graphify.llm._call_openai_compat", return_value=result) as call:
+        llm.extract_files_direct([source], backend="gemini", root=tmp_path)
+
+    assert call.call_args.args[2] == "gemini-3.1-pro-preview"
 
 
 def test_missing_gemini_key_names_both_supported_env_vars(monkeypatch):

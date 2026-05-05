@@ -61,16 +61,19 @@ BACKENDS: dict[str, dict] = {
     },
     "gemini": {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-        "default_model": "gemini-2.5-flash",
+        "default_model": "gemini-3-flash-preview",
         "env_keys": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
-        "pricing": {"input": 0.30, "output": 2.50},  # USD per 1M tokens
+        "model_env_key": "GRAPHIFY_GEMINI_MODEL",
+        "pricing": {"input": 0.50, "output": 3.00},  # USD per 1M tokens
         "temperature": 0,
-        "reasoning_effort": "none",
+        "reasoning_effort": "low",
+        "max_completion_tokens": 16384,
     },
     "openai": {
         "base_url": "https://api.openai.com/v1",
         "default_model": "gpt-4.1-mini",
         "env_key": "OPENAI_API_KEY",
+        "model_env_key": "GRAPHIFY_OPENAI_MODEL",
         "pricing": {"input": 0.40, "output": 1.60},  # USD per 1M tokens
         "temperature": 0,
     },
@@ -146,6 +149,17 @@ def _format_backend_env_keys(backend: str) -> str:
     return " or ".join(_backend_env_keys(backend))
 
 
+def _default_model_for_backend(backend: str) -> str:
+    """Return configured model override or backend default model."""
+    cfg = BACKENDS[backend]
+    model_env_key = cfg.get("model_env_key")
+    if model_env_key:
+        model = os.environ.get(model_env_key)
+        if model:
+            return model
+    return cfg["default_model"]
+
+
 def _call_openai_compat(
     base_url: str,
     api_key: str,
@@ -153,6 +167,7 @@ def _call_openai_compat(
     user_message: str,
     temperature: float | None = 0,
     reasoning_effort: str | None = None,
+    max_completion_tokens: int = 8192,
 ) -> dict:
     """Call any OpenAI-compatible API (Kimi, OpenAI, etc.) and return parsed JSON."""
     try:
@@ -170,7 +185,7 @@ def _call_openai_compat(
             {"role": "system", "content": _EXTRACTION_SYSTEM},
             {"role": "user", "content": user_message},
         ],
-        "max_completion_tokens": 8192,
+        "max_completion_tokens": max_completion_tokens,
     }
     if temperature is not None:
         kwargs["temperature"] = temperature
@@ -241,7 +256,7 @@ def extract_files_direct(
             f"No API key for backend '{backend}'. "
             f"Set {_format_backend_env_keys(backend)} or pass api_key=."
         )
-    mdl = model or cfg["default_model"]
+    mdl = model or _default_model_for_backend(backend)
     user_msg = _read_files(files, root)
 
     if backend == "claude":
@@ -254,6 +269,7 @@ def extract_files_direct(
             user_msg,
             temperature=cfg.get("temperature", 0),
             reasoning_effort=cfg.get("reasoning_effort"),
+            max_completion_tokens=cfg.get("max_completion_tokens", 8192),
         )
 
 
