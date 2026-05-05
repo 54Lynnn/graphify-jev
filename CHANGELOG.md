@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased
+
+- Fix: `detect_incremental()` now accepts and forwards `follow_symlinks` to `detect()`. Without this, `--update` runs silently miss any files reached through a symlinked sub-tree (e.g. `state_of_truth/` symlinking to a directory outside the corpus root), even when the original full run had detected them. Previously the flag was on `detect()` and `collect_files()` only.
+
 ## 0.7.5 (2026-05-04)
 
 - Feat: `graphify extract` now runs incrementally - auto-detects prior `manifest.json` and re-extracts only changed/new files; semantic results cached by content hash so unchanged docs cost zero LLM tokens on repeat runs (#698)

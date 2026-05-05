@@ -771,7 +771,12 @@ def save_manifest(files: dict[str, list[str]], manifest_path: str = _MANIFEST_PA
     Path(manifest_path).write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
-def detect_incremental(root: Path, manifest_path: str = _MANIFEST_PATH) -> dict:
+def detect_incremental(
+    root: Path,
+    manifest_path: str = _MANIFEST_PATH,
+    *,
+    follow_symlinks: bool = False,
+) -> dict:
     """Like detect(), but returns only new or modified files since the last run.
 
     Fast path: mtime unchanged → unchanged (free, no hash).
@@ -779,8 +784,13 @@ def detect_incremental(root: Path, manifest_path: str = _MANIFEST_PATH) -> dict:
     treat as unchanged. Different hash = actually changed, re-extract.
 
     Backwards compatible with legacy manifests storing plain float mtime values.
+
+    The ``follow_symlinks`` flag is forwarded to :func:`detect` so corpora that
+    rely on symlinked sub-trees (e.g. a ``state_of_truth/`` symlink pointing to a
+    directory outside the scan root) are scanned consistently between full and
+    incremental runs.
     """
-    full = detect(root)
+    full = detect(root, follow_symlinks=follow_symlinks)
     manifest = load_manifest(manifest_path)
 
     if not manifest:
