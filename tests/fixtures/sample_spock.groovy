@@ -1,4 +1,4 @@
-package pl.allegro.example
+package com.nicklastrange.example
 
 import spock.lang.Specification
 

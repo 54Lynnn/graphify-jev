@@ -1,7 +1,7 @@
-package pl.allegro.example
+package com.nicklastrange.example
 
-import pl.allegro.logistics.Processor
-import pl.allegro.logistics.util.Helper
+import com.nicklastrange.Processor
+import com.nicklastrange.util.Helper
 
 class SampleService {
     Processor processor
