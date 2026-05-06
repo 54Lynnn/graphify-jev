@@ -1546,7 +1546,15 @@ def main() -> None:
         cohesion = score_all(G, communities)
         gods = god_nodes(G)
         surprises = surprising_connections(G, communities)
-        labels = {cid: f"Community {cid}" for cid in communities}
+        out = watch_path / "graphify-out"
+        labels_path = out / ".graphify_labels.json"
+        if labels_path.exists():
+            try:
+                labels = {int(k): v for k, v in json.loads(labels_path.read_text(encoding="utf-8")).items()}
+            except Exception:
+                labels = {cid: f"Community {cid}" for cid in communities}
+        else:
+            labels = {cid: f"Community {cid}" for cid in communities}
         questions = suggest_questions(G, communities, labels)
         tokens = {"input": 0, "output": 0}
         from graphify.export import _git_head as _gh
@@ -1555,9 +1563,9 @@ def main() -> None:
                           {"warning": "cluster-only mode — file stats not available"},
                           tokens, str(watch_path), suggested_questions=questions,
                           min_community_size=min_community_size, built_at_commit=_commit)
-        out = watch_path / "graphify-out"
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
         to_json(G, communities, str(out / "graph.json"))
+        labels_path.write_text(json.dumps({str(k): v for k, v in labels.items()}, ensure_ascii=False), encoding="utf-8")
 
         # Mirror watch.py pattern: gate to_html so core outputs (graph.json +
         # GRAPH_REPORT.md) always land. Honor --no-viz explicitly; otherwise
@@ -1872,6 +1880,13 @@ def main() -> None:
         elif subcmd == "wiki":
             from graphify.wiki import to_wiki as _to_wiki
             from graphify.analyze import god_nodes as _god_nodes
+            if not communities:
+                print(
+                    "error: .graphify_analysis.json is missing or empty — refusing to export wiki to prevent data loss.\n"
+                    "Run `graphify extract .` (or `graphify cluster-only .`) to regenerate community data first.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
             if not gods_data:
                 gods_data = _god_nodes(G)
             n = _to_wiki(G, communities, str(out_dir / "wiki"),

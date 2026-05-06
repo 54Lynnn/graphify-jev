@@ -144,9 +144,10 @@ def _call_openai_compat(
     try:
         from openai import OpenAI
     except ImportError as exc:
+        pkg_hint = "graphifyy[kimi]" if backend == "kimi" else "openai"
         raise ImportError(
-            "Kimi/OpenAI-compatible extraction requires the openai package. "
-            "Run: pip install openai"
+            f"{'Ollama' if backend == 'ollama' else 'Kimi'}/OpenAI-compatible extraction requires the openai package. "
+            f"Run: pip install {pkg_hint}"
         ) from exc
 
     client = OpenAI(api_key=api_key, base_url=base_url)
