@@ -206,6 +206,12 @@ def install(platform: str = "claude") -> None:
     print()
 
 
+def _print_install_usage() -> None:
+    platforms = ", ".join([*_PLATFORM_CONFIG, "gemini", "cursor"])
+    print("Usage: graphify install [--platform P|P]")
+    print(f"Platforms: {platforms}")
+
+
 _CLAUDE_MD_SECTION = """\
 ## graphify
 
@@ -1150,18 +1156,41 @@ def main() -> None:
     if cmd == "install":
         # Default to windows platform on Windows, claude elsewhere
         default_platform = "windows" if platform.system() == "Windows" else "claude"
-        chosen_platform = default_platform
+        selected_platform: str | None = None
         args = sys.argv[2:]
         i = 0
         while i < len(args):
-            if args[i].startswith("--platform="):
-                chosen_platform = args[i].split("=", 1)[1]
+            arg = args[i]
+            if arg in ("-h", "--help"):
+                _print_install_usage()
+                return
+            if arg.startswith("--platform="):
+                candidate = arg.split("=", 1)[1]
+                if selected_platform and selected_platform != candidate:
+                    print("error: specify install platform only once", file=sys.stderr)
+                    sys.exit(1)
+                selected_platform = candidate
                 i += 1
-            elif args[i] == "--platform" and i + 1 < len(args):
-                chosen_platform = args[i + 1]
+            elif arg == "--platform":
+                if i + 1 >= len(args):
+                    print("error: --platform requires a value", file=sys.stderr)
+                    sys.exit(1)
+                candidate = args[i + 1]
+                if selected_platform and selected_platform != candidate:
+                    print("error: specify install platform only once", file=sys.stderr)
+                    sys.exit(1)
+                selected_platform = candidate
                 i += 2
+            elif arg.startswith("-"):
+                print(f"error: unknown install option '{arg}'", file=sys.stderr)
+                sys.exit(1)
             else:
+                if selected_platform and selected_platform != arg:
+                    print("error: specify install platform only once", file=sys.stderr)
+                    sys.exit(1)
+                selected_platform = arg
                 i += 1
+        chosen_platform = selected_platform or default_platform
         install(platform=chosen_platform)
     elif cmd == "claude":
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
