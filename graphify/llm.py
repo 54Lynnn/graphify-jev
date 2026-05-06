@@ -1,5 +1,6 @@
-# Direct LLM backend for semantic extraction — supports Claude and Kimi K2.6.
-# Used by `graphify . --backend kimi` and the benchmark scripts.
+# Direct LLM backend for semantic extraction — supports Claude, Kimi K2.6,
+# Gemini, and OpenAI.
+# Used by `graphify extract . --backend gemini` and the benchmark scripts.
 # The default graphify pipeline uses Claude Code subagents via skill.md;
 # this module provides a direct API path for non-Claude-Code environments.
 from __future__ import annotations
@@ -68,6 +69,24 @@ BACKENDS: dict[str, dict] = {
         "temperature": 0,
         "max_tokens": 16384,
     },
+    "gemini": {
+        "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+        "default_model": "gemini-3-flash-preview",
+        "env_keys": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "model_env_key": "GRAPHIFY_GEMINI_MODEL",
+        "pricing": {"input": 0.50, "output": 3.00},  # USD per 1M tokens
+        "temperature": 0,
+        "reasoning_effort": "low",
+        "max_completion_tokens": 16384,
+    },
+    "openai": {
+        "base_url": "https://api.openai.com/v1",
+        "default_model": "gpt-4.1-mini",
+        "env_key": "OPENAI_API_KEY",
+        "model_env_key": "GRAPHIFY_OPENAI_MODEL",
+        "pricing": {"input": 0.40, "output": 1.60},  # USD per 1M tokens
+        "temperature": 0,
+    },
 }
 
 
@@ -130,13 +149,48 @@ def _parse_llm_json(raw: str) -> dict:
         return {"nodes": [], "edges": [], "hyperedges": []}
 
 
+def _backend_env_keys(backend: str) -> list[str]:
+    """Return accepted API-key environment variables for a backend."""
+    cfg = BACKENDS[backend]
+    keys = cfg.get("env_keys")
+    if keys:
+        return list(keys)
+    return [cfg["env_key"]]
+
+
+def _get_backend_api_key(backend: str) -> str:
+    """Return the first configured API key for backend, or an empty string."""
+    for env_key in _backend_env_keys(backend):
+        value = os.environ.get(env_key)
+        if value:
+            return value
+    return ""
+
+
+def _format_backend_env_keys(backend: str) -> str:
+    """Return user-facing accepted API-key variable names."""
+    return " or ".join(_backend_env_keys(backend))
+
+
+def _default_model_for_backend(backend: str) -> str:
+    """Return configured model override or backend default model."""
+    cfg = BACKENDS[backend]
+    model_env_key = cfg.get("model_env_key")
+    if model_env_key:
+        model = os.environ.get(model_env_key)
+        if model:
+            return model
+    return cfg["default_model"]
+
+
 def _call_openai_compat(
     base_url: str,
     api_key: str,
     model: str,
     user_message: str,
     temperature: float | None = 0,
-    max_tokens: int = 8192,
+    reasoning_effort: str | None = None,
+    max_completion_tokens: int = 8192,
     *,
     backend: str = "",
 ) -> dict:
@@ -146,7 +200,7 @@ def _call_openai_compat(
     except ImportError as exc:
         pkg_hint = "graphifyy[kimi]" if backend == "kimi" else "openai"
         raise ImportError(
-            f"{'Ollama' if backend == 'ollama' else 'Kimi'}/OpenAI-compatible extraction requires the openai package. "
+            "Gemini/Kimi/Ollama/OpenAI-compatible extraction requires the openai package. "
             f"Run: pip install {pkg_hint}"
         ) from exc
 
@@ -157,10 +211,12 @@ def _call_openai_compat(
             {"role": "system", "content": _EXTRACTION_SYSTEM},
             {"role": "user", "content": user_message},
         ],
-        "max_completion_tokens": max_tokens,
+        "max_completion_tokens": max_completion_tokens,
     }
     if temperature is not None:
         kwargs["temperature"] = temperature
+    if reasoning_effort is not None:
+        kwargs["reasoning_effort"] = reasoning_effort
     # Kimi-k2.6 is a reasoning model — disable thinking so content isn't empty
     if "moonshot" in base_url:
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
@@ -228,22 +284,31 @@ def extract_files_direct(
         raise ValueError(f"Unknown backend {backend!r}. Available: {sorted(BACKENDS)}")
 
     cfg = BACKENDS[backend]
-    key = api_key or os.environ.get(cfg["env_key"], "")
+    key = api_key or _get_backend_api_key(backend)
     if not key and backend == "ollama":
         key = "ollama"  # Ollama ignores auth but openai client requires non-empty
     if not key:
         raise ValueError(
             f"No API key for backend '{backend}'. "
-            f"Set {cfg['env_key']} or pass api_key=."
+            f"Set {_format_backend_env_keys(backend)} or pass api_key=."
         )
-    mdl = model or cfg["default_model"]
+    mdl = model or _default_model_for_backend(backend)
     user_msg = _read_files(files, root)
     max_out = _resolve_max_tokens(cfg.get("max_tokens", 8192))
 
     if backend == "claude":
         return _call_claude(key, mdl, user_msg, max_tokens=max_out)
     else:
-        return _call_openai_compat(cfg["base_url"], key, mdl, user_msg, temperature=cfg.get("temperature", 0), max_tokens=max_out, backend=backend)
+        return _call_openai_compat(
+            cfg["base_url"],
+            key,
+            mdl,
+            user_msg,
+            temperature=cfg.get("temperature", 0),
+            reasoning_effort=cfg.get("reasoning_effort"),
+            max_completion_tokens=cfg.get("max_completion_tokens", max_out),
+            backend=backend,
+        )
 
 
 def _estimate_file_tokens(path: Path) -> int:
@@ -506,13 +571,16 @@ def estimate_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
 def detect_backend() -> str | None:
     """Return the name of whichever backend has an API key set, or None.
 
-    Priority: kimi → ollama (if OLLAMA_BASE_URL set) → claude.
-    Ollama is opt-in via env var — never auto-probed.
+    Priority: gemini → kimi → ollama (opt-in via OLLAMA_BASE_URL) → claude → openai.
+    Ollama is opt-in via env var — never auto-probed without OLLAMA_BASE_URL set.
+    Claude is the default for the skill.md subagent pipeline and is never forced here.
     """
-    if os.environ.get("MOONSHOT_API_KEY"):
-        return "kimi"
+    for backend in ("gemini", "kimi"):
+        if _get_backend_api_key(backend):
+            return backend
     if os.environ.get("OLLAMA_BASE_URL"):
         return "ollama"
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return "claude"
+    for backend in ("claude", "openai"):
+        if _get_backend_api_key(backend):
+            return backend
     return None

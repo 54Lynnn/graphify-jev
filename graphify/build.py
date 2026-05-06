@@ -128,7 +128,7 @@ def build(
     directed=True produces a DiGraph that preserves edge direction (source→target).
     directed=False (default) produces an undirected Graph for backward compatibility.
     dedup=True (default) runs entity deduplication before building the graph.
-    dedup_llm_backend: if set (e.g. "claude" or "kimi"), uses LLM to resolve
+    dedup_llm_backend: if set (e.g. "gemini", "claude", or "kimi"), uses LLM to resolve
         ambiguous pairs in the 75–92 Jaro-Winkler score zone.
 
     Extractions are merged in order. For nodes with the same ID, the last
