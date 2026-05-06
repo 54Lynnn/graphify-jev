@@ -240,3 +240,52 @@ def test_extract_js_arrow_function_still_extracted():
         assert "greet()" in labels
     finally:
         arrow_fixture.unlink()
+
+
+def test_cross_file_call_promoted_to_extracted_with_import_evidence(tmp_path):
+    """A cross-file `calls` edge must be EXTRACTED when the caller's file has
+    an `imports` or `imports_from` edge linking it to the callee."""
+    caller = tmp_path / "caller.js"
+    callee = tmp_path / "lib.js"
+    caller.write_text(
+        "const { doWork } = require('./lib');\n"
+        "function run() { doWork(); }\n"
+    )
+    callee.write_text(
+        "function doWork() { return 1; }\n"
+        "module.exports = { doWork };\n"
+    )
+    result = extract([caller, callee], cache_root=tmp_path)
+    nodes = {n["id"]: n for n in result["nodes"]}
+    call_edges = [
+        e for e in result["edges"]
+        if e["relation"] == "calls"
+        and nodes[e["source"]]["label"] == "run()"
+        and nodes[e["target"]]["label"] == "doWork()"
+    ]
+    assert len(call_edges) == 1
+    assert call_edges[0]["confidence"] == "EXTRACTED"
+    assert call_edges[0]["confidence_score"] == 1.0
+
+
+def test_cross_file_call_remains_inferred_without_import_evidence(tmp_path):
+    """A cross-file `calls` edge must stay INFERRED when there is no import
+    edge — name collision alone is insufficient evidence."""
+    caller = tmp_path / "caller.js"
+    callee = tmp_path / "lib.js"
+    # Caller does NOT require lib — same-name function happens to exist elsewhere
+    caller.write_text("function run() { doUnique(); }\n")
+    callee.write_text(
+        "function doUnique() { return 1; }\n"
+        "module.exports = { doUnique };\n"
+    )
+    result = extract([caller, callee], cache_root=tmp_path)
+    nodes = {n["id"]: n for n in result["nodes"]}
+    call_edges = [
+        e for e in result["edges"]
+        if e["relation"] == "calls"
+        and nodes[e["source"]]["label"] == "run()"
+        and nodes[e["target"]]["label"] == "doUnique()"
+    ]
+    assert len(call_edges) == 1
+    assert call_edges[0]["confidence"] == "INFERRED"

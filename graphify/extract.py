@@ -4794,6 +4794,35 @@ def extract(
             key = normalised.lower()
             global_label_to_nids.setdefault(key, []).append(n["id"])
 
+    # Build evidence index from import edges so cross-file calls backed by an
+    # explicit import statement can be promoted from INFERRED to EXTRACTED.
+    # Direct symbol imports (`import { foo }` / `const { foo } = require()`) are
+    # the strongest evidence — caller's file_id has an `imports` edge directly to
+    # the callee's symbol id. Module imports (`imports_from`) are weaker but still
+    # confirm the caller pulled in the callee's source file.
+    file_to_symbol_imports: dict[str, set[str]] = {}
+    file_to_module_imports: dict[str, set[str]] = {}
+    for e in all_edges:
+        if e.get("relation") == "imports":
+            file_to_symbol_imports.setdefault(e["source"], set()).add(e["target"])
+        elif e.get("relation") == "imports_from":
+            file_to_module_imports.setdefault(e["source"], set()).add(e["target"])
+
+    # Map each node back to its containing file_id so we can ask
+    # "did the caller's file import the callee's file?"
+    # Use relativized paths to match how file node IDs were remapped above (#502).
+    nid_to_file_nid: dict[str, str] = {}
+    for n in all_nodes:
+        sf = n.get("source_file")
+        if not sf:
+            continue
+        sf_path = Path(sf)
+        try:
+            sf_rel = sf_path.relative_to(root) if sf_path.is_absolute() else sf_path
+        except ValueError:
+            sf_rel = sf_path
+        nid_to_file_nid[n["id"]] = _make_id(str(sf_rel))
+
     existing_pairs = {(e["source"], e["target"]) for e in all_edges}
     for result in per_file:
         for rc in result.get("raw_calls", []):
@@ -4814,13 +4843,30 @@ def extract(
             caller = rc["caller_nid"]
             if tgt != caller and (caller, tgt) not in existing_pairs:
                 existing_pairs.add((caller, tgt))
+                # Promote to EXTRACTED when there's a direct import edge from the
+                # caller's file pointing at either the callee symbol itself or the
+                # file the callee lives in.
+                caller_file_nid = nid_to_file_nid.get(caller)
+                callee_file_nid = nid_to_file_nid.get(tgt)
+                imported_symbols = file_to_symbol_imports.get(caller_file_nid, set())
+                imported_modules = file_to_module_imports.get(caller_file_nid, set())
+                has_import_evidence = (
+                    tgt in imported_symbols
+                    or (callee_file_nid is not None and callee_file_nid in imported_modules)
+                )
+                if has_import_evidence:
+                    confidence = "EXTRACTED"
+                    confidence_score = 1.0
+                else:
+                    confidence = "INFERRED"
+                    confidence_score = 0.8
                 all_edges.append({
                     "source": caller,
                     "target": tgt,
                     "relation": "calls",
                     "context": "call",
-                    "confidence": "INFERRED",
-                    "confidence_score": 0.8,
+                    "confidence": confidence,
+                    "confidence_score": confidence_score,
                     "source_file": rc.get("source_file", ""),
                     "source_location": rc.get("source_location"),
                     "weight": 1.0,
