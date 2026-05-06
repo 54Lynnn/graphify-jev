@@ -2,6 +2,21 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.7.8 (2026-05-06)
+
+- Feat: Gemini and OpenAI backends -- `graphify extract ./docs --backend gemini` (GEMINI_API_KEY / GOOGLE_API_KEY) or `--backend openai` (OPENAI_API_KEY); `[gemini]` and `[openai]` extras added (#735)
+- Feat: Groovy and Spock support -- `.groovy` and `.gradle` extracted via tree-sitter-groovy; Spock spec files (`def "feature"()` syntax) handled via regex fallback (#732)
+- Feat: Luau support -- `.luau` (Roblox Luau) added to code extraction using the Lua tree-sitter parser (#745)
+- Feat: Markdown structural extraction -- headings, fenced code blocks, and nesting hierarchy extracted as graph nodes from `.md` and `.mdx` files with zero new dependencies (#711)
+- Fix: `collect_files()` extension set now auto-syncs with `_DISPATCH` -- previously 18 extensions (`.sql`, `.vue`, `.svelte`, `.jsx`, `.ex`, `.jl`, etc.) were silently skipped in skill-mode extraction (#711)
+- Fix: `detect_incremental` now forwards `follow_symlinks` to `detect()` -- symlinked subtrees no longer vanish on `--update` runs (#736)
+- Fix: TS bare-path / `.svelte.ts` / `.svelte.js` / `index.ts` directory / multi-dot imports now resolve correctly -- previously these produced phantom edges dropped at merge time (#717, #716)
+- Fix: `cluster-only` now loads and saves `.graphify_labels.json` -- human-readable community labels survive re-clustering instead of resetting to "Community N" (#744)
+- Fix: `graphify export wiki` now fails fast with exit 1 if `.graphify_analysis.json` is missing -- prevents silent deletion of existing wiki articles (#746)
+- Fix: `to_wiki()` now raises before the cleanup loop when `communities` is empty -- second safety layer against wiki data loss (#746)
+- Fix: Ollama import error message now says "Ollama" not "Kimi" and points to `pip install openai`; `[ollama]` extras group added (#750)
+- Security: hooks.py path execution now validates scripts are within the repo root -- closes supply-chain attack vector where a malicious commit could redirect hook execution (#747)
+
 ## 0.7.7 (2026-05-05)
 
 - Feat: Ollama backend for headless extraction -- `graphify extract ./docs --backend ollama`; auto-detected when `OLLAMA_BASE_URL` is set; defaults to `qwen2.5-coder:7b`; zero cost ($0.00); sentinel API key handles OpenAI client auth requirement (#729)

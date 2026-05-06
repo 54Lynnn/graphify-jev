@@ -124,7 +124,7 @@ Uninstall with the matching command (e.g. `graphify claude uninstall`).
 
 | Type | Extensions |
 |------|-----------|
-| Code (26 languages) | `.py .ts .js .jsx .tsx .go .rs .java .c .cpp .rb .cs .kt .scala .php .swift .lua .zig .ps1 .ex .exs .m .jl .vue .svelte .sql .f .F .f90 .F90 .f95 .F95 .f03 .F03 .f08 .F08` |
+| Code (28 languages) | `.py .ts .js .jsx .tsx .go .rs .java .c .cpp .rb .cs .kt .scala .php .swift .lua .luau .zig .ps1 .ex .exs .m .jl .vue .svelte .groovy .gradle .sql .f .F .f90 .F90 .f95 .F95 .f03 .F03 .f08 .F08` |
 | Docs | `.md .mdx .html .txt .rst .yaml .yml` |
 | Office | `.docx .xlsx` (requires `pip install graphifyy[office]`) |
 | PDFs | `.pdf` |
