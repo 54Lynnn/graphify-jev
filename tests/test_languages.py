@@ -6,6 +6,7 @@ from graphify.extract import (
     extract_java, extract_c, extract_cpp, extract_ruby,
     extract_csharp, extract_kotlin, extract_scala, extract_php,
     extract_swift, extract_go, extract_julia, extract_js, extract_fortran,
+    extract_groovy,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -896,3 +897,70 @@ def test_markdown_no_dangling_edges():
     node_ids = {n["id"] for n in r["nodes"]}
     for e in r["edges"]:
         assert e["source"] in node_ids, f"Dangling source: {e}"
+
+
+# ── Groovy ───────────────────────────────────────────────────────────────────
+
+
+def test_groovy_no_error():
+    r = extract_groovy(FIXTURES / "sample.groovy")
+    assert "error" not in r
+
+
+def test_groovy_finds_class():
+    r = extract_groovy(FIXTURES / "sample.groovy")
+    assert any("SampleService" in l for l in _labels(r))
+
+
+def test_groovy_finds_methods():
+    r = extract_groovy(FIXTURES / "sample.groovy")
+    labels = _labels(r)
+    assert any("process" in l for l in labels)
+    assert any("reset" in l for l in labels)
+
+
+def test_groovy_finds_imports():
+    r = extract_groovy(FIXTURES / "sample.groovy")
+    assert "imports" in _relations(r)
+
+
+def test_groovy_import_edges_have_import_context():
+    r = extract_groovy(FIXTURES / "sample.groovy")
+    import_edges = _edges_with_relation(r, "imports", "imports_from")
+    assert import_edges
+    assert all(e.get("context") == "import" for e in import_edges)
+
+
+def test_groovy_no_dangling_edges():
+    r = extract_groovy(FIXTURES / "sample.groovy")
+    node_ids = {n["id"] for n in r["nodes"]}
+    for e in r["edges"]:
+        assert e["source"] in node_ids
+
+
+def test_groovy_spock_finds_class():
+    r = extract_groovy(FIXTURES / "sample_spock.groovy")
+    assert any("SampleSpec" in l for l in _labels(r))
+
+
+def test_groovy_spock_finds_feature_methods():
+    r = extract_groovy(FIXTURES / "sample_spock.groovy")
+    feature_labels = [l for l in _labels(r) if l.startswith('"')]
+    assert len(feature_labels) >= 2
+
+
+def test_groovy_spock_finds_method_with_apostrophe():
+    r = extract_groovy(FIXTURES / "sample_spock.groovy")
+    assert any("it's" in l for l in _labels(r))
+
+
+def test_groovy_spock_preserves_import_edges():
+    r = extract_groovy(FIXTURES / "sample_spock.groovy")
+    assert "imports" in _relations(r)
+
+
+def test_groovy_spock_no_dangling_edges():
+    r = extract_groovy(FIXTURES / "sample_spock.groovy")
+    node_ids = {n["id"] for n in r["nodes"]}
+    for e in r["edges"]:
+        assert e["source"] in node_ids

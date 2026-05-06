@@ -21,6 +21,7 @@ dependencies = [
     "tree-sitter-go",
     "tree-sitter-rust",
     "tree-sitter-java",
+    "tree-sitter-groovy",
     "tree-sitter-c",
     "tree-sitter-cpp",
     "tree-sitter-ruby",
