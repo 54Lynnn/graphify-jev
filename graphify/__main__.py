@@ -1099,6 +1099,7 @@ def main() -> None:
         print("    --backend B             gemini|kimi|claude|openai|ollama (default: whichever API key is set)")
         print("    --model M               override backend default model")
         print("    --out DIR               output dir (default: <path>); writes <DIR>/graphify-out/")
+        print("    --google-workspace      export .gdoc/.gsheet/.gslides shortcuts via gws before extraction")
         print("    --no-cluster            skip clustering, write raw extraction only")
         print("    --global                also merge the resulting graph into the global graph")
         print("    --as <tag>              repo tag for --global (default: target directory name)")
@@ -2006,7 +2007,7 @@ def main() -> None:
         if len(sys.argv) < 3:
             print(
                 "Usage: graphify extract <path> [--backend gemini|kimi|claude|openai] "
-                "[--out DIR] [--no-cluster]",
+                "[--out DIR] [--google-workspace] [--no-cluster]",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -2021,6 +2022,7 @@ def main() -> None:
         out_dir: Path | None = None
         no_cluster = False
         dedup_llm = False
+        google_workspace = False
         global_merge = False
         global_repo_tag: str | None = None
         args = sys.argv[3:]
@@ -2043,6 +2045,8 @@ def main() -> None:
                 no_cluster = True; i += 1
             elif a == "--dedup-llm":
                 dedup_llm = True; i += 1
+            elif a == "--google-workspace":
+                google_workspace = True; i += 1
             elif a == "--global":
                 global_merge = True; i += 1
             elif a == "--as" and i + 1 < len(args):
@@ -2104,10 +2108,14 @@ def main() -> None:
 
         if incremental_mode:
             print(f"[graphify extract] incremental scan of {target}")
-            detection = _detect_incremental(target, manifest_path=str(manifest_path))
+            detection = _detect_incremental(
+                target,
+                manifest_path=str(manifest_path),
+                google_workspace=google_workspace or None,
+            )
         else:
             print(f"[graphify extract] scanning {target}")
-            detection = _detect(target)
+            detection = _detect(target, google_workspace=google_workspace or None)
 
         files_by_type = detection.get("files", {})
         if incremental_mode:
