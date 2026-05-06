@@ -61,7 +61,7 @@ def test_collect_files_from_dir():
     supported = {".py", ".js", ".ts", ".tsx", ".go", ".rs",
                  ".java", ".c", ".cpp", ".cc", ".cxx", ".rb",
                  ".cs", ".kt", ".kts", ".scala", ".php", ".h", ".hpp",
-                 ".swift", ".lua", ".toc", ".zig", ".ps1", ".ex", ".exs",
+                 ".swift", ".lua", ".luau", ".toc", ".zig", ".ps1", ".ex", ".exs",
                  ".m", ".mm"}
     assert all(f.suffix in supported for f in files)
     assert len(files) > 0

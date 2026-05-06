@@ -4087,6 +4087,7 @@ _DISPATCH: dict[str, Any] = {
     ".php": extract_php,
     ".swift": extract_swift,
     ".lua": extract_lua,
+    ".luau": extract_lua,
     ".toc": extract_lua,
     ".zig": extract_zig,
     ".ps1": extract_powershell,
