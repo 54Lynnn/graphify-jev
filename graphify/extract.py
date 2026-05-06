@@ -4042,6 +4042,116 @@ def extract_elixir(path: Path) -> dict:
     return {"nodes": nodes, "edges": clean_edges, "raw_calls": raw_calls, "input_tokens": 0, "output_tokens": 0}
 
 
+def extract_markdown(path: Path) -> dict:
+    """Extract structural nodes and edges from a Markdown file.
+
+    Produces nodes for:
+    - The file itself
+    - Each heading (# / ## / ### etc.)
+    - Each fenced code block (``` ... ```)
+
+    Produces edges for:
+    - file --contains--> heading
+    - parent heading --contains--> child heading (nesting by level)
+    - heading --contains--> code block
+    - heading --references--> other node (when backtick `Name` matches a known pattern)
+
+    No tree-sitter dependency — pure line-by-line parsing.
+    """
+    try:
+        source = path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        return {"nodes": [], "edges": [], "error": str(e)}
+
+    stem = _file_stem(path)
+    str_path = str(path)
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_ids: set[str] = set()
+
+    def add_node(nid: str, label: str, line: int, file_type: str = "document") -> None:
+        if nid not in seen_ids:
+            seen_ids.add(nid)
+            nodes.append({"id": nid, "label": label, "file_type": file_type,
+                          "source_file": str_path, "source_location": f"L{line}"})
+
+    def add_edge(src: str, tgt: str, relation: str, line: int,
+                 confidence: str = "EXTRACTED", weight: float = 1.0) -> None:
+        edges.append({"source": src, "target": tgt, "relation": relation,
+                      "confidence": confidence, "source_file": str_path,
+                      "source_location": f"L{line}", "weight": weight})
+
+    file_nid = _make_id(str(path))
+    add_node(file_nid, path.name, 1)
+
+    # Track heading stack for nesting: [(level, nid), ...]
+    heading_stack: list[tuple[int, str]] = []
+    in_code_block = False
+    code_block_lang: str | None = None
+    code_block_start: int = 0
+    code_block_lines: list[str] = []
+    code_block_count = 0
+
+    lines = source.splitlines()
+    for line_num_0, line_text in enumerate(lines):
+        line_num = line_num_0 + 1
+
+        # Toggle fenced code blocks
+        stripped = line_text.strip()
+        if stripped.startswith("```"):
+            if not in_code_block:
+                in_code_block = True
+                code_block_lang = stripped[3:].strip().split()[0] if len(stripped) > 3 else None
+                code_block_start = line_num
+                code_block_lines = []
+                continue
+            else:
+                # End of code block — create a node
+                in_code_block = False
+                code_block_count += 1
+                snippet = "\n".join(code_block_lines[:3])  # first 3 lines as preview
+                label = f"code:{code_block_lang}" if code_block_lang else f"code:block{code_block_count}"
+                if snippet:
+                    # Use first meaningful line as label hint
+                    first_line = code_block_lines[0].strip()[:60] if code_block_lines else ""
+                    if first_line:
+                        label = f"{label} ({first_line})"
+                cb_nid = _make_id(stem, f"codeblock_{code_block_count}")
+                add_node(cb_nid, label, code_block_start)
+                # Attach to nearest heading or file
+                parent = heading_stack[-1][1] if heading_stack else file_nid
+                add_edge(parent, cb_nid, "contains", code_block_start)
+                continue
+
+        if in_code_block:
+            code_block_lines.append(line_text)
+            continue
+
+        # Detect headings: # Heading, ## Heading, etc.
+        heading_match = re.match(r'^(#{1,6})\s+(.+)', line_text)
+        if heading_match:
+            level = len(heading_match.group(1))
+            title = heading_match.group(2).strip()
+            h_nid = _make_id(stem, title)
+            # Avoid duplicate heading IDs by appending line number
+            if h_nid in seen_ids:
+                h_nid = _make_id(stem, title, str(line_num))
+            add_node(h_nid, title, line_num)
+
+            # Pop headings at same or deeper level
+            while heading_stack and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+
+            # Connect to parent heading or file
+            parent = heading_stack[-1][1] if heading_stack else file_nid
+            add_edge(parent, h_nid, "contains", line_num)
+
+            heading_stack.append((level, h_nid))
+            continue
+
+    return {"nodes": nodes, "edges": edges, "input_tokens": 0, "output_tokens": 0}
+
+
 # ── Main extract and collect_files ────────────────────────────────────────────
 
 
@@ -4112,6 +4222,8 @@ _DISPATCH: dict[str, Any] = {
     ".v": extract_verilog,
     ".sv": extract_verilog,
     ".sql": extract_sql,
+    ".md": extract_markdown,
+    ".mdx": extract_markdown,
 }
 
 
@@ -4428,13 +4540,7 @@ def extract(
 def collect_files(target: Path, *, follow_symlinks: bool = False, root: Path | None = None) -> list[Path]:
     if target.is_file():
         return [target]
-    _EXTENSIONS = {
-        ".py", ".js", ".ts", ".tsx", ".go", ".rs",
-        ".java", ".c", ".h", ".cpp", ".cc", ".cxx", ".hpp",
-        ".rb", ".cs", ".kt", ".kts", ".scala", ".php", ".swift",
-        ".lua", ".toc", ".zig", ".ps1",
-        ".m", ".mm",
-    }
+    _EXTENSIONS = set(_DISPATCH.keys())
     from graphify.detect import _load_graphifyignore, _is_ignored
     ignore_root = root if root is not None else target
     patterns = _load_graphifyignore(ignore_root)

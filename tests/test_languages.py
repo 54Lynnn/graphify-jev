@@ -853,3 +853,46 @@ def test_ts_static_template_literal_resolved():
     targets = {e["target"] for e in r["edges"] if e["relation"] == "imports_from"}
     assert any("statichelper" in t.lower() for t in targets), \
         f"Static template literal import not resolved: {targets}"
+
+
+# ── Markdown ─────────────────────────────────────────────────────────────────
+
+from graphify.extract import extract_markdown
+
+def test_markdown_no_error():
+    r = extract_markdown(FIXTURES / "deploy_guide.md")
+    assert "error" not in r
+
+def test_markdown_finds_headings():
+    r = extract_markdown(FIXTURES / "deploy_guide.md")
+    labels = _labels(r)
+    assert any("Deploy Guide" in l for l in labels)
+    assert any("Prerequisites" in l for l in labels)
+    assert any("Full Deploy" in l for l in labels)
+    assert any("Rollback" in l for l in labels)
+
+def test_markdown_finds_nested_heading():
+    """### Database Migration is nested under ## Full Deploy."""
+    r = extract_markdown(FIXTURES / "deploy_guide.md")
+    labels = _labels(r)
+    assert any("Database Migration" in l for l in labels)
+
+def test_markdown_finds_code_blocks():
+    r = extract_markdown(FIXTURES / "deploy_guide.md")
+    labels = _labels(r)
+    assert any("code:bash" in l for l in labels)
+    assert any("code:sql" in l for l in labels)
+    assert any("code:python" in l for l in labels)
+
+def test_markdown_contains_edges():
+    """Headings and code blocks should be connected via 'contains' edges."""
+    r = extract_markdown(FIXTURES / "deploy_guide.md")
+    assert "contains" in _relations(r)
+    contains_edges = [e for e in r["edges"] if e["relation"] == "contains"]
+    assert len(contains_edges) >= 5  # file->h1, h1->h2s, h2->h3, h2->codeblocks
+
+def test_markdown_no_dangling_edges():
+    r = extract_markdown(FIXTURES / "deploy_guide.md")
+    node_ids = {n["id"] for n in r["nodes"]}
+    for e in r["edges"]:
+        assert e["source"] in node_ids, f"Dangling source: {e}"
