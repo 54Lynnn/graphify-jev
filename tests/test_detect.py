@@ -1,5 +1,5 @@
 from pathlib import Path
-from graphify.detect import classify_file, count_words, detect, FileType, _looks_like_paper, _is_ignored, _load_graphifyignore
+from graphify.detect import classify_file, count_words, detect, detect_incremental, save_manifest, FileType, _looks_like_paper, _is_ignored, _load_graphifyignore
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -218,6 +218,33 @@ def test_detect_handles_circular_symlinks(tmp_path):
 
     result = detect(tmp_path, follow_symlinks=True)
     assert any("main.py" in f for f in result["files"]["code"])
+
+
+def test_detect_incremental_propagates_follow_symlinks(tmp_path, monkeypatch):
+    """detect_incremental must forward follow_symlinks so symlinked sub-trees
+    appear in incremental scans the same way they appear in full scans."""
+    monkeypatch.chdir(tmp_path)
+
+    real_dir = tmp_path / "real_corpus"
+    real_dir.mkdir()
+    (real_dir / "note.md").write_text("# real note\n\nsome content")
+    (tmp_path / "linked_corpus").symlink_to(real_dir)
+
+    manifest_path = str(tmp_path / "manifest.json")
+
+    # Without following symlinks, the symlinked dir contents are invisible.
+    no_link = detect_incremental(tmp_path, manifest_path, follow_symlinks=False)
+    assert not any("linked_corpus" in f for f in no_link["files"]["document"])
+
+    # With follow_symlinks=True, the symlinked dir contents appear and are new.
+    yes_link = detect_incremental(tmp_path, manifest_path, follow_symlinks=True)
+    assert any("linked_corpus" in f for f in yes_link["files"]["document"])
+    assert yes_link["new_total"] >= 2  # real + linked
+
+    # After saving manifest, a second incremental scan should see no changes.
+    save_manifest(yes_link["files"], manifest_path)
+    second = detect_incremental(tmp_path, manifest_path, follow_symlinks=True)
+    assert second["new_total"] == 0
 
 
 def test_classify_video_extensions():
