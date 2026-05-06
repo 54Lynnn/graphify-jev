@@ -194,3 +194,49 @@ def test_cross_file_calls_skip_ambiguous_duplicate_labels(tmp_path):
         nodes[e["source"]]["label"] == "run()" and nodes[e["target"]]["label"] == "log()"
         for e in calls
     )
+
+
+def test_extract_js_destructured_require_imports_from():
+    """`const { foo } = require('./mod')` must emit imports_from to the resolved module path."""
+    from graphify.extract import extract_js
+    result = extract_js(FIXTURES / "cjs_require.js")
+    imports_from = [e for e in result["edges"] if e["relation"] == "imports_from"]
+    targets = [e["target"] for e in imports_from]
+    # Must resolve relative require() targets to file ids so they connect across the corpus
+    assert any("foundation" in t for t in targets), f"No foundation import_from: {targets}"
+    assert any("utils" in t for t in targets), f"No utils import_from: {targets}"
+    assert any("helpers" in t for t in targets), f"No helpers import_from: {targets}"
+    for e in imports_from:
+        assert e["confidence"] == "EXTRACTED"
+
+
+def test_extract_js_destructured_require_named_symbols():
+    """Destructured CJS requires must emit symbol-level `imports` edges per binder."""
+    from graphify.extract import extract_js, _make_id, _file_stem
+    result = extract_js(FIXTURES / "cjs_require.js")
+    sym_targets = [e["target"] for e in result["edges"] if e["relation"] == "imports"]
+    foundation_stem = _file_stem(FIXTURES / "foundation.js")
+    assert _make_id(foundation_stem, "loadFoundation") in sym_targets
+    assert _make_id(foundation_stem, "validateConfig") in sym_targets
+
+
+def test_extract_js_member_require_emits_property_symbol():
+    """`const x = require('./m').y` must emit symbol edge for `y`."""
+    from graphify.extract import extract_js, _make_id, _file_stem
+    result = extract_js(FIXTURES / "cjs_require.js")
+    sym_targets = [e["target"] for e in result["edges"] if e["relation"] == "imports"]
+    helpers_stem = _file_stem(FIXTURES / "helpers.js")
+    assert _make_id(helpers_stem, "helperFn") in sym_targets
+
+
+def test_extract_js_arrow_function_still_extracted():
+    """Regression: arrow functions in lexical_declaration must still produce nodes."""
+    from graphify.extract import extract_js
+    arrow_fixture = FIXTURES / "_arrow_only.js"
+    arrow_fixture.write_text("const greet = () => console.log('hi');\n")
+    try:
+        result = extract_js(arrow_fixture)
+        labels = [n["label"] for n in result["nodes"]]
+        assert "greet()" in labels
+    finally:
+        arrow_fixture.unlink()
