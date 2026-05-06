@@ -1,7 +1,7 @@
 # git hook integration - install/uninstall graphify post-commit and post-checkout hooks
 from __future__ import annotations
+import configparser
 import re
-import subprocess
 from pathlib import Path
 
 _HOOK_MARKER = "# graphify-hook-start"
@@ -151,19 +151,24 @@ def _git_root(path: Path) -> Path | None:
 def _hooks_dir(root: Path) -> Path:
     """Return the git hooks directory, respecting core.hooksPath if set (e.g. Husky)."""
     try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "config", "core.hooksPath"],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            custom = result.stdout.strip()
-            if custom:
-                p = Path(custom).expanduser()
-                if not p.is_absolute():
-                    p = root / p
+        cfg = configparser.RawConfigParser()
+        cfg.read(root / ".git" / "config", encoding="utf-8")
+        # configparser lowercases option names; git's hooksPath becomes hookspath
+        custom = cfg.get("core", "hookspath", fallback="").strip()
+        if custom:
+            p = Path(custom).expanduser()
+            if not p.is_absolute():
+                p = root / p
+            # Validate the resolved path stays within the repository root
+            # to prevent supply-chain attacks via malicious core.hooksPath values
+            try:
+                p.resolve().relative_to(root.resolve())
+            except ValueError:
+                pass  # Path escapes repo root; fall through to default .git/hooks
+            else:
                 p.mkdir(parents=True, exist_ok=True)
                 return p
-    except (OSError, FileNotFoundError):
+    except Exception:
         pass
     d = root / ".git" / "hooks"
     d.mkdir(exist_ok=True)
