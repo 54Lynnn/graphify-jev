@@ -333,43 +333,40 @@ def _import_python(node, source: bytes, file_nid: str, stem: str, edges: list, s
             })
 
 
+def _resolve_js_import_target(raw: str, str_path: str) -> "tuple[str, Path | None] | None":
+    """Resolve a JS/TS import path string to (target_nid, resolved_path).
+
+    Handles relative paths, tsconfig path aliases, and bare/scoped imports.
+    Returns None if `raw` is empty.
+    """
+    if not raw:
+        return None
+    if raw.startswith("."):
+        resolved = Path(os.path.normpath(Path(str_path).parent / raw))
+        resolved = _resolve_js_module_path(resolved)
+        return _make_id(str(resolved)), resolved
+    aliases = _load_tsconfig_aliases(Path(str_path).parent)
+    for alias_prefix, alias_base in aliases.items():
+        if raw == alias_prefix or raw.startswith(alias_prefix + "/"):
+            rest = raw[len(alias_prefix):].lstrip("/")
+            resolved_alias = Path(os.path.normpath(Path(alias_base) / rest))
+            resolved_alias = _resolve_js_module_path(resolved_alias)
+            return _make_id(str(resolved_alias)), resolved_alias
+    module_name = raw.split("/")[-1]
+    if not module_name:
+        return None
+    return _make_id(module_name), None
+
+
 def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> None:
     resolved_path: "Path | None" = None
     for child in node.children:
         if child.type == "string":
             raw = _read_text(child, source).strip("'\"` ")
-            if not raw:
+            resolved = _resolve_js_import_target(raw, str_path)
+            if resolved is None:
                 break
-            if raw.startswith("."):
-                # Relative import - resolve to full path so IDs match file node IDs
-                # normpath removes ".." segments so the ID matches the target file's own node ID
-                resolved = Path(os.path.normpath(Path(str_path).parent / raw))
-                # TS / SvelteKit resolver: try .ts/.tsx/.svelte/.svelte.ts/index.{ts,…}
-                # so bare-path and Svelte-5-rune imports land on the right node id (#716)
-                resolved = _resolve_js_module_path(resolved)
-                tgt_nid = _make_id(str(resolved))
-                resolved_path = resolved
-            else:
-                # Check tsconfig.json path aliases (e.g. "@/" → "src/") before treating as external (#575)
-                aliases = _load_tsconfig_aliases(Path(str_path).parent)
-                resolved_alias = None
-                for alias_prefix, alias_base in aliases.items():
-                    if raw == alias_prefix or raw.startswith(alias_prefix + "/"):
-                        rest = raw[len(alias_prefix):].lstrip("/")
-                        resolved_alias = Path(os.path.normpath(Path(alias_base) / rest))
-                        break
-                if resolved_alias is not None:
-                    # Same resolver fixups as the relative branch — alias targets
-                    # are equally likely to be bare paths / .svelte.ts / index.ts (#716)
-                    resolved_alias = _resolve_js_module_path(resolved_alias)
-                    tgt_nid = _make_id(str(resolved_alias))
-                    resolved_path = resolved_alias
-                else:
-                    # Bare/scoped import (node_modules) - use last segment; dropped as external
-                    module_name = raw.split("/")[-1]
-                    if not module_name:
-                        break
-                    tgt_nid = _make_id(module_name)
+            tgt_nid, resolved_path = resolved
             edges.append({
                 "source": file_nid,
                 "target": tgt_nid,
@@ -680,26 +677,137 @@ def _get_cpp_func_name(node, source: bytes) -> str | None:
 
 # ── JS/TS extra walk for arrow functions ──────────────────────────────────────
 
+def _find_require_call(value_node):
+    """Return the call_expression node if `value_node` is a `require(...)` call
+    or `require(...).x` member access. Otherwise None."""
+    if value_node is None:
+        return None
+    if value_node.type == "call_expression":
+        fn = value_node.child_by_field_name("function")
+        if fn is not None and fn.type == "identifier":
+            return value_node
+    if value_node.type == "member_expression":
+        obj = value_node.child_by_field_name("object")
+        return _find_require_call(obj)
+    return None
+
+
+def _require_imports_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> bool:
+    """Detect CommonJS require imports inside lexical_declaration / variable_declaration.
+
+    Handles three patterns:
+      const { foo, bar } = require('./mod')   → file → mod (imports_from), file → foo, file → bar
+      const mod         = require('./mod')   → file → mod (imports_from)
+      const x           = require('./mod').y → file → mod (imports_from), file → y
+
+    Returns True if any require import was found.
+    """
+    if node.type not in ("lexical_declaration", "variable_declaration"):
+        return False
+    found = False
+    for child in node.children:
+        if child.type != "variable_declarator":
+            continue
+        value = child.child_by_field_name("value")
+        call = _find_require_call(value)
+        if call is None:
+            continue
+        fn = call.child_by_field_name("function")
+        if fn is None or _read_text(fn, source) != "require":
+            continue
+        args = call.child_by_field_name("arguments")
+        if args is None:
+            continue
+        raw = None
+        for arg in args.children:
+            if arg.type == "string":
+                raw = _read_text(arg, source).strip("'\"` ")
+                break
+        if not raw:
+            continue
+        resolved = _resolve_js_import_target(raw, str_path)
+        if resolved is None:
+            continue
+        tgt_nid, resolved_path = resolved
+        line = node.start_point[0] + 1
+        edges.append({
+            "source": file_nid,
+            "target": tgt_nid,
+            "relation": "imports_from",
+            "context": "import",
+            "confidence": "EXTRACTED",
+            "source_file": str_path,
+            "source_location": f"L{line}",
+            "weight": 1.0,
+        })
+        found = True
+
+        # Symbol-level edges for destructured / accessor binders.
+        target_stem = _file_stem(resolved_path) if resolved_path is not None else None
+        name_node = child.child_by_field_name("name")
+        sym_names: list[str] = []
+        if name_node is not None and name_node.type == "object_pattern":
+            # `const { a, b: alias } = require('./m')` — emit edges for each property key
+            for prop in name_node.children:
+                if prop.type == "shorthand_property_identifier_pattern":
+                    sym_names.append(_read_text(prop, source))
+                elif prop.type == "pair_pattern":
+                    key = prop.child_by_field_name("key")
+                    if key is not None:
+                        sym_names.append(_read_text(key, source))
+        elif value is not None and value.type == "member_expression":
+            # `const x = require('./m').y` — symbol is the property accessed
+            prop = value.child_by_field_name("property")
+            if prop is not None:
+                sym_names.append(_read_text(prop, source))
+        if target_stem is not None:
+            for sym in sym_names:
+                edges.append({
+                    "source": file_nid,
+                    "target": _make_id(target_stem, sym),
+                    "relation": "imports",
+                    "context": "import",
+                    "confidence": "EXTRACTED",
+                    "source_file": str_path,
+                    "source_location": f"L{line}",
+                    "weight": 1.0,
+                })
+    return found
+
+
 def _js_extra_walk(node, source: bytes, file_nid: str, stem: str, str_path: str,
                    nodes: list, edges: list, seen_ids: set, function_bodies: list,
                    parent_class_nid: str | None, add_node_fn, add_edge_fn) -> bool:
-    """Handle lexical_declaration (arrow functions) for JS/TS. Returns True if handled."""
-    if node.type == "lexical_declaration":
-        for child in node.children:
-            if child.type == "variable_declarator":
-                value = child.child_by_field_name("value")
-                if value and value.type == "arrow_function":
-                    name_node = child.child_by_field_name("name")
-                    if name_node:
-                        func_name = _read_text(name_node, source)
-                        line = child.start_point[0] + 1
-                        func_nid = _make_id(stem, func_name)
-                        add_node_fn(func_nid, f"{func_name}()", line)
-                        add_edge_fn(file_nid, func_nid, "contains", line)
-                        body = value.child_by_field_name("body")
-                        if body:
-                            function_bodies.append((func_nid, body))
-        return True
+    """Handle lexical_declaration (arrow functions, CJS requires) for JS/TS.
+
+    Returns True if handled (caller should not descend further).
+    """
+    if node.type in ("lexical_declaration", "variable_declaration"):
+        # CJS require imports — emit edges, do not block other lexical_declaration handling
+        require_found = _require_imports_js(node, source, file_nid, stem, edges, str_path)
+
+        # Arrow function declarations (existing behavior, lexical_declaration only)
+        arrow_found = False
+        if node.type == "lexical_declaration":
+            for child in node.children:
+                if child.type == "variable_declarator":
+                    value = child.child_by_field_name("value")
+                    if value and value.type == "arrow_function":
+                        name_node = child.child_by_field_name("name")
+                        if name_node:
+                            func_name = _read_text(name_node, source)
+                            line = child.start_point[0] + 1
+                            func_nid = _make_id(stem, func_name)
+                            add_node_fn(func_nid, f"{func_name}()", line)
+                            add_edge_fn(file_nid, func_nid, "contains", line)
+                            body = value.child_by_field_name("body")
+                            if body:
+                                function_bodies.append((func_nid, body))
+                            arrow_found = True
+        if arrow_found:
+            return True
+        if require_found:
+            return True
     return False
 
 
@@ -4695,6 +4803,35 @@ def extract(
             key = normalised.lower()
             global_label_to_nids.setdefault(key, []).append(n["id"])
 
+    # Build evidence index from import edges so cross-file calls backed by an
+    # explicit import statement can be promoted from INFERRED to EXTRACTED.
+    # Direct symbol imports (`import { foo }` / `const { foo } = require()`) are
+    # the strongest evidence — caller's file_id has an `imports` edge directly to
+    # the callee's symbol id. Module imports (`imports_from`) are weaker but still
+    # confirm the caller pulled in the callee's source file.
+    file_to_symbol_imports: dict[str, set[str]] = {}
+    file_to_module_imports: dict[str, set[str]] = {}
+    for e in all_edges:
+        if e.get("relation") == "imports":
+            file_to_symbol_imports.setdefault(e["source"], set()).add(e["target"])
+        elif e.get("relation") == "imports_from":
+            file_to_module_imports.setdefault(e["source"], set()).add(e["target"])
+
+    # Map each node back to its containing file_id so we can ask
+    # "did the caller's file import the callee's file?"
+    # Use relativized paths to match how file node IDs were remapped above (#502).
+    nid_to_file_nid: dict[str, str] = {}
+    for n in all_nodes:
+        sf = n.get("source_file")
+        if not sf:
+            continue
+        sf_path = Path(sf)
+        try:
+            sf_rel = sf_path.relative_to(root) if sf_path.is_absolute() else sf_path
+        except ValueError:
+            sf_rel = sf_path
+        nid_to_file_nid[n["id"]] = _make_id(str(sf_rel))
+
     existing_pairs = {(e["source"], e["target"]) for e in all_edges}
     for result in per_file:
         for rc in result.get("raw_calls", []):
@@ -4715,13 +4852,30 @@ def extract(
             caller = rc["caller_nid"]
             if tgt != caller and (caller, tgt) not in existing_pairs:
                 existing_pairs.add((caller, tgt))
+                # Promote to EXTRACTED when there's a direct import edge from the
+                # caller's file pointing at either the callee symbol itself or the
+                # file the callee lives in.
+                caller_file_nid = nid_to_file_nid.get(caller)
+                callee_file_nid = nid_to_file_nid.get(tgt)
+                imported_symbols = file_to_symbol_imports.get(caller_file_nid, set())
+                imported_modules = file_to_module_imports.get(caller_file_nid, set())
+                has_import_evidence = (
+                    tgt in imported_symbols
+                    or (callee_file_nid is not None and callee_file_nid in imported_modules)
+                )
+                if has_import_evidence:
+                    confidence = "EXTRACTED"
+                    confidence_score = 1.0
+                else:
+                    confidence = "INFERRED"
+                    confidence_score = 0.8
                 all_edges.append({
                     "source": caller,
                     "target": tgt,
                     "relation": "calls",
                     "context": "call",
-                    "confidence": "INFERRED",
-                    "confidence_score": 0.8,
+                    "confidence": confidence,
+                    "confidence_score": confidence_score,
                     "source_file": rc.get("source_file", ""),
                     "source_location": rc.get("source_location"),
                     "weight": 1.0,
