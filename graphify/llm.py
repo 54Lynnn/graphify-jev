@@ -87,6 +87,15 @@ BACKENDS: dict[str, dict] = {
         "pricing": {"input": 0.40, "output": 1.60},  # USD per 1M tokens
         "temperature": 0,
     },
+    "bedrock": {
+        "base_url": "",
+        # Spec default. Users who want a different model set GRAPHIFY_BEDROCK_MODEL.
+        "default_model": "anthropic.claude-3-5-sonnet-20241022-v2:0",
+        "model_env_key": "GRAPHIFY_BEDROCK_MODEL",
+        "pricing": {"input": 3.0, "output": 15.0},  # USD per 1M tokens
+        "temperature": 0,
+        "max_tokens": 16384,
+    },
 }
 
 
@@ -155,7 +164,10 @@ def _backend_env_keys(backend: str) -> list[str]:
     keys = cfg.get("env_keys")
     if keys:
         return list(keys)
-    return [cfg["env_key"]]
+    env_key = cfg.get("env_key")
+    if env_key:
+        return [env_key]
+    return []
 
 
 def _get_backend_api_key(backend: str) -> str:
@@ -169,7 +181,8 @@ def _get_backend_api_key(backend: str) -> str:
 
 def _format_backend_env_keys(backend: str) -> str:
     """Return user-facing accepted API-key variable names."""
-    return " or ".join(_backend_env_keys(backend))
+    keys = _backend_env_keys(backend)
+    return " or ".join(keys) if keys else "AWS_PROFILE or AWS_REGION"
 
 
 def _default_model_for_backend(backend: str) -> str:
@@ -268,6 +281,43 @@ def _call_claude(api_key: str, model: str, user_message: str, max_tokens: int = 
     return result
 
 
+def _call_bedrock(model: str, user_message: str, max_tokens: int = 8192) -> dict:
+    """Call AWS Bedrock via boto3 Converse API using the standard AWS credential chain."""
+    try:
+        import boto3
+        import botocore.exceptions
+    except ImportError as exc:
+        raise ImportError(
+            "AWS Bedrock extraction requires boto3. Run: pip install graphifyy[bedrock]"
+        ) from exc
+
+    region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+    profile = os.environ.get("AWS_PROFILE")
+    session = boto3.Session(profile_name=profile, region_name=region)
+    client = session.client("bedrock-runtime")
+
+    try:
+        resp = client.converse(
+            modelId=model,
+            system=[{"text": _EXTRACTION_SYSTEM}],
+            messages=[{"role": "user", "content": [{"text": user_message}]}],
+            inferenceConfig={"maxTokens": max_tokens, "temperature": 0},
+        )
+    except botocore.exceptions.ClientError as exc:
+        code = exc.response["Error"]["Code"]
+        msg = exc.response["Error"]["Message"]
+        raise RuntimeError(f"Bedrock API error ({code}): {msg}") from exc
+
+    text = resp.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "{}")
+    result = _parse_llm_json(text)
+    usage = resp.get("usage", {})
+    result["input_tokens"] = usage.get("inputTokens", 0)
+    result["output_tokens"] = usage.get("outputTokens", 0)
+    result["model"] = model
+    result["finish_reason"] = "length" if resp.get("stopReason") == "max_tokens" else "stop"
+    return result
+
+
 def extract_files_direct(
     files: list[Path],
     backend: str = "kimi",
@@ -287,7 +337,7 @@ def extract_files_direct(
     key = api_key or _get_backend_api_key(backend)
     if not key and backend == "ollama":
         key = "ollama"  # Ollama ignores auth but openai client requires non-empty
-    if not key:
+    if not key and backend != "bedrock":
         raise ValueError(
             f"No API key for backend '{backend}'. "
             f"Set {_format_backend_env_keys(backend)} or pass api_key=."
@@ -298,17 +348,18 @@ def extract_files_direct(
 
     if backend == "claude":
         return _call_claude(key, mdl, user_msg, max_tokens=max_out)
-    else:
-        return _call_openai_compat(
-            cfg["base_url"],
-            key,
-            mdl,
-            user_msg,
-            temperature=cfg.get("temperature", 0),
-            reasoning_effort=cfg.get("reasoning_effort"),
-            max_completion_tokens=cfg.get("max_completion_tokens", max_out),
-            backend=backend,
-        )
+    if backend == "bedrock":
+        return _call_bedrock(mdl, user_msg, max_tokens=max_out)
+    return _call_openai_compat(
+        cfg["base_url"],
+        key,
+        mdl,
+        user_msg,
+        temperature=cfg.get("temperature", 0),
+        reasoning_effort=cfg.get("reasoning_effort"),
+        max_completion_tokens=cfg.get("max_completion_tokens", max_out),
+        backend=backend,
+    )
 
 
 def _estimate_file_tokens(path: Path) -> int:
@@ -580,6 +631,8 @@ def detect_backend() -> str | None:
             return backend
     if os.environ.get("OLLAMA_BASE_URL"):
         return "ollama"
+    if os.environ.get("AWS_PROFILE") or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"):
+        return "bedrock"
     for backend in ("claude", "openai"):
         if _get_backend_api_key(backend):
             return backend
