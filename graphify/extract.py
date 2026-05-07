@@ -778,16 +778,14 @@ def _require_imports_js(node, source: bytes, file_nid: str, stem: str, edges: li
 def _js_extra_walk(node, source: bytes, file_nid: str, stem: str, str_path: str,
                    nodes: list, edges: list, seen_ids: set, function_bodies: list,
                    parent_class_nid: str | None, add_node_fn, add_edge_fn) -> bool:
-    """Handle lexical_declaration (arrow functions, CJS requires) for JS/TS.
-
-    Returns True if handled (caller should not descend further).
-    """
+    """Handle lexical_declaration (arrow functions, CJS requires, module-level const literals) for JS/TS. Returns True if handled."""
     if node.type in ("lexical_declaration", "variable_declaration"):
         # CJS require imports — emit edges, do not block other lexical_declaration handling
         require_found = _require_imports_js(node, source, file_nid, stem, edges, str_path)
 
-        # Arrow function declarations (existing behavior, lexical_declaration only)
+        # Arrow function declarations and module-level const literals (lexical_declaration only)
         arrow_found = False
+        const_found = False
         if node.type == "lexical_declaration":
             for child in node.children:
                 if child.type == "variable_declarator":
@@ -804,7 +802,21 @@ def _js_extra_walk(node, source: bytes, file_nid: str, stem: str, str_path: str,
                             if body:
                                 function_bodies.append((func_nid, body))
                             arrow_found = True
+                    elif value and value.type in (
+                        "object", "array", "as_expression", "call_expression", "new_expression",
+                    ):
+                        # Module-level const with literal/object/array/factory value
+                        name_node = child.child_by_field_name("name")
+                        if name_node:
+                            const_name = _read_text(name_node, source)
+                            line = child.start_point[0] + 1
+                            const_nid = _make_id(stem, const_name)
+                            add_node_fn(const_nid, const_name, line)
+                            add_edge_fn(file_nid, const_nid, "contains", line)
+                            const_found = True
         if arrow_found:
+            return True
+        if const_found:
             return True
         if require_found:
             return True
@@ -872,7 +884,7 @@ _JS_CONFIG = LanguageConfig(
     class_types=frozenset({"class_declaration"}),
     function_types=frozenset({"function_declaration", "method_definition"}),
     import_types=frozenset({"import_statement"}),
-    call_types=frozenset({"call_expression"}),
+    call_types=frozenset({"call_expression", "new_expression"}),
     call_function_field="function",
     call_accessor_node_types=frozenset({"member_expression"}),
     call_accessor_field="property",
@@ -883,10 +895,15 @@ _JS_CONFIG = LanguageConfig(
 _TS_CONFIG = LanguageConfig(
     ts_module="tree_sitter_typescript",
     ts_language_fn="language_typescript",
-    class_types=frozenset({"class_declaration"}),
+    class_types=frozenset({
+        "class_declaration",
+        "interface_declaration",   # parity with Java/C#
+        "enum_declaration",        # named enums
+        "type_alias_declaration",  # named type aliases
+    }),
     function_types=frozenset({"function_declaration", "method_definition"}),
     import_types=frozenset({"import_statement"}),
-    call_types=frozenset({"call_expression"}),
+    call_types=frozenset({"call_expression", "new_expression"}),
     call_function_field="function",
     call_accessor_node_types=frozenset({"member_expression"}),
     call_accessor_field="property",
