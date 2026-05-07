@@ -70,7 +70,7 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False, force: boo
         detected = detect(watch_path, follow_symlinks=follow_symlinks)
         code_files = [Path(f) for f in detected['files']['code']]
 
-        # Include document files that have AST extractors (e.g. .md, .mdx)
+        # Include document files that have AST extractors (e.g. .md, .mdx, .qmd)
         from graphify.extract import _get_extractor
         for doc_file in detected['files'].get('document', []):
             p = Path(doc_file)
