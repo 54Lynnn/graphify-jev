@@ -262,6 +262,7 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         from mcp.server import Server
         from mcp.server.stdio import stdio_server
         from mcp import types
+        from mcp.types import AnyUrl
     except ImportError as e:
         raise ImportError("mcp not installed. Run: pip install mcp") from e
 
@@ -462,6 +463,77 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         "graph_stats": _tool_graph_stats,
         "shortest_path": _tool_shortest_path,
     }
+
+    def _load_community_labels() -> dict[int, str]:
+        labels_path = Path(graph_path).parent / ".graphify_labels.json"
+        if labels_path.exists():
+            try:
+                return {int(k): v for k, v in json.loads(labels_path.read_text(encoding="utf-8")).items()}
+            except Exception:
+                pass
+        return {cid: f"Community {cid}" for cid in communities}
+
+    @server.list_resources()
+    async def list_resources() -> list[types.Resource]:
+        return [
+            types.Resource(uri=AnyUrl("graphify://report"), name="Graph Report", description="Full GRAPH_REPORT.md", mimeType="text/markdown"),
+            types.Resource(uri=AnyUrl("graphify://stats"), name="Graph Stats", description="Node/edge/community counts and confidence breakdown", mimeType="text/plain"),
+            types.Resource(uri=AnyUrl("graphify://god-nodes"), name="God Nodes", description="Top 10 most-connected nodes", mimeType="text/plain"),
+            types.Resource(uri=AnyUrl("graphify://surprises"), name="Surprising Connections", description="Cross-community surprising connections", mimeType="text/plain"),
+            types.Resource(uri=AnyUrl("graphify://audit"), name="Confidence Audit", description="EXTRACTED/INFERRED/AMBIGUOUS edge breakdown", mimeType="text/plain"),
+            types.Resource(uri=AnyUrl("graphify://questions"), name="Suggested Questions", description="Suggested questions for this codebase", mimeType="text/plain"),
+        ]
+
+    @server.read_resource()
+    async def read_resource(uri: AnyUrl) -> str:
+        uri_str = str(uri)
+        if uri_str == "graphify://report":
+            report_path = Path(graph_path).parent / "GRAPH_REPORT.md"
+            if report_path.exists():
+                return report_path.read_text(encoding="utf-8")
+            return "GRAPH_REPORT.md not found. Run graphify extract first."
+        if uri_str == "graphify://stats":
+            return _tool_graph_stats({})
+        if uri_str == "graphify://god-nodes":
+            return _tool_god_nodes({"top_n": 10})
+        if uri_str == "graphify://surprises":
+            try:
+                from graphify.analyze import surprising_connections
+                surprises = surprising_connections(G, communities, top_n=10)
+                if not surprises:
+                    return "No surprising connections found."
+                lines = ["Surprising cross-community connections:"]
+                for s in surprises:
+                    lines.append(f"  {s.get('source', '')} <-> {s.get('target', '')} [{s.get('relation', '')}]")
+                return "\n".join(lines)
+            except Exception as exc:
+                return f"Could not compute surprising connections: {exc}"
+        if uri_str == "graphify://audit":
+            confs = [d.get("confidence", "EXTRACTED") for _, _, d in G.edges(data=True)]
+            total = len(confs) or 1
+            return (
+                f"Total edges: {total}\n"
+                f"EXTRACTED: {confs.count('EXTRACTED')} ({round(confs.count('EXTRACTED')/total*100)}%)\n"
+                f"INFERRED: {confs.count('INFERRED')} ({round(confs.count('INFERRED')/total*100)}%)\n"
+                f"AMBIGUOUS: {confs.count('AMBIGUOUS')} ({round(confs.count('AMBIGUOUS')/total*100)}%)\n"
+            )
+        if uri_str == "graphify://questions":
+            try:
+                from graphify.analyze import suggest_questions
+                community_labels = _load_community_labels()
+                questions = suggest_questions(G, communities, community_labels, top_n=10)
+                if not questions:
+                    return "No suggested questions available."
+                lines = ["Suggested questions:"]
+                for q in questions:
+                    if isinstance(q, dict):
+                        lines.append(f"  - {q.get('question', '')}")
+                    else:
+                        lines.append(f"  - {q}")
+                return "\n".join(lines)
+            except Exception as exc:
+                return f"Could not generate questions: {exc}"
+        raise ValueError(f"Unknown resource: {uri_str}")
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
