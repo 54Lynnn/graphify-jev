@@ -57,7 +57,9 @@ def build_from_json(extraction: dict, *, directed: bool = False) -> nx.Graph:
 
     # Canonicalize legacy node/edge schema before validation.
     for node in extraction.get("nodes", []):
-        if isinstance(node, dict) and "source" in node and "source_file" not in node:
+        if not isinstance(node, dict):
+            continue
+        if "source" in node and "source_file" not in node:
             # Count edges that reference this node so the warning is actionable (#479)
             node_id = node.get("id", "?")
             affected_edges = sum(
@@ -71,6 +73,12 @@ def build_from_json(extraction: dict, *, directed: bool = False) -> nx.Graph:
                 file=sys.stderr,
             )
             node["source_file"] = node.pop("source")
+        # Default missing/None file_type to "concept" so legacy graph.json
+        # entries (and stub nodes preserved by `_rebuild_code` from older
+        # graphify versions that didn't always populate file_type) don't
+        # trigger spurious "invalid file_type 'None'" validator warnings (#660).
+        if node.get("file_type") in (None, ""):
+            node["file_type"] = "concept"
 
     errors = validate_extraction(extraction)
     # Dangling edges (stdlib/external imports) are expected - only warn about real schema errors.
