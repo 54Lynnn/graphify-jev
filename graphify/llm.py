@@ -88,8 +88,6 @@ BACKENDS: dict[str, dict] = {
         "temperature": 0,
     },
     "bedrock": {
-        "base_url": "",
-        # Spec default. Users who want a different model set GRAPHIFY_BEDROCK_MODEL.
         "default_model": "anthropic.claude-3-5-sonnet-20241022-v2:0",
         "model_env_key": "GRAPHIFY_BEDROCK_MODEL",
         "pricing": {"input": 3.0, "output": 15.0},  # USD per 1M tokens
