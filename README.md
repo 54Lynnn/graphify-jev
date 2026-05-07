@@ -241,7 +241,7 @@ The MCP server gives your assistant structured access: `query_graph`, `get_node`
 
 - **Code files** — processed locally via tree-sitter. Nothing leaves your machine.
 - **Video / audio** — transcribed locally with faster-whisper. Nothing leaves your machine.
-- **Docs, PDFs, images** — sent to your AI assistant for semantic extraction (via the `/graphify` skill, using whatever model your IDE session runs). Headless `graphify extract` requires `GEMINI_API_KEY` / `GOOGLE_API_KEY` (Gemini), `MOONSHOT_API_KEY` (Kimi), `ANTHROPIC_API_KEY` (Claude), `OPENAI_API_KEY` (OpenAI), or a running Ollama instance (`OLLAMA_BASE_URL`). The `--dedup-llm` flag uses the same key.
+- **Docs, PDFs, images** — sent to your AI assistant for semantic extraction (via the `/graphify` skill, using whatever model your IDE session runs). Headless `graphify extract` requires `GEMINI_API_KEY` / `GOOGLE_API_KEY` (Gemini), `MOONSHOT_API_KEY` (Kimi), `ANTHROPIC_API_KEY` (Claude), `OPENAI_API_KEY` (OpenAI), a running Ollama instance (`OLLAMA_BASE_URL`), or AWS credentials via the standard provider chain (Bedrock - no API key needed, uses IAM). The `--dedup-llm` flag uses the same key.
 - No telemetry, no usage tracking, no analytics.
 
 ---
@@ -297,6 +297,7 @@ graphify extract ./docs                        # headless LLM extraction for CI 
 graphify extract ./docs --backend gemini       # explicit backend: gemini, kimi, claude, openai, ollama, or bedrock
 graphify extract ./docs --backend gemini --model gemini-3.1-pro-preview
 graphify extract ./docs --backend ollama       # local Ollama (set OLLAMA_BASE_URL / OLLAMA_MODEL)
+graphify extract ./docs --backend bedrock      # AWS Bedrock via IAM - no API key, uses AWS credential chain
 graphify extract ./docs --google-workspace     # export .gdoc/.gsheet/.gslides via gws before extraction
 graphify extract ./docs --no-cluster           # raw extraction only, skip clustering
 graphify extract ./docs --dedup-llm            # LLM tiebreaker for ambiguous entity pairs (uses same API key)
