@@ -172,17 +172,28 @@ def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_bu
               sorted(nodes - seed_set, key=lambda n: G.degree(n), reverse=True)
     for nid in ordered:
         d = G.nodes[nid]
-        line = f"NODE {sanitize_label(d.get('label', nid))} [src={d.get('source_file', '')} loc={d.get('source_location', '')} community={d.get('community', '')}]"
+        # Every LLM-derived field passes through sanitize_label before being
+        # concatenated into MCP tool output (F-010): an attacker who controls a
+        # corpus document can otherwise inject ANSI escapes, fake graphify-out
+        # log lines, or prompt-injection markup into the model's context via
+        # source_file / source_location / community.
+        line = (
+            f"NODE {sanitize_label(d.get('label', nid))} "
+            f"[src={sanitize_label(str(d.get('source_file', '')))} "
+            f"loc={sanitize_label(str(d.get('source_location', '')))} "
+            f"community={sanitize_label(str(d.get('community', '')))}]"
+        )
         lines.append(line)
     for u, v in edges:
         if u in nodes and v in nodes:
             raw = G[u][v]
             d = next(iter(raw.values()), {}) if isinstance(G, (nx.MultiGraph, nx.MultiDiGraph)) else raw
             context = d.get("context")
-            context_suffix = f" context={context}" if context else ""
+            context_suffix = f" context={sanitize_label(str(context))}" if context else ""
             line = (
                 f"EDGE {sanitize_label(G.nodes[u].get('label', u))} "
-                f"--{d.get('relation', '')} [{d.get('confidence', '')}{context_suffix}]--> "
+                f"--{sanitize_label(str(d.get('relation', '')))} "
+                f"[{sanitize_label(str(d.get('confidence', '')))}{context_suffix}]--> "
                 f"{sanitize_label(G.nodes[v].get('label', v))}"
             )
             lines.append(line)
@@ -373,12 +384,13 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         if not matches:
             return f"No node matching '{label}' found."
         nid, d = matches[0]
+        # Sanitise every LLM-derived field before concatenation (F-010).
         return "\n".join([
-            f"Node: {d.get('label', nid)}",
-            f"  ID: {nid}",
-            f"  Source: {d.get('source_file', '')} {d.get('source_location', '')}",
-            f"  Type: {d.get('file_type', '')}",
-            f"  Community: {d.get('community', '')}",
+            f"Node: {sanitize_label(d.get('label', nid))}",
+            f"  ID: {sanitize_label(nid)}",
+            f"  Source: {sanitize_label(str(d.get('source_file', '')))} {sanitize_label(str(d.get('source_location', '')))}",
+            f"  Type: {sanitize_label(str(d.get('file_type', '')))}",
+            f"  Community: {sanitize_label(str(d.get('community', '')))}",
             f"  Degree: {G.degree(nid)}",
         ])
 
@@ -389,13 +401,16 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         if not matches:
             return f"No node matching '{label}' found."
         nid = matches[0]
-        lines = [f"Neighbors of {G.nodes[nid].get('label', nid)}:"]
+        lines = [f"Neighbors of {sanitize_label(G.nodes[nid].get('label', nid))}:"]
         for neighbor in G.neighbors(nid):
             d = G.edges[nid, neighbor]
             rel = d.get("relation", "")
             if rel_filter and rel_filter not in rel.lower():
                 continue
-            lines.append(f"  --> {G.nodes[neighbor].get('label', neighbor)} [{rel}] [{d.get('confidence', '')}]")
+            lines.append(
+                f"  --> {sanitize_label(G.nodes[neighbor].get('label', neighbor))} "
+                f"[{sanitize_label(str(rel))}] [{sanitize_label(str(d.get('confidence', '')))}]"
+            )
         return "\n".join(lines)
 
     def _tool_get_community(arguments: dict) -> str:
@@ -406,7 +421,11 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         lines = [f"Community {cid} ({len(nodes)} nodes):"]
         for n in nodes:
             d = G.nodes[n]
-            lines.append(f"  {d.get('label', n)} [{d.get('source_file', '')}]")
+            # Sanitise label and source_file (F-010).
+            lines.append(
+                f"  {sanitize_label(d.get('label', n))} "
+                f"[{sanitize_label(str(d.get('source_file', '')))}]"
+            )
         return "\n".join(lines)
 
     def _tool_god_nodes(arguments: dict) -> str:

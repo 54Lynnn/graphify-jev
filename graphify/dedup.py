@@ -297,7 +297,14 @@ def _llm_tiebreak(
 
     try:
         from graphify.llm import _call_llm
-    except ImportError:
+    except ImportError as exc:
+        # F-038: previously this silent fallback hid the fact that `_call_llm`
+        # didn't exist in `graphify.llm` at all, so `--dedup-llm` was a no-op.
+        # Surface the import failure so future regressions are visible.
+        print(
+            f"[graphify] --dedup-llm: cannot import _call_llm ({exc}); skipping LLM tiebreaker.",
+            flush=True,
+        )
         return
 
     for batch_start in range(0, len(ambiguous), batch_size):

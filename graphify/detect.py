@@ -247,7 +247,12 @@ def xlsx_extract_structure(path: Path) -> dict:
     except Exception:
         return {"nodes": [], "edges": []}
 
-    stem = _re.sub(r"[^a-z0-9]", "_", path.stem.lower())
+    # F-035: typo fix — was `_re.sub` (NameError, but unreachable because the
+    # whole xlsx codepath is currently behind a feature flag / not yet wired
+    # into the dispatcher). Before re-enabling this path, re-audit it for
+    # zip/XML bombs (openpyxl is built on top of zipfile and lxml-style XML
+    # parsing — a malicious .xlsx can blow up memory at load_workbook time).
+    stem = re.sub(r"[^a-z0-9]", "_", path.stem.lower())
     str_path = str(path)
     file_nid = _nid(str_path)
     nodes: list[dict] = [{"id": file_nid, "label": path.name, "file_type": "document",

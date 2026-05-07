@@ -142,8 +142,22 @@ def _read_files(paths: list[Path], root: Path) -> str:
     return "\n\n".join(parts)
 
 
+_LLM_JSON_MAX_BYTES = 10 * 1024 * 1024  # 10 MB hard cap before json.loads (F-016)
+
+
 def _parse_llm_json(raw: str) -> dict:
-    """Strip optional markdown fences and parse JSON. Returns empty fragment on failure."""
+    """Strip optional markdown fences and parse JSON. Returns empty fragment on failure.
+
+    Caps the input at `_LLM_JSON_MAX_BYTES` so a hostile or runaway model
+    response cannot exhaust memory inside `json.loads` (F-016).
+    """
+    if len(raw) > _LLM_JSON_MAX_BYTES:
+        print(
+            f"[graphify] LLM response exceeds {_LLM_JSON_MAX_BYTES} bytes "
+            f"({len(raw)} bytes); refusing to parse and dropping chunk.",
+            file=sys.stderr,
+        )
+        return {"nodes": [], "edges": [], "hyperedges": []}
     if raw.startswith("```"):
         raw = raw.split("```", 2)[1]
         if raw.startswith("json"):
@@ -334,7 +348,18 @@ def extract_files_direct(
     cfg = BACKENDS[backend]
     key = api_key or _get_backend_api_key(backend)
     if not key and backend == "ollama":
-        key = "ollama"  # Ollama ignores auth but openai client requires non-empty
+        # Ollama ignores auth but the OpenAI client library requires a non-empty
+        # string. Use a placeholder and surface a visible warning so this never
+        # silently routes traffic without the user realising — see F-029.
+        ollama_url = os.environ.get("OLLAMA_BASE_URL", cfg.get("base_url", ""))
+        _validate_ollama_base_url(ollama_url)
+        print(
+            "[graphify] WARNING: ollama backend selected with no OLLAMA_API_KEY set; "
+            f"sending corpus to {ollama_url}. Set OLLAMA_API_KEY (any non-empty value) "
+            "to suppress this warning.",
+            file=sys.stderr,
+        )
+        key = "ollama"
     if not key and backend != "bedrock":
         raise ValueError(
             f"No API key for backend '{backend}'. "
@@ -609,6 +634,83 @@ def _merge_into(merged: dict, result: dict) -> None:
     merged["output_tokens"] += result.get("output_tokens", 0)
 
 
+def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
+    """Send a plain-text prompt to `backend` and return the model's text reply.
+
+    Used by lightweight callers (e.g. `graphify.dedup` LLM tiebreaker) that
+    don't need the full extraction prompt or JSON-shaped output. Mirrors the
+    backend dispatch logic of `extract_files_direct` but skips the
+    `_EXTRACTION_SYSTEM` prompt and JSON parsing.
+
+    Previously `graphify.dedup` imported a `_call_llm` symbol that did not
+    exist in this module, so the LLM tiebreaker silently no-op'd on
+    `ImportError` (F-038). Adding the function here re-enables it.
+    """
+    if backend not in BACKENDS:
+        raise ValueError(f"Unknown backend {backend!r}")
+    cfg = BACKENDS[backend]
+    key = _get_backend_api_key(backend)
+    if not key and backend == "ollama":
+        ollama_url = os.environ.get("OLLAMA_BASE_URL", cfg.get("base_url", ""))
+        _validate_ollama_base_url(ollama_url)
+        key = "ollama"
+    if not key and backend != "bedrock":
+        raise ValueError(
+            f"No API key for backend '{backend}'. Set {_format_backend_env_keys(backend)}."
+        )
+    mdl = _default_model_for_backend(backend)
+
+    if backend == "claude":
+        try:
+            import anthropic
+        except ImportError as exc:
+            raise ImportError("anthropic package required for claude backend") from exc
+        client = anthropic.Anthropic(api_key=key)
+        resp = client.messages.create(
+            model=mdl,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text if resp.content else ""
+
+    if backend == "bedrock":
+        try:
+            import boto3
+        except ImportError as exc:
+            raise ImportError("boto3 required for bedrock backend") from exc
+        region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
+        profile = os.environ.get("AWS_PROFILE")
+        session = boto3.Session(profile_name=profile, region_name=region)
+        client = session.client("bedrock-runtime")
+        resp = client.converse(
+            modelId=mdl,
+            messages=[{"role": "user", "content": [{"text": prompt}]}],
+            inferenceConfig={"maxTokens": max_tokens, "temperature": 0},
+        )
+        return resp.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "")
+
+    # OpenAI-compatible (kimi, openai, gemini, ollama)
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise ImportError("openai package required for this backend") from exc
+    client = OpenAI(api_key=key, base_url=cfg["base_url"])
+    kwargs: dict = {
+        "model": mdl,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_completion_tokens": max_tokens,
+    }
+    temperature = cfg.get("temperature", 0)
+    if temperature is not None:
+        kwargs["temperature"] = temperature
+    if cfg.get("reasoning_effort"):
+        kwargs["reasoning_effort"] = cfg["reasoning_effort"]
+    if "moonshot" in cfg["base_url"]:
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    resp = client.chat.completions.create(**kwargs)
+    return resp.choices[0].message.content or ""
+
+
 def estimate_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
     """Estimate USD cost for a given token count using published pricing."""
     if backend not in BACKENDS:
@@ -617,21 +719,59 @@ def estimate_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
     return (input_tokens * p["input"] + output_tokens * p["output"]) / 1_000_000
 
 
+def _validate_ollama_base_url(url: str) -> None:
+    """Warn (do not raise) if OLLAMA_BASE_URL looks unsafe.
+
+    Sending an entire corpus to a non-loopback http:// endpoint silently leaks
+    proprietary code; we surface a visible stderr warning instead of failing
+    closed (some users genuinely run Ollama on a LAN host they trust).
+    """
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+    except Exception:
+        print(
+            f"[graphify] WARNING: OLLAMA_BASE_URL={url!r} is not a parseable URL.",
+            file=sys.stderr,
+        )
+        return
+    if parsed.scheme not in ("http", "https"):
+        print(
+            f"[graphify] WARNING: OLLAMA_BASE_URL has unexpected scheme {parsed.scheme!r}; "
+            "expected http or https.",
+            file=sys.stderr,
+        )
+        return
+    host = (parsed.hostname or "").lower()
+    is_loopback = host in ("localhost", "127.0.0.1", "::1") or host.startswith("127.")
+    if not is_loopback:
+        scheme_note = " (UNENCRYPTED)" if parsed.scheme == "http" else ""
+        print(
+            f"[graphify] WARNING: OLLAMA_BASE_URL points to non-loopback host {host!r}{scheme_note}. "
+            "Your full corpus will be sent to that endpoint. "
+            "Set OLLAMA_BASE_URL=http://localhost:11434/v1 to keep extraction local.",
+            file=sys.stderr,
+        )
+
+
 def detect_backend() -> str | None:
     """Return the name of whichever backend has an API key set, or None.
 
-    Priority: gemini → kimi → ollama (opt-in via OLLAMA_BASE_URL) → claude → openai.
-    Ollama is opt-in via env var — never auto-probed without OLLAMA_BASE_URL set.
-    Claude is the default for the skill.md subagent pipeline and is never forced here.
+    Priority: gemini → kimi → claude → openai → bedrock → ollama (last, opt-in).
+
+    Ollama is intentionally checked LAST so a paid API key (Anthropic/OpenAI/etc.)
+    is never silently shadowed by an incidental OLLAMA_BASE_URL in the environment
+    — see security finding F-002/F-029. Setting OLLAMA_BASE_URL alongside a paid
+    key now keeps you on the paid backend; remove the paid key (or pass
+    --backend ollama explicitly) to route to the local model.
     """
-    for backend in ("gemini", "kimi"):
+    for backend in ("gemini", "kimi", "claude", "openai"):
         if _get_backend_api_key(backend):
             return backend
-    if os.environ.get("OLLAMA_BASE_URL"):
-        return "ollama"
     if os.environ.get("AWS_PROFILE") or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"):
         return "bedrock"
-    for backend in ("claude", "openai"):
-        if _get_backend_api_key(backend):
-            return backend
+    ollama_url = os.environ.get("OLLAMA_BASE_URL")
+    if ollama_url:
+        _validate_ollama_base_url(ollama_url)
+        return "ollama"
     return None

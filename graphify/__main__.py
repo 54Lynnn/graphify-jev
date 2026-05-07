@@ -1735,17 +1735,33 @@ def main() -> None:
 
     elif cmd == "merge-driver":
         # git merge driver for graph.json — takes (base, current, other) and writes
-        # the union of current+other nodes/edges back to current. Always exits 0
-        # so git never marks graph.json as conflicted.
+        # the union of current+other nodes/edges back to current. Exits 1 on
+        # corrupt input so git surfaces the conflict instead of silently
+        # accepting a poisoned merge (see F-005).
         # Usage: graphify merge-driver %O %A %B  (set in .git/config merge driver)
         if len(sys.argv) < 5:
             print("Usage: graphify merge-driver <base> <current> <other>", file=sys.stderr)
             sys.exit(1)
         _base_path, _current_path, _other_path = sys.argv[2], sys.argv[3], sys.argv[4]
+        # Hard caps so a malicious or corrupted graph.json cannot exhaust memory
+        # at parse time. 50 MB / 100k nodes are well above any realistic graph
+        # (typical graphs are <5 MB / <50k nodes); anything larger should fail
+        # the merge so a human can investigate.
+        _MERGE_MAX_BYTES = 50 * 1024 * 1024
+        _MERGE_MAX_NODES = 100_000
         import networkx as _nx
         from networkx.readwrite import json_graph as _jg
         def _load_graph(p: str):
-            data = json.loads(Path(p).read_text(encoding="utf-8"))
+            path_obj = Path(p)
+            try:
+                size = path_obj.stat().st_size
+            except OSError as exc:
+                raise RuntimeError(f"cannot stat {p}: {exc}") from exc
+            if size > _MERGE_MAX_BYTES:
+                raise RuntimeError(
+                    f"graph.json {p} is {size} bytes, exceeds {_MERGE_MAX_BYTES}-byte cap"
+                )
+            data = json.loads(path_obj.read_text(encoding="utf-8"))
             try:
                 return _jg.node_link_graph(data, edges="links"), data
             except TypeError:
@@ -1755,8 +1771,15 @@ def main() -> None:
             G_oth, _ = _load_graph(_other_path)
         except Exception as exc:
             print(f"[graphify merge-driver] error loading graphs: {exc}", file=sys.stderr)
-            sys.exit(0)  # exit 0 so git doesn't block the merge
+            sys.exit(1)  # surface the conflict so git doesn't accept a corrupt merge
         merged = _nx.compose(G_cur, G_oth)
+        if merged.number_of_nodes() > _MERGE_MAX_NODES:
+            print(
+                f"[graphify merge-driver] merged graph has {merged.number_of_nodes()} nodes, "
+                f"exceeds {_MERGE_MAX_NODES}-node cap; aborting merge.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         try:
             out_data = _jg.node_link_data(merged, edges="links")
         except TypeError:
@@ -1839,6 +1862,7 @@ def main() -> None:
             print("  svg       [--graph PATH] [--labels PATH]", file=sys.stderr)
             print("  graphml   [--graph PATH]", file=sys.stderr)
             print("  neo4j     [--graph PATH] [--push URI] [--user U] [--password P]", file=sys.stderr)
+            print("            (or set NEO4J_PASSWORD instead of --password to keep it off argv)", file=sys.stderr)
             sys.exit(1)
 
         # Parse shared args
@@ -1851,7 +1875,10 @@ def main() -> None:
         obsidian_dir = Path(_GRAPHIFY_OUT) / "obsidian"
         neo4j_uri: str | None = None
         neo4j_user = "neo4j"
-        neo4j_password: str | None = None
+        # F-031: prefer the NEO4J_PASSWORD env var so the password never
+        # appears on argv (visible in `ps` output / shell history). The
+        # explicit --password flag still overrides it for compatibility.
+        neo4j_password: str | None = os.environ.get("NEO4J_PASSWORD") or None
         i = 0
         while i < len(args):
             a = args[i]

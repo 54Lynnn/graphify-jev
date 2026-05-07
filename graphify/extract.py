@@ -2816,6 +2816,13 @@ def _cpp_preprocess(path: Path) -> bytes:
     Falls back to raw file bytes if cpp is not available. Capital-F extensions
     conventionally require C preprocessor expansion (#ifdef MPI, #define REAL8, etc.)
     before parsing.
+
+    Security (F-007): we pass `-nostdinc` and `-I /dev/null` so a malicious
+    source file containing `#include "/home/victim/.ssh/id_rsa"` (or any other
+    include directive) cannot inline arbitrary host files into the output that
+    we then ship to an LLM. Without these flags `cpp` happily resolves any
+    relative or absolute include path it can read, which is a corpus-side
+    file-exfiltration vector.
     """
     import shutil
     import subprocess
@@ -2823,7 +2830,7 @@ def _cpp_preprocess(path: Path) -> bytes:
         return path.read_bytes()
     try:
         result = subprocess.run(
-            ["cpp", "-w", "-P", str(path)],
+            ["cpp", "-w", "-P", "-nostdinc", "-I", "/dev/null", str(path)],
             capture_output=True,
             timeout=30,
         )

@@ -2,6 +2,7 @@
 from __future__ import annotations
 import configparser
 import re
+import sys
 from pathlib import Path
 
 _HOOK_MARKER = "# graphify-hook-start"
@@ -168,8 +169,16 @@ def _hooks_dir(root: Path) -> Path:
             else:
                 p.mkdir(parents=True, exist_ok=True)
                 return p
-    except Exception:
-        pass
+    except (configparser.Error, OSError) as exc:
+        # Narrow the exception (PR747-NEW-2): a bare `except Exception: pass`
+        # was hiding tampering signals (corrupt .git/config, permission flips
+        # by another tool). Surface them on stderr instead of silently
+        # falling through to the default hooks directory.
+        print(
+            f"[graphify hooks] could not read core.hooksPath from "
+            f"{root / '.git' / 'config'}: {exc}",
+            file=sys.stderr,
+        )
     d = root / ".git" / "hooks"
     d.mkdir(exist_ok=True)
     return d
