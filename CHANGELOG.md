@@ -4,6 +4,7 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## 0.7.9 (unreleased)
 
+- Feat: Quarto (`.qmd`) file support -- routed through existing Markdown extractor; Quarto executable code blocks (` ```{python} `) extracted as code nodes
 - Feat: optional Google Workspace shortcut export for headless extraction -- `graphify extract ./docs --google-workspace` converts `.gdoc`, `.gsheet`, and `.gslides` files into Markdown sidecars with the `gws` CLI before semantic extraction; account email pseudonymized via SHA256 hash; `[google]` extra adds Sheets table rendering support
 - Feat: AWS Bedrock backend -- `graphify extract ./docs --backend bedrock`; credentials via standard AWS provider chain (AWS_PROFILE, AWS_REGION, IAM roles, SSO); model via GRAPHIFY_BEDROCK_MODEL (default anthropic.claude-3-5-sonnet-20241022-v2:0); `[bedrock]` extra adds boto3
 
