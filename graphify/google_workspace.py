@@ -124,6 +124,10 @@ def _sidecar_path(path: Path, out_dir: Path) -> Path:
 def _with_frontmatter(path: Path, shortcut: dict[str, str | None], body: str, exported_mime_type: str) -> str:
     source_url = shortcut.get("url") or ""
     account = shortcut.get("account") or ""
+    account_line = ""
+    if account:
+        account_hash = hashlib.sha256(account.encode()).hexdigest()[:12]
+        account_line = f'google_account_hash: "{account_hash}"\n'
     return (
         "---\n"
         f'source_file: "{_safe_yaml_str(str(path))}"\n'
@@ -131,7 +135,7 @@ def _with_frontmatter(path: Path, shortcut: dict[str, str | None], body: str, ex
         f'google_file_id: "{_safe_yaml_str(shortcut["file_id"] or "")}"\n'
         f'google_export_mime_type: "{_safe_yaml_str(exported_mime_type)}"\n'
         f'source_url: "{_safe_yaml_str(source_url)}"\n'
-        f'google_account: "{_safe_yaml_str(account)}"\n'
+        f"{account_line}"
         "---\n\n"
         f"<!-- converted from Google Workspace shortcut: {path.name} -->\n\n"
         f"{body.strip()}\n"
