@@ -4426,6 +4426,7 @@ _DISPATCH: dict[str, Any] = {
     ".sql": extract_sql,
     ".md": extract_markdown,
     ".mdx": extract_markdown,
+    ".qmd": extract_markdown,
 }
 
 
