@@ -28,6 +28,9 @@ def _check_skill_version(skill_dst: Path) -> None:
     version_file = skill_dst.parent / ".graphify_version"
     if not version_file.exists():
         return
+    if not skill_dst.exists():
+        print("  warning: skill dir exists but SKILL.md is missing. Run 'graphify install' to repair.")
+        return
     installed = version_file.read_text(encoding="utf-8").strip()
     if installed != __version__:
         print(f"  warning: skill is from graphify {installed}, package is {__version__}. Run 'graphify install' to update.")
@@ -40,9 +43,9 @@ def _refresh_all_version_stamps() -> None:
     but not explicitly re-installed during this upgrade.
     """
     for cfg in _PLATFORM_CONFIG.values():
-        vf = Path.home() / cfg["skill_dst"]
-        vf = vf.parent / ".graphify_version"
-        if vf.exists():
+        skill_dst = Path.home() / cfg["skill_dst"]
+        vf = skill_dst.parent / ".graphify_version"
+        if skill_dst.exists():
             vf.write_text(__version__, encoding="utf-8")
 
 _SETTINGS_HOOK = {
@@ -182,7 +185,16 @@ def install(platform: str = "claude") -> None:
     else:
         skill_dst = Path.home() / cfg["skill_dst"]
     skill_dst.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(skill_src, skill_dst)
+    tmp_dst = skill_dst.with_suffix(skill_dst.suffix + ".tmp")
+    try:
+        shutil.copy(skill_src, tmp_dst)
+        os.replace(tmp_dst, skill_dst)
+    except Exception:
+        try:
+            tmp_dst.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
     (skill_dst.parent / ".graphify_version").write_text(__version__, encoding="utf-8")
     print(f"  skill installed  ->  {skill_dst}")
 
