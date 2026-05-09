@@ -69,7 +69,7 @@ _GRAPHIFY_LOG="${HOME}/.cache/graphify-rebuild.log"
 mkdir -p "$(dirname "$_GRAPHIFY_LOG")"
 echo "[graphify hook] launching background rebuild (log: $_GRAPHIFY_LOG)"
 nohup $GRAPHIFY_PYTHON -c "
-import os, sys
+import os, signal, sys
 from pathlib import Path
 
 changed_raw = os.environ.get('GRAPHIFY_CHANGED', '')
@@ -81,10 +81,17 @@ if not changed:
 print(f'[graphify hook] {len(changed)} file(s) changed - rebuilding graph...')
 
 try:
-    import os as _os
-    from graphify.watch import _rebuild_code
-    _force = _os.environ.get('GRAPHIFY_FORCE', '').lower() in ('1', 'true', 'yes')
-    _rebuild_code(Path('.'), force=_force)
+    from graphify.watch import _rebuild_code, _apply_resource_limits
+    _apply_resource_limits()
+    _timeout = int(os.environ.get('GRAPHIFY_REBUILD_TIMEOUT', '600'))
+    if _timeout > 0 and hasattr(signal, 'SIGALRM'):
+        signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError(f'graphify rebuild exceeded {_timeout}s')))
+        signal.alarm(_timeout)
+    _force = os.environ.get('GRAPHIFY_FORCE', '').lower() in ('1', 'true', 'yes')
+    _rebuild_code(Path('.'), changed_paths=changed, force=_force)
+except TimeoutError as exc:
+    print(f'[graphify hook] {exc}')
+    sys.exit(1)
 except Exception as exc:
     print(f'[graphify hook] Rebuild failed: {exc}')
     sys.exit(1)
@@ -125,12 +132,23 @@ _GRAPHIFY_LOG="${HOME}/.cache/graphify-rebuild.log"
 mkdir -p "$(dirname "$_GRAPHIFY_LOG")"
 echo "[graphify] Branch switched - launching background rebuild (log: $_GRAPHIFY_LOG)"
 nohup $GRAPHIFY_PYTHON -c "
-from graphify.watch import _rebuild_code
+from graphify.watch import _rebuild_code, _apply_resource_limits
 from pathlib import Path
-import os, sys
+import os, signal, sys
 try:
+    _apply_resource_limits()
+    _timeout = int(os.environ.get('GRAPHIFY_REBUILD_TIMEOUT', '600'))
+    if _timeout > 0 and hasattr(signal, 'SIGALRM'):
+        signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(TimeoutError(f'graphify rebuild exceeded {_timeout}s')))
+        signal.alarm(_timeout)
     _force = os.environ.get('GRAPHIFY_FORCE', '').lower() in ('1', 'true', 'yes')
+    # post-checkout: branch switch can touch arbitrary files; full rebuild path
+    # (no changed_paths) is correct here. The flock inside _rebuild_code still
+    # prevents pile-ups when commit + checkout fire back-to-back.
     _rebuild_code(Path('.'), force=_force)
+except TimeoutError as exc:
+    print(f'[graphify] {exc}')
+    sys.exit(1)
 except Exception as exc:
     print(f'[graphify] Rebuild failed: {exc}')
     sys.exit(1)

@@ -142,7 +142,7 @@ _PLATFORM_CONFIG: dict[str, dict] = {
     },
     "antigravity": {
         "skill_file": "skill.md",
-        "skill_dst": Path.home() / ".agent" / "skills" / "graphify" / "SKILL.md",
+        "skill_dst": Path(".agents") / "skills" / "graphify" / "SKILL.md",
         "claude_md": False,
     },
     "windows": {
@@ -474,10 +474,15 @@ def vscode_uninstall(project_dir: Path | None = None) -> None:
         print(f"  {instructions}  ->  deleted (was empty after removal)")
 
 
-_ANTIGRAVITY_RULES_PATH = Path(".agent") / "rules" / "graphify.md"
-_ANTIGRAVITY_WORKFLOW_PATH = Path(".agent") / "workflows" / "graphify.md"
+_ANTIGRAVITY_RULES_PATH = Path(".agents") / "rules" / "graphify.md"
+_ANTIGRAVITY_WORKFLOW_PATH = Path(".agents") / "workflows" / "graphify.md"
 
 _ANTIGRAVITY_RULES = """\
+---
+trigger: always_on
+description: Always consult the graphify knowledge graph at graphify-out/ before answering codebase or architecture questions.
+---
+
 ## graphify
 
 This project has a graphify knowledge graph at graphify-out/.
@@ -486,7 +491,7 @@ Rules:
 - Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
 - If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
 - If the graphify MCP server is active, utilize tools like `query_graph`, `get_node`, and `shortest_path` for precise architecture navigation instead of falling back to `grep`
-- If the MCP server is not active, the CLI equivalents are `graphify query "<question>"`, `graphify path "<A>" "<B>"`, and `graphify explain "<concept>"` — prefer these over grep for cross-module questions
+- If the MCP server is not active, the CLI equivalents are `graphify query "<question>"`, `graphify path "<A>" "<B>"`, and `graphify explain "<concept>"` - prefer these over grep for cross-module questions
 - After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
 """
 
@@ -498,7 +503,7 @@ description: Turn any folder of files into a navigable knowledge graph
 
 # Workflow: graphify
 
-Follow the graphify skill installed at ~/.agent/skills/graphify/SKILL.md to run the full pipeline.
+Follow the graphify skill installed at ~/.agents/skills/graphify/SKILL.md to run the full pipeline.
 
 If no path argument is given, use `.` (current directory).
 """
@@ -573,7 +578,7 @@ def _antigravity_install(project_dir: Path) -> None:
     install(platform="antigravity")
 
     # 1.5. Inject YAML frontmatter for native Antigravity tool discovery
-    skill_dst = Path.home() / _PLATFORM_CONFIG["antigravity"]["skill_dst"]
+    skill_dst = _PLATFORM_CONFIG["antigravity"]["skill_dst"]
     if skill_dst.exists():
         content = skill_dst.read_text(encoding="utf-8")
         if not content.startswith("---\n"):
@@ -636,7 +641,7 @@ def _antigravity_uninstall(project_dir: Path) -> None:
         print(f"graphify workflow removed from {wf_path.resolve()}")
 
     # Remove skill file
-    skill_dst = Path.home() / _PLATFORM_CONFIG["antigravity"]["skill_dst"]
+    skill_dst = _PLATFORM_CONFIG["antigravity"]["skill_dst"]
     if skill_dst.exists():
         skill_dst.unlink()
         print(f"graphify skill removed from {skill_dst}")
@@ -1165,6 +1170,10 @@ def main() -> None:
         print("  extract <path>          headless full extraction (AST + semantic LLM) for CI/scripts")
         print("    --backend B             gemini|kimi|claude|openai|ollama (default: whichever API key is set)")
         print("    --model M               override backend default model")
+        print("    --max-workers N         AST extraction subprocess count (default: cpu_count)")
+        print("    --token-budget N        per-chunk token cap for semantic extraction (default: 60000)")
+        print("    --max-concurrency N     parallel semantic chunks in flight (default: 4; set 1 for local LLMs)")
+        print("    --api-timeout S         per-request timeout in seconds for the LLM client (default: 600)")
         print("    --out DIR               output dir (default: <path>); writes <DIR>/graphify-out/")
         print("    --google-workspace      export .gdoc/.gsheet/.gslides shortcuts via gws before extraction")
         print("    --no-cluster            skip clustering, write raw extraction only")
@@ -1203,8 +1212,8 @@ def main() -> None:
         print("  trae uninstall         remove graphify section from AGENTS.md")
         print("  trae-cn install         write graphify section to AGENTS.md (Trae CN)")
         print("  trae-cn uninstall      remove graphify section from AGENTS.md")
-        print("  antigravity install     write .agent/rules + .agent/workflows + skill (Google Antigravity)")
-        print("  antigravity uninstall   remove .agent/rules, .agent/workflows, and skill")
+        print("  antigravity install     write .agents/rules + .agents/workflows + skill (Google Antigravity)")
+        print("  antigravity uninstall   remove .agents/rules, .agents/workflows, and skill")
         print("  hermes install          write skill to ~/.hermes/skills/graphify/ (Hermes)")
         print("  hermes uninstall        remove skill from ~/.hermes/skills/graphify/")
         print("  kiro install            write skill to .kiro/skills/graphify/ + steering file (Kiro IDE/CLI)")
@@ -1706,7 +1715,10 @@ def main() -> None:
             sys.exit(1)
         from graphify.watch import _rebuild_code
         print(f"Re-extracting code files in {watch_path} (no LLM needed)...")
-        ok = _rebuild_code(watch_path, force=force)
+        # Interactive CLI: block on the per-repo lock rather than skip, so the
+        # user sees their explicit `graphify update` complete instead of
+        # exiting silently when a hook-driven rebuild happens to be running.
+        ok = _rebuild_code(watch_path, force=force, block_on_lock=True)
         if ok:
             print("Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.")
             if not (
@@ -2132,8 +2144,10 @@ def main() -> None:
         # has an API key set.
         if len(sys.argv) < 3:
             print(
-                "Usage: graphify extract <path> [--backend gemini|kimi|claude|openai] "
-                "[--out DIR] [--google-workspace] [--no-cluster]",
+                "Usage: graphify extract <path> [--backend gemini|kimi|claude|openai|ollama] "
+                "[--model M] [--out DIR] [--google-workspace] [--no-cluster] "
+                "[--max-workers N] [--token-budget N] [--max-concurrency N] "
+                "[--api-timeout S]",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -2151,6 +2165,34 @@ def main() -> None:
         google_workspace = False
         global_merge = False
         global_repo_tag: str | None = None
+        # Performance/tuning knobs (issue #792). None means "use library default".
+        cli_max_workers: int | None = None
+        cli_token_budget: int | None = None
+        cli_max_concurrency: int | None = None
+        cli_api_timeout: float | None = None
+
+        def _parse_int(name: str, raw: str) -> int:
+            try:
+                v = int(raw)
+            except ValueError:
+                print(f"error: {name} must be a positive integer (got {raw!r})", file=sys.stderr)
+                sys.exit(2)
+            if v <= 0:
+                print(f"error: {name} must be > 0 (got {v})", file=sys.stderr)
+                sys.exit(2)
+            return v
+
+        def _parse_float(name: str, raw: str) -> float:
+            try:
+                v = float(raw)
+            except ValueError:
+                print(f"error: {name} must be a positive number (got {raw!r})", file=sys.stderr)
+                sys.exit(2)
+            if v <= 0:
+                print(f"error: {name} must be > 0 (got {v})", file=sys.stderr)
+                sys.exit(2)
+            return v
+
         args = sys.argv[3:]
         i = 0
         while i < len(args):
@@ -2177,8 +2219,31 @@ def main() -> None:
                 global_merge = True; i += 1
             elif a == "--as" and i + 1 < len(args):
                 global_repo_tag = args[i + 1]; i += 2
+            elif a == "--max-workers" and i + 1 < len(args):
+                cli_max_workers = _parse_int("--max-workers", args[i + 1]); i += 2
+            elif a.startswith("--max-workers="):
+                cli_max_workers = _parse_int("--max-workers", a.split("=", 1)[1]); i += 1
+            elif a == "--token-budget" and i + 1 < len(args):
+                cli_token_budget = _parse_int("--token-budget", args[i + 1]); i += 2
+            elif a.startswith("--token-budget="):
+                cli_token_budget = _parse_int("--token-budget", a.split("=", 1)[1]); i += 1
+            elif a == "--max-concurrency" and i + 1 < len(args):
+                cli_max_concurrency = _parse_int("--max-concurrency", args[i + 1]); i += 2
+            elif a.startswith("--max-concurrency="):
+                cli_max_concurrency = _parse_int("--max-concurrency", a.split("=", 1)[1]); i += 1
+            elif a == "--api-timeout" and i + 1 < len(args):
+                cli_api_timeout = _parse_float("--api-timeout", args[i + 1]); i += 2
+            elif a.startswith("--api-timeout="):
+                cli_api_timeout = _parse_float("--api-timeout", a.split("=", 1)[1]); i += 1
             else:
                 i += 1
+
+        # CLI flag wins over env var. Setting GRAPHIFY_API_TIMEOUT here so
+        # _call_openai_compat picks it up without needing a new kwarg path.
+        if cli_api_timeout is not None:
+            os.environ["GRAPHIFY_API_TIMEOUT"] = str(cli_api_timeout)
+        if cli_max_workers is not None:
+            os.environ["GRAPHIFY_MAX_WORKERS"] = str(cli_max_workers)
 
         # Backend resolution. If user did not pass --backend, sniff env.
         # If backend was explicitly requested, validate its key is present
@@ -2210,11 +2275,31 @@ def main() -> None:
             )
             sys.exit(1)
         if not _get_backend_api_key(backend):
-            print(
-                f"error: backend '{backend}' requires {_format_backend_env_keys(backend)} to be set.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+            # Ollama on a loopback URL ignores auth entirely; don't block
+            # the run just because OLLAMA_API_KEY is unset (issue #792).
+            # extract_files_direct already prints a warning and substitutes
+            # a placeholder key in that case.
+            allow_no_key = False
+            if backend == "ollama":
+                from urllib.parse import urlparse
+                ollama_url = os.environ.get(
+                    "OLLAMA_BASE_URL",
+                    _BACKENDS["ollama"].get("base_url", ""),
+                )
+                try:
+                    host = (urlparse(ollama_url).hostname or "").lower()
+                except Exception:
+                    host = ""
+                allow_no_key = (
+                    host in ("localhost", "127.0.0.1", "::1")
+                    or host.startswith("127.")
+                )
+            if not allow_no_key:
+                print(
+                    f"error: backend '{backend}' requires {_format_backend_env_keys(backend)} to be set.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
 
         # Resolve output dir. The user-facing contract is "<out>/graphify-out/"
         # so a fresh checkout writes graphify-out/ at the project root, matching
@@ -2279,9 +2364,12 @@ def main() -> None:
         ast_result: dict = {"nodes": [], "edges": [], "input_tokens": 0, "output_tokens": 0}
         if code_files:
             from graphify.extract import extract as _ast_extract
+            ast_kwargs: dict = {"cache_root": target}
+            if cli_max_workers is not None:
+                ast_kwargs["max_workers"] = cli_max_workers
             print(f"[graphify extract] AST extraction on {len(code_files)} code files...")
             try:
-                ast_result = _ast_extract(code_files, cache_root=target)
+                ast_result = _ast_extract(code_files, **ast_kwargs)
             except Exception as exc:
                 print(f"[graphify extract] AST extraction failed: {exc}", file=sys.stderr)
                 ast_result = {"nodes": [], "edges": [], "input_tokens": 0, "output_tokens": 0}
@@ -2312,12 +2400,31 @@ def main() -> None:
 
             if uncached_paths:
                 print(f"[graphify extract] semantic extraction on {len(uncached_paths)} files via {backend}...")
+                corpus_kwargs: dict = {
+                    "backend": backend,
+                    "model": model,
+                    "root": target,
+                }
+                if cli_token_budget is not None:
+                    corpus_kwargs["token_budget"] = cli_token_budget
+                if cli_max_concurrency is not None:
+                    corpus_kwargs["max_concurrency"] = cli_max_concurrency
+
+                # Minimal progress callback so the CLI is no longer silent
+                # during long local-inference runs (issue #792 addendum).
+                _total_chunks = {"n": 0}
+                def _progress(idx: int, total: int, _result: dict) -> None:
+                    _total_chunks["n"] = total
+                    print(
+                        f"[graphify extract] chunk {idx + 1}/{total} done",
+                        flush=True,
+                    )
+                corpus_kwargs["on_chunk_done"] = _progress
+
                 try:
                     fresh = _extract_corpus_parallel(
                         [Path(p) for p in uncached_paths],
-                        backend=backend,
-                        model=model,
-                        root=target,
+                        **corpus_kwargs,
                     )
                 except ImportError as exc:
                     print(f"error: {exc}", file=sys.stderr)

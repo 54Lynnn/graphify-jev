@@ -5555,7 +5555,22 @@ def _extract_parallel(
     import concurrent.futures
 
     if max_workers is None:
-        max_workers = min(os.cpu_count() or 4, len(uncached_work), 8)
+        # Honour GRAPHIFY_MAX_WORKERS env override; otherwise scale to the
+        # full CPU. The historical `, 8)` cap was a safety bound for laptops
+        # in 2023 — on a 32-thread workstation it costs a 4x slowdown
+        # (issue #792). Capping at len(uncached_work) keeps small jobs
+        # from spawning useless idle workers.
+        env_raw = os.environ.get("GRAPHIFY_MAX_WORKERS", "").strip()
+        env_cap = None
+        if env_raw:
+            try:
+                v = int(env_raw)
+                if v > 0:
+                    env_cap = v
+            except ValueError:
+                pass
+        cpu_cap = env_cap if env_cap is not None else (os.cpu_count() or 4)
+        max_workers = min(cpu_cap, len(uncached_work))
 
     root_str = str(effective_root)
     work_items = [(idx, str(path), root_str) for idx, path in uncached_work]
@@ -5656,7 +5671,8 @@ def extract(
             subdirectory so the cache stays at ./graphify-out/cache/.
         parallel: if True and there are >= _PARALLEL_THRESHOLD uncached files,
             use ProcessPoolExecutor for multi-core extraction.
-        max_workers: max subprocess count. Defaults to min(cpu_count, 8).
+        max_workers: max subprocess count. Defaults to cpu_count (or the
+            value of GRAPHIFY_MAX_WORKERS if set), bounded by len(uncached_work).
     """
     _check_tree_sitter_version()
     _raise_recursion_limit()

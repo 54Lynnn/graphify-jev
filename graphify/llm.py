@@ -229,7 +229,21 @@ def _call_openai_compat(
             f"Run: pip install {pkg_hint}"
         ) from exc
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    # Local backends (ollama, llama.cpp, vLLM) routinely take >60s for a
+    # single chunk on a large model — far longer than the openai SDK's
+    # default. Honour GRAPHIFY_API_TIMEOUT (seconds) for explicit override;
+    # default to 600s, which is long enough for a 31B model on a 16k chunk
+    # but still bounds runaway connections (issue #792 addendum).
+    timeout_raw = os.environ.get("GRAPHIFY_API_TIMEOUT", "").strip()
+    timeout_s: float = 600.0
+    if timeout_raw:
+        try:
+            v = float(timeout_raw)
+            if v > 0:
+                timeout_s = v
+        except ValueError:
+            pass
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_s)
     kwargs: dict = {
         "model": model,
         "messages": [
