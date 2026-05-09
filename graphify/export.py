@@ -10,6 +10,7 @@ import networkx as nx
 from networkx.readwrite import json_graph
 from graphify.security import sanitize_label
 from graphify.analyze import _node_community_map
+from graphify.build import edge_data
 
 def _obsidian_tag(name: str) -> str:
     """Sanitize a community name for use as an Obsidian tag.
@@ -802,10 +803,10 @@ def to_obsidian(
         if neighbors:
             lines.append("## Connections")
             for neighbor in sorted(neighbors, key=lambda n: G.nodes[n].get("label", n)):
-                edge_data = G.edges[node_id, neighbor]
+                edata = edge_data(G, node_id, neighbor)
                 neighbor_label = node_filename[neighbor]
-                relation = edge_data.get("relation", "")
-                confidence = edge_data.get("confidence", "EXTRACTED")
+                relation = edata.get("relation", "")
+                confidence = edata.get("confidence", "EXTRACTED")
                 lines.append(f"- [[{neighbor_label}]] - `{relation}` [{confidence}]")
             lines.append("")
 

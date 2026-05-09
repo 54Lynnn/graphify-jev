@@ -5,6 +5,8 @@ from collections import Counter
 from pathlib import Path
 import networkx as nx
 
+from graphify.build import edge_data
+
 
 def _safe_filename(name: str) -> str:
     """Make a label safe for use as a filename across platforms.
@@ -48,7 +50,7 @@ def _community_article(
     conf_counts: Counter = Counter()
     for nid in nodes:
         for neighbor in G.neighbors(nid):
-            ed = G.edges[nid, neighbor]
+            ed = edge_data(G, nid, neighbor)
             conf_counts[ed.get("confidence", "EXTRACTED")] += 1
     total_edges = sum(conf_counts.values()) or 1
 
@@ -118,7 +120,7 @@ def _god_node_article(G: nx.Graph, nid: str, labels: dict[int, str]) -> str:
     by_relation: dict[str, list[str]] = {}
     for neighbor in sorted(G.neighbors(nid), key=lambda n: G.degree(n), reverse=True):
         nd = G.nodes[neighbor]
-        ed = G.edges[nid, neighbor]
+        ed = edge_data(G, nid, neighbor)
         rel = ed.get("relation", "related")
         neighbor_label = nd.get("label", neighbor)
         conf = ed.get("confidence", "")

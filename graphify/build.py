@@ -45,6 +45,27 @@ def _norm_source_file(p: str | None) -> str | None:
     return p.replace("\\", "/") if p else p
 
 
+def edge_data(G: nx.Graph, u: str, v: str) -> dict:
+    """Return one edge attribute dict for (u, v), tolerating MultiGraph.
+
+    For MultiGraph/MultiDiGraph there can be multiple parallel edges;
+    this returns the first one (sufficient for callers that only need
+    relation/confidence for rendering). Fixes #796.
+    """
+    raw = G[u][v]
+    if isinstance(G, (nx.MultiGraph, nx.MultiDiGraph)):
+        return next(iter(raw.values()), {})
+    return raw
+
+
+def edge_datas(G: nx.Graph, u: str, v: str) -> list[dict]:
+    """Return every edge attribute dict for (u, v); always a list."""
+    raw = G[u][v]
+    if isinstance(G, (nx.MultiGraph, nx.MultiDiGraph)):
+        return list(raw.values())
+    return [raw]
+
+
 def build_from_json(extraction: dict, *, directed: bool = False) -> nx.Graph:
     """Build a NetworkX graph from an extraction dict.
 

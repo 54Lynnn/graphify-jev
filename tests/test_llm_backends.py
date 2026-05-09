@@ -187,3 +187,176 @@ def test_adaptive_retry_re_raises_unrelated_errors(tmp_path):
             llm._extract_with_adaptive_retry(
                 [f], backend="kimi", api_key="k", model="m", root=tmp_path, max_depth=3
             )
+
+
+# ---------------------------------------------------------------------------
+# Hollow-response detection: empty / null / unparseable content from a
+# successful HTTP call must route into the same bisection path as a true
+# `finish_reason="length"` truncation, not be silently dropped.
+# ---------------------------------------------------------------------------
+
+
+def test_response_is_hollow_flags_empty_string():
+    assert llm._response_is_hollow("", {"nodes": [], "edges": [], "hyperedges": []})
+
+
+def test_response_is_hollow_flags_none_content():
+    assert llm._response_is_hollow(None, {"nodes": [], "edges": [], "hyperedges": []})
+
+
+def test_response_is_hollow_flags_whitespace_only():
+    assert llm._response_is_hollow("   \n\t  ", {"nodes": [], "edges": [], "hyperedges": []})
+
+
+def test_response_is_hollow_flags_parsed_but_no_nodes_or_edges():
+    # Content was non-empty (e.g. model said `{"sorry": "I cannot"}` or returned
+    # `{}` literally) but the parsed result has nothing usable.
+    assert llm._response_is_hollow('{"sorry": "I cannot"}', {})
+    assert llm._response_is_hollow("{}", {"nodes": [], "edges": [], "hyperedges": []})
+
+
+def test_response_is_hollow_accepts_real_extraction():
+    parsed = {"nodes": [{"id": "x"}], "edges": [], "hyperedges": []}
+    assert not llm._response_is_hollow('{"nodes":[{"id":"x"}]}', parsed)
+    parsed = {"nodes": [], "edges": [{"source": "a", "target": "b"}], "hyperedges": []}
+    assert not llm._response_is_hollow('{"edges":[...]}', parsed)
+
+
+def _fake_openai_response(content, *, finish_reason="stop", prompt_tokens=100, completion_tokens=0):
+    """Build a minimal stand-in for an `openai` SDK ChatCompletion response."""
+    class _Usage:
+        def __init__(self):
+            self.prompt_tokens = prompt_tokens
+            self.completion_tokens = completion_tokens
+
+    class _Message:
+        def __init__(self):
+            self.content = content
+
+    class _Choice:
+        def __init__(self):
+            self.message = _Message()
+            self.finish_reason = finish_reason
+
+    class _Resp:
+        def __init__(self):
+            self.choices = [_Choice()]
+            self.usage = _Usage()
+
+    return _Resp()
+
+
+def _install_fake_openai(monkeypatch, fake_resp):
+    """Inject a stub `openai` module so `_call_openai_compat` can run without
+    the real SDK installed. The function does `from openai import OpenAI`
+    inside its body, so we satisfy that lookup via `sys.modules`."""
+    import sys
+    import types
+
+    class _FakeOpenAI:
+        def __init__(self, *_, **__):
+            self.chat = self
+            self.completions = self
+        def create(self, **__):
+            return fake_resp
+
+    fake_module = types.ModuleType("openai")
+    fake_module.OpenAI = _FakeOpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake_module)
+
+
+def test_call_openai_compat_relabels_empty_content_as_length(monkeypatch):
+    # Simulates an overwhelmed Ollama: HTTP 200, empty content, finish_reason
+    # "stop", zero completion tokens. Pre-fix this would silently return an
+    # empty fragment and the chunk would be dropped. Post-fix `finish_reason`
+    # is rewritten to "length" so the adaptive retry layer bisects.
+    fake_resp = _fake_openai_response("", finish_reason="stop", completion_tokens=0)
+    _install_fake_openai(monkeypatch, fake_resp)
+
+    result = llm._call_openai_compat(
+        "http://localhost:11434/v1", "ollama", "qwen2.5-coder:7b",
+        "user msg", temperature=0, max_completion_tokens=8192, backend="ollama",
+    )
+    assert result["finish_reason"] == "length", (
+        "empty content from a 'successful' call must be re-labelled so the "
+        "adaptive retry layer treats it as a truncation and bisects the chunk"
+    )
+
+
+def test_call_openai_compat_relabels_none_content_as_length(monkeypatch):
+    fake_resp = _fake_openai_response(None, finish_reason="stop")
+    _install_fake_openai(monkeypatch, fake_resp)
+
+    result = llm._call_openai_compat(
+        "http://localhost:11434/v1", "ollama", "qwen2.5-coder:7b",
+        "u", temperature=0, max_completion_tokens=8192, backend="ollama",
+    )
+    assert result["finish_reason"] == "length"
+
+
+def test_call_openai_compat_relabels_unparseable_json_as_length(monkeypatch):
+    # A half-generated response: `{"nodes": [{"id":` parses to {} (empty
+    # fragment) via _parse_llm_json's JSONDecodeError fallback. That is also
+    # hollow and must trigger bisection.
+    fake_resp = _fake_openai_response('{"nodes": [{"id":', finish_reason="stop", completion_tokens=20)
+    _install_fake_openai(monkeypatch, fake_resp)
+
+    result = llm._call_openai_compat(
+        "http://localhost:11434/v1", "ollama", "qwen2.5-coder:7b",
+        "u", temperature=0, max_completion_tokens=8192, backend="ollama",
+    )
+    assert result["finish_reason"] == "length"
+
+
+def test_call_openai_compat_preserves_real_finish_reason(monkeypatch):
+    # A genuine extraction with real nodes must NOT be re-labelled.
+    fake_resp = _fake_openai_response(
+        '{"nodes":[{"id":"a"}],"edges":[],"hyperedges":[]}',
+        finish_reason="stop",
+        completion_tokens=200,
+    )
+    _install_fake_openai(monkeypatch, fake_resp)
+
+    result = llm._call_openai_compat(
+        "http://localhost:11434/v1", "k", "m",
+        "u", temperature=0, max_completion_tokens=8192, backend="kimi",
+    )
+    assert result["finish_reason"] == "stop"
+    assert result["nodes"] == [{"id": "a"}]
+
+
+def test_adaptive_retry_bisects_on_hollow_ollama_response(tmp_path):
+    # End-to-end: an overwhelmed Ollama returns hollow on the full 4-file
+    # chunk; halves succeed. The bug being fixed is that pre-fix this
+    # produces zero nodes (chunk silently dropped). Post-fix the hollow
+    # response is relabelled `finish_reason="length"` and the existing
+    # bisection path recovers the full 4 nodes.
+    files = [tmp_path / f"f{i}.md" for i in range(4)]
+    for f in files:
+        f.write_text("hello")
+
+    calls = {"n": 0}
+
+    def fake_extract(chunk, *_, **__):
+        calls["n"] += 1
+        if len(chunk) == 4:
+            # Hollow response: looks successful, finish_reason already
+            # rewritten to "length" by _call_openai_compat.
+            return {
+                "nodes": [], "edges": [], "hyperedges": [],
+                "input_tokens": 100, "output_tokens": 0,
+                "model": "m", "finish_reason": "length",
+            }
+        return _ok(nodes=[{"id": f.stem} for f in chunk])
+
+    with patch("graphify.llm.extract_files_direct", side_effect=fake_extract):
+        result = llm._extract_with_adaptive_retry(
+            files, backend="ollama", api_key="ollama", model="qwen2.5-coder:7b",
+            root=tmp_path, max_depth=3,
+        )
+
+    assert len(result["nodes"]) == 4, (
+        "bisection should recover all 4 nodes from the two halves after the "
+        "full chunk came back hollow"
+    )
+    assert calls["n"] == 3  # 1 hollow + 2 successful halves

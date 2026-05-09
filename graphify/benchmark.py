@@ -6,6 +6,8 @@ from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph
 
+from graphify.build import edge_data
+
 
 _CHARS_PER_TOKEN = 4  # standard approximation
 
@@ -66,7 +68,7 @@ def _query_subgraph_tokens(G: nx.Graph, question: str, depth: int = 3) -> int:
         lines.append(f"NODE {d.get('label', nid)} src={d.get('source_file', '')} loc={d.get('source_location', '')}")
     for u, v in edges_seen:
         if u in visited and v in visited:
-            d = G.edges[u, v]
+            d = edge_data(G, u, v)
             lines.append(f"EDGE {G.nodes[u].get('label', u)} --{d.get('relation', '')}--> {G.nodes[v].get('label', v)}")
 
     return _estimate_tokens("\n".join(lines))

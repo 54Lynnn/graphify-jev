@@ -47,9 +47,11 @@ Drop any folder of code, docs, papers, images, or video into graphify and get a 
 
 ## What You Must Do When Invoked
 
+If the user invoked `/graphify --help` or `/graphify -h` (with no other arguments), print the contents of the `## Usage` section above verbatim and stop. Do not run any commands, do not detect files, do not default the path to `.`. Just print the Usage block and return.
+
 If no path was given, use `.` (current directory). Do not ask the user for a path.
 
-If the path argument starts with `https://github.com/` or `http://github.com/`, treat it as a GitHub URL — run Step 0 before anything else, then continue with the resolved local path.
+If the path argument starts with `https://github.com/` or `http://github.com/`, treat it as a GitHub URL - run Step 0 before anything else, then continue with the resolved local path.
 
 Follow these steps in order. Do not skip steps.
 

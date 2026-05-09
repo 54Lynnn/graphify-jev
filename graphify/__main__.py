@@ -1514,9 +1514,10 @@ def main() -> None:
             sys.exit(0)
         hops = len(path_nodes) - 1
         segments = []
+        from graphify.build import edge_data
         for i in range(len(path_nodes) - 1):
             u, v = path_nodes[i], path_nodes[i + 1]
-            edata = G.edges[u, v]
+            edata = edge_data(G, u, v)
             rel = edata.get("relation", "")
             conf = edata.get("confidence", "")
             conf_str = f" [{conf}]" if conf else ""
@@ -1562,9 +1563,10 @@ def main() -> None:
         print(f"  Degree:    {G.degree(nid)}")
         neighbors = list(G.neighbors(nid))
         if neighbors:
+            from graphify.build import edge_data
             print(f"\nConnections ({len(neighbors)}):")
             for nb in sorted(neighbors, key=lambda n: G.degree(n), reverse=True)[:20]:
-                edata = G.edges[nid, nb]
+                edata = edge_data(G, nid, nb)
                 rel = edata.get("relation", "")
                 conf = edata.get("confidence", "")
                 print(f"  --> {G.nodes[nb].get('label', nb)} [{rel}] [{conf}]")

@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import networkx as nx
 
+from graphify.build import edge_data
+
 # Language families — extensions sharing a runtime can legitimately call each other
 _LANG_FAMILY: dict[str, str] = {
     **{e: "python" for e in (".py", ".pyw")},
@@ -301,7 +303,7 @@ def _cross_community_surprises(
         top_edges = sorted(betweenness.items(), key=lambda x: x[1], reverse=True)[:top_n]
         result = []
         for (u, v), score in top_edges:
-            data = G.edges[u, v]
+            data = edge_data(G, u, v)
             result.append({
                 "source": G.nodes[u].get("label", u),
                 "target": G.nodes[v].get("label", v),

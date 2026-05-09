@@ -21,6 +21,8 @@ Turn any folder of files into a navigable knowledge graph with community detecti
 
 ## What You Must Do When Invoked
 
+If the user invoked `/graphify --help` or `/graphify -h` (with no other arguments), print the contents of the `## Usage` section above verbatim and stop. Do not run any commands, do not detect files, do not default the path to `.`. Just print the Usage block and return.
+
 If no path was given, use `.` (current directory). Do not ask the user for a path.
 
 Follow these steps in order. Do not skip steps.

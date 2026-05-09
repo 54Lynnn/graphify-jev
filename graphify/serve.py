@@ -6,6 +6,7 @@ from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph
 from graphify.security import sanitize_label
+from graphify.build import edge_data
 
 
 def _load_graph(graph_path: str) -> nx.Graph:
@@ -403,7 +404,7 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         nid = matches[0]
         lines = [f"Neighbors of {sanitize_label(G.nodes[nid].get('label', nid))}:"]
         for neighbor in G.neighbors(nid):
-            d = G.edges[nid, neighbor]
+            d = edge_data(G, nid, neighbor)
             rel = d.get("relation", "")
             if rel_filter and rel_filter not in rel.lower():
                 continue
@@ -466,7 +467,7 @@ def serve(graph_path: str = "graphify-out/graph.json") -> None:
         segments = []
         for i in range(len(path_nodes) - 1):
             u, v = path_nodes[i], path_nodes[i + 1]
-            edata = G.edges[u, v]
+            edata = edge_data(G, u, v)
             rel = edata.get("relation", "")
             conf = edata.get("confidence", "")
             conf_str = f" [{conf}]" if conf else ""

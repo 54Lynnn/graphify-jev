@@ -51,6 +51,8 @@ Use it for:
 
 ## What You Must Do When Invoked
 
+If the user invoked `/graphify --help` or `/graphify -h` (with no other arguments), print the contents of the `## Usage` section above verbatim and stop. Do not run any commands, do not detect files, do not default the path to `.`. Just print the Usage block and return.
+
 If no path was given, use `.` (current directory). Do not ask the user for a path.
 
 Follow these steps in order. Do not skip steps.
@@ -1061,7 +1063,7 @@ for nid in ranked_nodes:
     lines.append(f'  NODE {d.get(\"label\", nid)} [src={d.get(\"source_file\",\"\")} loc={d.get(\"source_location\",\"\")}]')
 for u, v in subgraph_edges:
     if u in subgraph_nodes and v in subgraph_nodes:
-        d = G.edges[u, v]
+        _raw = G[u][v]; d = next(iter(_raw.values()), {}) if isinstance(G, nx.MultiGraph) else _raw
         lines.append(f'  EDGE {G.nodes[u].get(\"label\",u)} --{d.get(\"relation\",\"\")} [{d.get(\"confidence\",\"\")}]--> {G.nodes[v].get(\"label\",v)}')
 
 output = '\n'.join(lines)
@@ -1133,7 +1135,7 @@ try:
     for i, nid in enumerate(path):
         label = G.nodes[nid].get('label', nid)
         if i < len(path) - 1:
-            edge = G.edges[nid, path[i+1]]
+            _raw = G[nid][path[i+1]]; edge = next(iter(_raw.values()), {}) if isinstance(G, nx.MultiGraph) else _raw
             rel = edge.get('relation', '')
             conf = edge.get('confidence', '')
             print(f'  {label} --{rel}--> [{conf}]')
@@ -1203,7 +1205,7 @@ print(f'  degree: {G.degree(nid)}')
 print()
 print('CONNECTIONS:')
 for neighbor in G.neighbors(nid):
-    edge = G.edges[nid, neighbor]
+    _raw = G[nid][neighbor]; edge = next(iter(_raw.values()), {}) if isinstance(G, nx.MultiGraph) else _raw
     nlabel = G.nodes[neighbor].get('label', neighbor)
     rel = edge.get('relation', '')
     conf = edge.get('confidence', '')
