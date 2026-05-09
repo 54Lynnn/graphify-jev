@@ -4537,6 +4537,592 @@ def extract_markdown(path: Path) -> dict:
     return {"nodes": nodes, "edges": edges, "input_tokens": 0, "output_tokens": 0}
 
 
+# ── Pascal / Delphi extractor ─────────────────────────────────────────────────
+
+_pascal_unit_cache: dict[str, dict[str, str]] = {}
+_pascal_class_stem_cache: dict[str, dict[str, str]] = {}  # root_key → {stem_lower: _file_stem}
+
+
+def _pascal_project_root(from_path: Path) -> Path:
+    """Return the highest ancestor directory that looks like a Pascal project root.
+
+    Walks up the directory tree and tracks the topmost directory that:
+      - is NOT a filesystem root (e.g. D:/, C:/, /)
+      - has at least 2 .pas files OR at least 1 .dpr file as direct children
+
+    The minimum-2 threshold avoids treating a level as the root just because a
+    single stray .pas file was copied there.  The filesystem-root exclusion
+    prevents overshoot on drives that have a stray file directly at D:/.
+
+    Falls back to from_path.parent if nothing better is found.
+    """
+    best = from_path.parent
+    current = from_path.parent
+    for _ in range(12):
+        if len(current.parts) <= 1:
+            break  # never use a filesystem root (D:/, C:/, /)
+        pas_count = sum(1 for _ in current.glob("*.pas"))
+        dpr_count = sum(1 for _ in current.glob("*.dpr"))
+        if pas_count >= 2 or dpr_count >= 1:
+            best = current
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return best
+
+
+def _pascal_resolve_unit(from_path: Path, unit_name: str) -> str:
+    """Resolve a Pascal unit name to the graphify node ID of its source file.
+
+    Scans all Pascal files under the project root (the highest ancestor that
+    directly contains .pas/.dpr files) and returns _make_id(str(matched_path)).
+    Result is cached per project root so the rglob runs at most once per
+    project.  Falls back to _make_id(unit_name) for units not found on disk
+    (e.g. standard RTL units like SysUtils, Windows).
+    """
+    root = _pascal_project_root(from_path)
+    root_key = str(root)
+    if root_key not in _pascal_unit_cache:
+        unit_map: dict[str, str] = {}
+        for ext in (".pas", ".pp", ".dpr", ".dpk", ".inc"):
+            for f in root.rglob("*" + ext):
+                unit_map[f.stem.lower()] = _make_id(str(f))
+        _pascal_unit_cache[root_key] = unit_map
+    return _pascal_unit_cache[root_key].get(unit_name.lower(), _make_id(unit_name))
+
+
+def _pascal_resolve_class(from_path: Path, class_name: str) -> str | None:
+    """Resolve a Pascal class/interface name to the node ID of its defining file's class node.
+
+    Pascal convention: TFooBar is defined in FooBar.pas, IFooBar in FooBar.pas.
+    Strips the leading T/I prefix, finds the file, and returns
+    _make_id(_file_stem(found_file), class_name).
+
+    Returns None when no matching file is found on disk (RTL, stdlib, or
+    unconventionally-named class — caller should create a stub node).
+    """
+    prefix = class_name[:1]
+    unit_name = class_name[1:] if prefix in ("T", "I") else class_name
+
+    root = _pascal_project_root(from_path)
+    root_key = str(root)
+    if root_key not in _pascal_class_stem_cache:
+        stem_map: dict[str, str] = {}
+        for ext in (".pas", ".pp", ".dpr", ".dpk"):
+            for f in root.rglob("*" + ext):
+                stem_map[f.stem.lower()] = _file_stem(f)
+        _pascal_class_stem_cache[root_key] = stem_map
+
+    file_stem = _pascal_class_stem_cache[root_key].get(unit_name.lower())
+    if file_stem:
+        return _make_id(file_stem, class_name)
+    return None
+
+
+def extract_pascal(path: Path) -> dict:
+    """Extract units, classes, procedures, uses-imports, and calls from Pascal/Delphi files.
+
+    Produces nodes for:
+    - The file itself
+    - unit / program / library declarations
+    - class and interface type declarations
+    - procedure / function implementations (including qualified TClass.Method names)
+
+    Produces edges for:
+    - file --contains--> module
+    - module --imports--> other file node (via uses clause, resolved to path-based IDs)
+    - class --inherits--> base class
+    - class/module --contains--> method forward declaration
+    - class/module --contains--> procedure/function implementation
+    - procedure --calls--> other procedure (within the same file)
+
+    Requires tree-sitter-pascal: pip install tree-sitter-pascal
+    (https://github.com/Isopod/tree-sitter-pascal)
+    """
+    try:
+        import tree_sitter_pascal as tspascal
+        from tree_sitter import Language, Parser
+    except ImportError:
+        return {
+            "nodes": [], "edges": [],
+            "error": "tree_sitter_pascal not installed. Run: pip install tree-sitter-pascal",
+        }
+
+    try:
+        language = Language(tspascal.language())
+        parser = Parser(language)
+        source = path.read_bytes()
+        tree = parser.parse(source)
+        root = tree.root_node
+    except Exception as e:
+        return {"nodes": [], "edges": [], "error": str(e)}
+
+    stem = _file_stem(path)
+    str_path = str(path)
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_ids: set[str] = set()
+    proc_bodies: list[tuple[str, Any]] = []
+
+    def _read(node) -> str:  # type: ignore[no-untyped-def]
+        return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+
+    def add_node(nid: str, label: str, line: int) -> None:
+        if nid not in seen_ids:
+            seen_ids.add(nid)
+            nodes.append({
+                "id": nid, "label": label, "file_type": "code",
+                "source_file": str_path, "source_location": f"L{line}",
+            })
+
+    def add_edge(
+        src: str, tgt: str, relation: str, line: int,
+        confidence: str = "EXTRACTED", weight: float = 1.0,
+        context: str | None = None,
+    ) -> None:
+        edge: dict[str, Any] = {
+            "source": src, "target": tgt, "relation": relation,
+            "confidence": confidence, "source_file": str_path,
+            "source_location": f"L{line}", "weight": weight,
+        }
+        if context:
+            edge["context"] = context
+        edges.append(edge)
+
+    file_nid = _make_id(str(path))
+    add_node(file_nid, path.name, 1)
+    module_nid = file_nid
+
+    def _proc_name(header_node) -> str | None:  # type: ignore[no-untyped-def]
+        name_node = header_node.child_by_field_name("name")
+        if name_node:
+            return _read(name_node)
+        for child in header_node.children:
+            if child.type in ("identifier", "genericDot", "genericTpl"):
+                return _read(child)
+        return None
+
+    def walk(node, parent_nid: str) -> None:  # type: ignore[no-untyped-def]
+        nonlocal module_nid
+        t = node.type
+        line = node.start_point[0] + 1
+
+        if t in ("unit", "program", "library"):
+            name_node = next((c for c in node.children if c.type == "moduleName"), None)
+            mod_name = _read(name_node) if name_node else path.stem
+            mod_nid = _make_id(stem, mod_name)
+            add_node(mod_nid, mod_name, line)
+            add_edge(file_nid, mod_nid, "contains", line)
+            module_nid = mod_nid
+            for child in node.children:
+                walk(child, mod_nid)
+            return
+
+        if t == "declUses":
+            for child in node.children:
+                if child.type == "moduleName":
+                    mod_name = _read(child)
+                    tgt_nid = _pascal_resolve_unit(path, mod_name)
+                    add_edge(parent_nid, tgt_nid, "imports", line, context="import")
+            return
+
+        if t == "declType":
+            type_name = None
+            kind_node = None
+            for child in node.children:
+                if child.type == "identifier" and type_name is None:
+                    type_name = _read(child)
+                elif child.type in ("declClass", "declIntf", "declHelper") and kind_node is None:
+                    kind_node = child
+            if type_name and kind_node:
+                cls_nid = _make_id(stem, type_name)
+                add_node(cls_nid, type_name, line)
+                add_edge(parent_nid, cls_nid, "contains", line)
+                for child in kind_node.children:
+                    if child.type == "typeref":
+                        base_name = _read(child)
+                        base_nid = _make_id(stem, base_name)
+                        if base_nid not in seen_ids:
+                            # Try cross-file resolution (TFooBar → FooBar.pas)
+                            resolved = _pascal_resolve_class(path, base_name)
+                            base_nid = resolved if resolved else _make_id(base_name)
+                            if base_nid not in seen_ids:
+                                # Stub for RTL/external/cross-file base classes
+                                add_node(base_nid, base_name, line)
+                        add_edge(cls_nid, base_nid, "inherits", line)
+                for child in kind_node.children:
+                    walk(child, cls_nid)
+                return
+            for child in node.children:
+                walk(child, parent_nid)
+            return
+
+        if t == "declProcFwd":
+            header = next((c for c in node.children if c.type == "declProc"), None)
+            if header:
+                name = _proc_name(header)
+                if name and "." not in name:
+                    method_nid = _make_id(parent_nid, name)
+                    add_node(method_nid, f"{name}()", line)
+                    add_edge(parent_nid, method_nid, "method", line)
+            return
+
+        if t == "defProc":
+            header = next((c for c in node.children if c.type == "declProc"), None)
+            body_node = next((c for c in node.children if c.type == "block"), None)
+            if not header:
+                for child in node.children:
+                    walk(child, parent_nid)
+                return
+            name = _proc_name(header)
+            if not name:
+                for child in node.children:
+                    walk(child, parent_nid)
+                return
+            container = parent_nid
+            if "." in name:
+                parts = name.split(".", 1)
+                cls_nid = _make_id(stem, parts[0])
+                if cls_nid in seen_ids:
+                    container = cls_nid
+                label = f"{parts[-1]}()"
+            else:
+                label = f"{name}()"
+            proc_nid = _make_id(stem, name)
+            add_node(proc_nid, label, line)
+            add_edge(
+                container, proc_nid,
+                "method" if container != parent_nid else "contains",
+                line,
+            )
+            if body_node:
+                proc_bodies.append((proc_nid, body_node))
+            return
+
+        for child in node.children:
+            walk(child, parent_nid)
+
+    walk(root, file_nid)
+
+    # Second pass: resolve calls inside procedure/function bodies
+    all_procs: dict[str, str] = {
+        n["label"].removesuffix("()").lower(): n["id"]
+        for n in nodes if n["id"] != file_nid
+    }
+    seen_call_pairs: set[tuple[str, str]] = set()
+
+    def walk_calls(node, caller_nid: str) -> None:  # type: ignore[no-untyped-def]
+        if node.type == "exprCall":
+            callee_text = None
+            for child in node.children:
+                if child.is_named and child.type not in ("exprArgs",):
+                    callee_text = _read(child).split(".")[-1]
+                    break
+            if callee_text:
+                callee_nid = all_procs.get(callee_text.lower())
+                if callee_nid and callee_nid != caller_nid:
+                    pair = (caller_nid, callee_nid)
+                    if pair not in seen_call_pairs:
+                        seen_call_pairs.add(pair)
+                        add_edge(
+                            caller_nid, callee_nid, "calls",
+                            node.start_point[0] + 1, context="call",
+                        )
+        elif node.type == "statement":
+            # Pascal bare procedure calls with no args: `Reset;`
+            # tree-sitter represents these as statement → identifier (no exprCall wrapper)
+            named = [c for c in node.children if c.is_named]
+            if len(named) == 1 and named[0].type == "identifier":
+                callee_text = _read(named[0])
+                callee_nid = all_procs.get(callee_text.lower())
+                if callee_nid and callee_nid != caller_nid:
+                    pair = (caller_nid, callee_nid)
+                    if pair not in seen_call_pairs:
+                        seen_call_pairs.add(pair)
+                        add_edge(
+                            caller_nid, callee_nid, "calls",
+                            node.start_point[0] + 1, context="call",
+                        )
+        for child in node.children:
+            walk_calls(child, caller_nid)
+
+    for proc_nid, body_node in proc_bodies:
+        walk_calls(body_node, proc_nid)
+
+    return {"nodes": nodes, "edges": edges, "input_tokens": 0, "output_tokens": 0}
+
+
+def extract_lazarus_form(path: Path) -> dict:
+    """Extract component hierarchy from Lazarus .lfm form files.
+
+    .lfm is a text-based declarative format for UI component trees, structured as:
+        object ComponentName: TClassName
+          PropertyName = Value
+          OnEvent = HandlerName
+          object ChildName: TChildClass
+            ...
+          end
+        end
+
+    Produces nodes for:
+    - The form file itself
+    - Each component class encountered (TForm1, TButton, TPanel, ...)
+    - Event handler names referenced by OnXxx properties
+
+    Produces edges for:
+    - file --contains--> root form class
+    - parent component --contains--> child component class
+    - component --references--> event handler (context: "event")
+    """
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except Exception as e:
+        return {"nodes": [], "edges": [], "error": str(e)}
+
+    import re
+    str_path = str(path)
+    stem = _file_stem(path)
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_ids: set[str] = set()
+    seen_edge_pairs: set[tuple[str, str, str]] = set()
+
+    def add_node(nid: str, label: str, line: int) -> None:
+        if nid not in seen_ids:
+            seen_ids.add(nid)
+            nodes.append({
+                "id": nid, "label": label, "file_type": "code",
+                "source_file": str_path, "source_location": f"L{line}",
+            })
+
+    def add_edge(
+        src: str, tgt: str, relation: str, line: int,
+        context: str | None = None,
+    ) -> None:
+        key = (src, tgt, relation)
+        if key in seen_edge_pairs:
+            return
+        seen_edge_pairs.add(key)
+        edge: dict[str, Any] = {
+            "source": src, "target": tgt, "relation": relation,
+            "confidence": "EXTRACTED", "source_file": str_path,
+            "source_location": f"L{line}", "weight": 1.0,
+        }
+        if context:
+            edge["context"] = context
+        edges.append(edge)
+
+    file_nid = _make_id(str(path))
+    add_node(file_nid, path.name, 1)
+
+    obj_re = re.compile(r"^\s*object\s+\w+\s*:\s*(\w+)", re.IGNORECASE)
+    event_re = re.compile(r"^\s*On\w+\s*=\s*(\w+)", re.IGNORECASE)
+    end_re = re.compile(r"^\s*end\s*$", re.IGNORECASE)
+
+    # Stack of node IDs representing the nesting of object...end blocks
+    stack: list[str] = [file_nid]
+
+    for lineno, line in enumerate(text.splitlines(), 1):
+        m = obj_re.match(line)
+        if m:
+            class_name = m.group(1)
+            nid = _make_id(stem, class_name)
+            add_node(nid, class_name, lineno)
+            add_edge(stack[-1], nid, "contains", lineno)
+            stack.append(nid)
+            continue
+
+        m = event_re.match(line)
+        if m and len(stack) > 1:
+            handler = m.group(1)
+            handler_nid = _make_id(stem, handler)
+            add_node(handler_nid, f"{handler}()", lineno)
+            add_edge(stack[-1], handler_nid, "references", lineno, context="event")
+            continue
+
+        if end_re.match(line) and len(stack) > 1:
+            stack.pop()
+
+    return {"nodes": nodes, "edges": edges, "input_tokens": 0, "output_tokens": 0}
+
+
+def extract_delphi_form(path: Path) -> dict:
+    """Extract component hierarchy from Delphi .dfm form files.
+
+    .dfm files come in two formats:
+    - Text (same `object Name: TClassName ... end` syntax as .lfm)
+    - Binary (starts with a TPF0/FF0A magic header — unreadable as text)
+
+    Binary .dfm files are skipped gracefully: an empty result is returned
+    so the rest of the pipeline is unaffected.  Convert binary forms to
+    text in the Delphi IDE via File → Save As (Text DFM) if you want them
+    indexed.
+
+    Text .dfm files are parsed identically to .lfm: component containment
+    (`contains`) and event handler references (`references`, context "event").
+    """
+    try:
+        raw = path.read_bytes()
+    except Exception as e:
+        return {"nodes": [], "edges": [], "error": str(e)}
+
+    # Detect binary DFM: Delphi binary resource streams start with FF 0A
+    if raw[:2] == b"\xff\x0a":
+        return {
+            "nodes": [], "edges": [],
+            "error": f"binary DFM (convert to text in Delphi IDE to index): {path.name}",
+        }
+
+    # Text DFM — delegate to the shared form parser (same syntax as .lfm)
+    try:
+        text = raw.decode("utf-8", errors="replace")
+    except Exception as e:
+        return {"nodes": [], "edges": [], "error": str(e)}
+
+    import re
+    str_path = str(path)
+    stem = _file_stem(path)
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_ids: set[str] = set()
+    seen_edge_pairs: set[tuple[str, str, str]] = set()
+
+    def add_node(nid: str, label: str, line: int) -> None:
+        if nid not in seen_ids:
+            seen_ids.add(nid)
+            nodes.append({
+                "id": nid, "label": label, "file_type": "code",
+                "source_file": str_path, "source_location": f"L{line}",
+            })
+
+    def add_edge(
+        src: str, tgt: str, relation: str, line: int,
+        context: str | None = None,
+    ) -> None:
+        key = (src, tgt, relation)
+        if key in seen_edge_pairs:
+            return
+        seen_edge_pairs.add(key)
+        edge: dict[str, Any] = {
+            "source": src, "target": tgt, "relation": relation,
+            "confidence": "EXTRACTED", "source_file": str_path,
+            "source_location": f"L{line}", "weight": 1.0,
+        }
+        if context:
+            edge["context"] = context
+        edges.append(edge)
+
+    file_nid = _make_id(str(path))
+    add_node(file_nid, path.name, 1)
+
+    obj_re   = re.compile(r"^\s*object\s+\w+\s*:\s*(\w+)", re.IGNORECASE)
+    event_re = re.compile(r"^\s*On\w+\s*=\s*(\w+)", re.IGNORECASE)
+    end_re   = re.compile(r"^\s*end\s*$", re.IGNORECASE)
+    stack: list[str] = [file_nid]
+
+    for lineno, line in enumerate(text.splitlines(), 1):
+        m = obj_re.match(line)
+        if m:
+            class_name = m.group(1)
+            nid = _make_id(stem, class_name)
+            add_node(nid, class_name, lineno)
+            add_edge(stack[-1], nid, "contains", lineno)
+            stack.append(nid)
+            continue
+        m = event_re.match(line)
+        if m and len(stack) > 1:
+            handler = m.group(1)
+            handler_nid = _make_id(stem, handler)
+            add_node(handler_nid, f"{handler}()", lineno)
+            add_edge(stack[-1], handler_nid, "references", lineno, context="event")
+            continue
+        if end_re.match(line) and len(stack) > 1:
+            stack.pop()
+
+    return {"nodes": nodes, "edges": edges, "input_tokens": 0, "output_tokens": 0}
+
+
+def extract_lazarus_package(path: Path) -> dict:
+    """Extract package metadata from Lazarus .lpk package files (XML format).
+
+    .lpk is an XML file listing the package name, required dependencies,
+    and the Pascal units that belong to the package.
+
+    Produces nodes for:
+    - The package file itself
+    - The package (by name)
+    - Each required package (dependency)
+    - Each listed unit file (resolved to path-based IDs where possible)
+
+    Produces edges for:
+    - file --contains--> package
+    - package --imports--> required dependency (context: "import")
+    - package --contains--> listed unit
+    """
+    try:
+        import xml.etree.ElementTree as ET
+        text = path.read_text(encoding="utf-8", errors="replace")
+        xml_root = ET.fromstring(text)
+    except Exception as e:
+        return {"nodes": [], "edges": [], "error": str(e)}
+
+    str_path = str(path)
+    stem = _file_stem(path)
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_ids: set[str] = set()
+
+    def add_node(nid: str, label: str) -> None:
+        if nid not in seen_ids:
+            seen_ids.add(nid)
+            nodes.append({
+                "id": nid, "label": label, "file_type": "code",
+                "source_file": str_path, "source_location": "L1",
+            })
+
+    def add_edge(src: str, tgt: str, relation: str, context: str | None = None) -> None:
+        edge: dict[str, Any] = {
+            "source": src, "target": tgt, "relation": relation,
+            "confidence": "EXTRACTED", "source_file": str_path,
+            "source_location": "L1", "weight": 1.0,
+        }
+        if context:
+            edge["context"] = context
+        edges.append(edge)
+
+    file_nid = _make_id(str(path))
+    add_node(file_nid, path.name)
+
+    name_elem = xml_root.find(".//Package/Name")
+    pkg_name = name_elem.get("Value") if name_elem is not None else path.stem
+    pkg_nid = _make_id(stem, pkg_name)
+    add_node(pkg_nid, pkg_name)
+    add_edge(file_nid, pkg_nid, "contains")
+
+    # Required packages → imports edges
+    for item in xml_root.findall(".//RequiredPkgs/"):
+        dep_elem = item.find("PackageName")
+        if dep_elem is not None:
+            dep_name = dep_elem.get("Value", "")
+            if dep_name:
+                dep_nid = _make_id(dep_name)
+                add_node(dep_nid, dep_name)
+                add_edge(pkg_nid, dep_nid, "imports", context="import")
+
+    # Listed units → contains edges, resolved to path-based IDs where possible
+    for item in xml_root.findall(".//Files/"):
+        unit_elem = item.find("UnitName")
+        if unit_elem is not None:
+            unit_name = unit_elem.get("Value", "")
+            if unit_name:
+                unit_nid = _pascal_resolve_unit(path, unit_name)
+                add_node(unit_nid, unit_name)
+                add_edge(pkg_nid, unit_nid, "contains")
+
+    return {"nodes": nodes, "edges": edges, "input_tokens": 0, "output_tokens": 0}
+
+
 # ── Main extract and collect_files ────────────────────────────────────────────
 
 
@@ -4612,6 +5198,15 @@ _DISPATCH: dict[str, Any] = {
     ".md": extract_markdown,
     ".mdx": extract_markdown,
     ".qmd": extract_markdown,
+    ".pas": extract_pascal,
+    ".pp": extract_pascal,
+    ".dpr": extract_pascal,
+    ".dpk": extract_pascal,
+    ".lpr": extract_pascal,
+    ".inc": extract_pascal,
+    ".dfm": extract_delphi_form,
+    ".lfm": extract_lazarus_form,
+    ".lpk": extract_lazarus_package,
 }
 
 
