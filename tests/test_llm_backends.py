@@ -325,6 +325,131 @@ def test_call_openai_compat_preserves_real_finish_reason(monkeypatch):
     assert result["nodes"] == [{"id": "a"}]
 
 
+# ---------------------------------------------------------------------------
+# Ollama context-window fix (#798): num_ctx + keep_alive in extra_body,
+# serial execution by default.
+# ---------------------------------------------------------------------------
+
+
+def _install_capturing_openai(monkeypatch):
+    """Like _install_fake_openai but records kwargs passed to create()."""
+    import sys
+    import types
+
+    captured = {}
+
+    class _FakeOpenAI:
+        def __init__(self, *_, **__):
+            self.chat = self
+            self.completions = self
+
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            return _fake_openai_response(
+                '{"nodes":[{"id":"x"}],"edges":[],"hyperedges":[]}',
+                finish_reason="stop",
+                completion_tokens=100,
+            )
+
+    fake_module = types.ModuleType("openai")
+    fake_module.OpenAI = _FakeOpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake_module)
+    return captured
+
+
+def test_ollama_extra_body_sets_num_ctx_and_keep_alive(monkeypatch):
+    captured = _install_capturing_openai(monkeypatch)
+    monkeypatch.delenv("GRAPHIFY_OLLAMA_NUM_CTX", raising=False)
+    monkeypatch.delenv("GRAPHIFY_OLLAMA_KEEP_ALIVE", raising=False)
+
+    llm._call_openai_compat(
+        "http://localhost:11434/v1", "ollama", "qwen2.5-coder:7b",
+        "user msg", temperature=0, max_completion_tokens=8192, backend="ollama",
+    )
+
+    assert "extra_body" in captured, "extra_body must be sent to Ollama"
+    eb = captured["extra_body"]
+    assert eb.get("options", {}).get("num_ctx") == 131072, "default num_ctx must be 131072"
+    assert eb.get("keep_alive") == "30m", "default keep_alive must be 30m"
+
+
+def test_ollama_num_ctx_env_override(monkeypatch):
+    captured = _install_capturing_openai(monkeypatch)
+    monkeypatch.setenv("GRAPHIFY_OLLAMA_NUM_CTX", "65536")
+    monkeypatch.delenv("GRAPHIFY_OLLAMA_KEEP_ALIVE", raising=False)
+
+    llm._call_openai_compat(
+        "http://localhost:11434/v1", "ollama", "qwen2.5-coder:7b",
+        "u", temperature=0, max_completion_tokens=8192, backend="ollama",
+    )
+
+    assert captured["extra_body"]["options"]["num_ctx"] == 65536
+
+
+def test_non_ollama_backend_gets_no_num_ctx_extra_body(monkeypatch):
+    captured = _install_capturing_openai(monkeypatch)
+
+    llm._call_openai_compat(
+        "https://api.openai.com/v1", "sk-test", "gpt-4.1-mini",
+        "u", temperature=0, max_completion_tokens=8192, backend="openai",
+    )
+
+    eb = captured.get("extra_body")
+    assert eb is None or "options" not in eb, "non-ollama backends must not get num_ctx injection"
+
+
+def test_extract_corpus_parallel_ollama_runs_serially(tmp_path, monkeypatch):
+    # With 3 chunks and backend=ollama, ThreadPoolExecutor must NOT be used
+    # (workers=1 takes the sequential path). We verify by ensuring all chunks
+    # are processed and no pool is spun up.
+    files = [tmp_path / f"f{i}.md" for i in range(6)]
+    for f in files:
+        f.write_text("hello")
+
+    call_order = []
+
+    def fake_extract(chunk, *_, **__):
+        call_order.append(len(chunk))
+        return _ok(nodes=[{"id": f.stem} for f in chunk])
+
+    monkeypatch.delenv("GRAPHIFY_OLLAMA_PARALLEL", raising=False)
+
+    with patch("graphify.llm.extract_files_direct", side_effect=fake_extract):
+        with patch("graphify.llm.ThreadPoolExecutor") as mock_pool:
+            result = llm.extract_corpus_parallel(
+                files, backend="ollama", api_key="ollama", model="qwen2.5-coder:7b",
+                root=tmp_path, token_budget=None, chunk_size=2, max_concurrency=4,
+            )
+
+    mock_pool.assert_not_called()
+    assert len(result["nodes"]) == 6
+
+
+def test_extract_corpus_parallel_ollama_parallel_env_restores_concurrency(tmp_path, monkeypatch):
+    files = [tmp_path / f"f{i}.md" for i in range(4)]
+    for f in files:
+        f.write_text("hello")
+
+    monkeypatch.setenv("GRAPHIFY_OLLAMA_PARALLEL", "1")
+
+    with patch("graphify.llm.extract_files_direct", return_value=_ok()):
+        with patch("graphify.llm.ThreadPoolExecutor") as mock_pool:
+            mock_pool.return_value.__enter__ = lambda s: s
+            mock_pool.return_value.__exit__ = lambda s, *a: False
+            mock_pool.return_value.submit = lambda fn, *a, **kw: type(
+                "F", (), {"result": lambda self: fn(*a, **kw)}
+            )()
+            try:
+                llm.extract_corpus_parallel(
+                    files, backend="ollama", api_key="ollama", model="m",
+                    root=tmp_path, token_budget=None, chunk_size=2, max_concurrency=4,
+                )
+            except Exception:
+                pass  # mock scaffolding may not be complete; we only care about the call
+
+    mock_pool.assert_called()
+
+
 def test_adaptive_retry_bisects_on_hollow_ollama_response(tmp_path):
     # End-to-end: an overwhelmed Ollama returns hollow on the full 4-file
     # chunk; halves succeed. The bug being fixed is that pre-fix this
