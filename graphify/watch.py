@@ -311,6 +311,23 @@ def _rebuild_code(
             if stale.exists():
                 stale.unlink()
 
+        # Regenerate callflow HTML if the user previously generated one —
+        # opt-in by existence so users who never ran callflow-html aren't affected.
+        callflow_files = list(out.glob("*-callflow.html"))
+        if callflow_files:
+            try:
+                from graphify.callflow_html import write_callflow_html
+                for cf in callflow_files:
+                    write_callflow_html(
+                        graph=out / "graph.json",
+                        report=out / "GRAPH_REPORT.md",
+                        labels=out / ".graphify_labels.json",
+                        output=cf,
+                        verbose=False,
+                    )
+            except Exception as cf_err:
+                print(f"[graphify watch] callflow HTML update skipped: {cf_err}")
+
         # clear stale needs_update flag if present
         flag = out / "needs_update"
         if flag.exists():
@@ -319,6 +336,8 @@ def _rebuild_code(
         print(f"[graphify watch] Rebuilt: {G.number_of_nodes()} nodes, "
               f"{G.number_of_edges()} edges, {len(communities)} communities")
         products = "graph.json" + (", graph.html" if html_written else "") + " and GRAPH_REPORT.md"
+        if callflow_files:
+            products += f", {len(callflow_files)} callflow HTML"
         print(f"[graphify watch] {products} updated in {out}")
         return True
 
