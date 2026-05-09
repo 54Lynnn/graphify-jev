@@ -1,23 +1,8 @@
 """Tests for the Pascal/Delphi extractor."""
 from __future__ import annotations
-import pytest
 from pathlib import Path
 
 FIXTURES = Path(__file__).parent / "fixtures"
-
-
-def _try_import():
-    try:
-        import tree_sitter_pascal  # noqa: F401
-        return True
-    except ImportError:
-        return False
-
-
-pascal_required = pytest.mark.skipif(
-    not _try_import(),
-    reason="tree_sitter_pascal not installed",
-)
 
 
 def _labels(r):
@@ -32,21 +17,18 @@ def _edges_with_relation(r, *relations):
     return [e for e in r["edges"] if e["relation"] in relations]
 
 
-@pascal_required
 def test_pascal_no_error():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
     assert "error" not in r
 
 
-@pascal_required
 def test_pascal_finds_unit():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
     assert any("SampleUnit" in l for l in _labels(r))
 
 
-@pascal_required
 def test_pascal_finds_classes():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
@@ -55,14 +37,12 @@ def test_pascal_finds_classes():
     assert any("TDataProcessor" in l for l in labels)
 
 
-@pascal_required
 def test_pascal_finds_interface():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
     assert any("IProcessor" in l for l in _labels(r))
 
 
-@pascal_required
 def test_pascal_finds_methods():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
@@ -73,14 +53,12 @@ def test_pascal_finds_methods():
     assert any("Reset" in l for l in labels)
 
 
-@pascal_required
 def test_pascal_finds_imports():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
     assert "imports" in _relations(r)
 
 
-@pascal_required
 def test_pascal_import_edges_have_import_context():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
@@ -89,14 +67,12 @@ def test_pascal_import_edges_have_import_context():
     assert all(e.get("context") == "import" for e in import_edges)
 
 
-@pascal_required
 def test_pascal_finds_inherits():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
     assert "inherits" in _relations(r)
 
 
-@pascal_required
 def test_pascal_inherits_from_base():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
@@ -109,14 +85,12 @@ def test_pascal_inherits_from_base():
     assert found, "TDataProcessor should have at least one inherits edge"
 
 
-@pascal_required
 def test_pascal_finds_calls():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
     assert "calls" in _relations(r)
 
 
-@pascal_required
 def test_pascal_call_edges_have_call_context():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
@@ -125,7 +99,6 @@ def test_pascal_call_edges_have_call_context():
     assert all(e.get("context") == "call" for e in call_edges)
 
 
-@pascal_required
 def test_pascal_all_edges_extracted():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
@@ -135,7 +108,6 @@ def test_pascal_all_edges_extracted():
             assert e["confidence"] == "EXTRACTED", f"Expected EXTRACTED: {e}"
 
 
-@pascal_required
 def test_pascal_no_dangling_edges():
     from graphify.extract import extract_pascal
     r = extract_pascal(FIXTURES / "sample.pas")
@@ -148,7 +120,6 @@ def test_pascal_no_dangling_edges():
             assert e["target"] in node_ids, f"Dangling target: {e}"
 
 
-@pascal_required
 def test_pascal_dispatch_registered():
     from graphify.extract import _DISPATCH
     assert ".pas" in _DISPATCH
@@ -161,7 +132,6 @@ def test_pascal_dispatch_registered():
     assert ".lpk" in _DISPATCH
 
 
-@pascal_required
 def test_pascal_detect_extensions_registered():
     from graphify.detect import CODE_EXTENSIONS
     assert ".pas" in CODE_EXTENSIONS
