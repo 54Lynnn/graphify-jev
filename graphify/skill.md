@@ -282,7 +282,15 @@ Concrete example for 3 chunks:
 ```
 All three in one message. Not three separate messages.
 
-Each subagent receives this exact prompt (substitute FILE_LIST, CHUNK_NUM, TOTAL_CHUNKS, and DEEP_MODE):
+Each subagent receives this exact prompt (substitute FILE_LIST, CHUNK_NUM, TOTAL_CHUNKS, DEEP_MODE, and CHUNK_PATH).
+
+CHUNK_PATH must be an **absolute** path — derive it before dispatching:
+```bash
+PROJECT_ROOT=$(cat graphify-out/.graphify_root)
+# Then for chunk N: CHUNK_PATH="${PROJECT_ROOT}/graphify-out/.graphify_chunk_0N.json"
+```
+
+Subagent prompt template:
 
 ```
 You are a graphify extraction subagent. Read the files listed and extract a knowledge graph fragment.
@@ -342,8 +350,11 @@ confidence_score is REQUIRED on every edge - never omit it, never use 0.5 as a d
 
 Node ID format: lowercase, only `[a-z0-9_]`, no dots or slashes. Format: `{stem}_{entity}` where stem is the filename without extension and entity is the symbol name, both normalized (lowercase, non-alphanumeric chars replaced with `_`). Example: `src/auth/session.py` + `ValidateToken` → `session_validatetoken`. This must match the ID the AST extractor generates so cross-references between code and semantic nodes connect correctly. CRITICAL: never append chunk numbers, sequence numbers, or any suffix to an ID (no `_c1`, `_c2`, `_chunk2`, etc.). IDs must be deterministic from the label alone — the same entity must always produce the same ID regardless of which chunk processes it.
 
-Output exactly this JSON (no other text):
+Generate the extraction JSON matching this schema exactly:
 {"nodes":[{"id":"session_validatetoken","label":"Human Readable Name","file_type":"code|document|paper|image|rationale","source_file":"relative/path","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null}],"edges":[{"source":"node_id","target":"node_id","relation":"calls|implements|references|cites|conceptually_related_to|shares_data_with|semantically_similar_to|rationale_for","confidence":"EXTRACTED|INFERRED|AMBIGUOUS","confidence_score":1.0,"source_file":"relative/path","source_location":null,"weight":1.0}],"hyperedges":[{"id":"snake_case_id","label":"Human Readable Label","nodes":["node_id1","node_id2","node_id3"],"relation":"participate_in|implement|form","confidence":"EXTRACTED|INFERRED","confidence_score":0.75,"source_file":"relative/path"}],"input_tokens":0,"output_tokens":0}
+
+Then write the JSON to disk using the Write tool at this exact absolute path (no relative paths — Write resolves relative paths against an undefined cwd and the file will be silently lost):
+CHUNK_PATH
 ```
 
 **Step B3 - Collect, cache, and merge**
@@ -776,55 +787,49 @@ Then:
 
 ```bash
 $(cat graphify-out/.graphify_python) -c "
-import sys, json
-from graphify.build import build_from_json
-from graphify.export import to_json
-from networkx.readwrite import json_graph
-import networkx as nx
+import json
 from pathlib import Path
+from graphify.build import build_merge
+from graphify.detect import save_manifest
 
-# Load existing graph
-existing_data = json.loads(Path('graphify-out/graph.json').read_text())
-G_existing = json_graph.node_link_graph(existing_data, edges='links')
-
-# Load new extraction
+# Load new extraction and incremental state
 new_extraction = json.loads(Path('graphify-out/.graphify_extract.json').read_text())
-G_new = build_from_json(new_extraction)
-
-# Prune nodes from deleted files
 incremental = json.loads(Path('graphify-out/.graphify_incremental.json').read_text())
-deleted = set(incremental.get('deleted_files', []))
-if deleted:
-    to_remove = [n for n, d in G_existing.nodes(data=True) if d.get('source_file') in deleted]
-    G_existing.remove_nodes_from(to_remove)
-    if to_remove:
-        print(f'Pruned {len(to_remove)} ghost node(s) from {len(deleted)} deleted file(s) — drift detected and corrected.')
-    else:
-        print(f'{len(deleted)} file(s) deleted since last run, but no ghost nodes were present in the graph — no drift.')
+deleted = list(incremental.get('deleted_files', []))
 
-# Merge: new nodes/edges into existing graph
-G_existing.update(G_new)
-print(f'Merged: {G_existing.number_of_nodes()} nodes, {G_existing.number_of_edges()} edges')
+# Use build_merge() — reads graph.json directly without NetworkX round-trip
+# so edge direction (calls, implements, imports) is always preserved (#801).
+G = build_merge(
+    [new_extraction],
+    graph_path='graphify-out/graph.json',
+    prune_sources=deleted or None,
+)
+print(f'[graphify update] Merged: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges')
 
 # Write merged result back to .graphify_extract.json so Step 4 sees the full graph
 merged_out = {
-    'nodes': [{'id': n, **d} for n, d in G_existing.nodes(data=True)],
-    'edges': [{'source': u, 'target': v, **d} for u, v, d in G_existing.edges(data=True)],
-    'hyperedges': new_extraction.get('hyperedges', []),
+    'nodes': [{'id': n, **d} for n, d in G.nodes(data=True)],
+    'edges': [
+        # Explicit source/target last so they win over any stale attrs in d.
+        {**{k: val for k, val in d.items() if k not in ('_src', '_tgt', 'source', 'target')},
+         'source': d.get('_src', u), 'target': d.get('_tgt', v)}
+        for u, v, d in G.edges(data=True)
+    ],
+    # G.graph["hyperedges"] holds hyperedges from both existing graph.json
+    # and new_extraction (build_merge combines them). Falling back to
+    # new_extraction only would silently drop prior-run hyperedges (#801).
+    'hyperedges': list(G.graph.get('hyperedges', [])),
     'input_tokens': new_extraction.get('input_tokens', 0),
     'output_tokens': new_extraction.get('output_tokens', 0),
 }
 Path('graphify-out/.graphify_extract.json').write_text(json.dumps(merged_out))
 print(f'[graphify update] Merged extraction written ({len(merged_out[\"nodes\"])} nodes, {len(merged_out[\"edges\"])} edges)')
 
-# Save manifest with the CURRENT full file list so the next --update
-# diffs against today's filesystem state, not the prior --update's
-# baseline. Without this, deleted files get reported as ghosts again
-# on every subsequent --update until a full rebuild runs.
-from graphify.detect import save_manifest
+# Save manifest so next --update diffs against today's state, not the
+# prior run's baseline (prevents ghost-node reports on subsequent updates).
 save_manifest(incremental['files'])
 print('[graphify update] Manifest saved.')
-" 
+"
 ```
 
 Then run Steps 4–8 on the merged graph as normal.

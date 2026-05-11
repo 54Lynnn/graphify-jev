@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Any
@@ -30,10 +31,19 @@ def _safe_extract(extractor: Callable, path: Path) -> dict:
 
 
 def _make_id(*parts: str) -> str:
-    """Build a stable node ID from one or more name parts."""
+    r"""Build a stable node ID from one or more name parts.
+
+    Preserves Unicode letters/digits (CJK, Cyrillic, Arabic, accented Latin,
+    etc.) so non-ASCII identifiers produce distinct IDs and don't collapse to
+    a single per-file node (#811). NFKC normalization ensures composed and
+    decomposed forms of the same character (e.g. é vs e+combining-acute)
+    produce the same ID. Must stay in sync with build._normalize_id.
+    """
     combined = "_".join(p.strip("_.") for p in parts if p)
-    cleaned = re.sub(r"[^a-zA-Z0-9]+", "_", combined)
-    return cleaned.strip("_").lower()
+    combined = unicodedata.normalize("NFKC", combined)
+    cleaned = re.sub(r"[^\w]+", "_", combined, flags=re.UNICODE)
+    cleaned = re.sub(r"_+", "_", cleaned)
+    return cleaned.strip("_").casefold()
 
 
 def _file_stem(path: Path) -> str:
