@@ -32,7 +32,11 @@ def _partition(G: nx.Graph) -> dict[str, int]:
     stable.add_nodes_from(sorted(G.nodes(), key=str))
     edge_rows = sorted(
         G.edges(data=True),
-        key=lambda row: (str(row[0]), str(row[1]), json.dumps(row[2], sort_keys=True, ensure_ascii=False)),
+        key=lambda row: (
+            str(row[0]),
+            str(row[1]),
+            json.dumps(row[2], sort_keys=True, ensure_ascii=False, default=str),
+        ),
     )
     for src, tgt, attrs in edge_rows:
         stable.add_edge(src, tgt, **attrs)

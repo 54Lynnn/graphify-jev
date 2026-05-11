@@ -123,7 +123,15 @@ def _node_community_map(graph_data: dict) -> dict[str, int]:
         cid = node.get("community")
         if node_id is None or cid is None:
             continue
-        out[str(node_id)] = int(cid)
+        try:
+            out[str(node_id)] = int(cid)
+        except (TypeError, ValueError):
+            print(
+                f"[graphify watch] Skipping node with invalid community id: "
+                f"node_id={node_id!r} community={cid!r}",
+                file=sys.stderr,
+            )
+            continue
     return out
 
 
@@ -134,7 +142,7 @@ def _canonical_graph_for_compare(graph_data: dict) -> dict:
         if key in canonical and isinstance(canonical[key], list):
             canonical[key] = sorted(
                 canonical[key],
-                key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False),
+                key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False, default=str),
             )
     return canonical
 
