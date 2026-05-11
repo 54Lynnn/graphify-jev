@@ -2,6 +2,15 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.7.14 (2026-05-11)
+
+- Fix: `_make_id` and `_normalize_id` now apply NFKC Unicode normalization before ID generation -- composed/decomposed forms of the same character (e.g. `é` typed vs pasted from a PDF) now produce the same node ID; switched from `.lower()` to `.casefold()` for correct Turkish/German/Greek case folding; both functions are now byte-for-byte equivalent (#811)
+- Fix: non-ASCII identifiers (CJK, Cyrillic, Arabic, accented Latin) are no longer collapsed to a bare file stem -- `[^\w]+` with `re.UNICODE` replaces the old `[^a-zA-Z0-9]+` so Unicode word chars are preserved as part of the ID (#811)
+- Fix: dedup edge remap uses explicit key-presence check instead of `or` so empty-string `source` is not silently swapped for `from`; stale `from`/`to` keys are now popped before the edge is emitted so they can't leak into `graph.json` edge attributes (#803)
+- Fix: `--update` merge now calls `build_merge()` directly instead of an inline NetworkX round-trip that re-introduced the direction-flip bug from #760; dict merge ordering fixed so explicit `source`/`target` always win over stale attrs; hyperedges pulled from `G.graph` (merged) rather than just the new extraction (#801)
+- Fix: subagent chunk files are now written to an absolute path (`CHUNK_PATH` injected at dispatch time from `graphify-out/.graphify_root`) so the Write tool doesn't lose chunks to an undefined working directory (#808)
+- Fix: skill version mismatch warning is now suppressed during `hook-check` (runs on every editor tool use and must be silent) and routed to stderr for all other commands
+
 ## 0.7.13 (2026-05-09)
 
 - Fix: Ollama `num_ctx` now derived from actual chunk size instead of hardcoded 131072 -- over-allocating 128k KV-cache slots for small chunks exhausted VRAM by chunk 4 on large models; formula is `min(input_tokens + output_cap + 2000, 131072)` so `--token-budget 8192` gets ~26k instead of 131072 (#798)
