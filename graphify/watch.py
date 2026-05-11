@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -115,16 +116,48 @@ def _relativize_source_files(payload: dict, root: Path) -> None:
                 continue
 
 
+def _node_community_map(graph_data: dict) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for node in graph_data.get("nodes", []):
+        node_id = node.get("id")
+        cid = node.get("community")
+        if node_id is None or cid is None:
+            continue
+        out[str(node_id)] = int(cid)
+    return out
+
+
+def _canonical_graph_for_compare(graph_data: dict) -> dict:
+    canonical = dict(graph_data)
+    canonical.pop("built_at_commit", None)
+    for key in ("nodes", "links", "edges", "hyperedges"):
+        if key in canonical and isinstance(canonical[key], list):
+            canonical[key] = sorted(
+                canonical[key],
+                key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False),
+            )
+    return canonical
+
+
+def _report_for_compare(report_text: str) -> str:
+    return re.sub(r"^- Built from commit: `[^`]+`\n?", "", report_text, flags=re.MULTILINE)
+
+
+def _json_text(data: dict) -> str:
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+
+
 def _rebuild_code(
     watch_path: Path,
     *,
     changed_paths: list[Path] | None = None,
     follow_symlinks: bool = False,
     force: bool = False,
+    no_cluster: bool = False,
     acquire_lock: bool = True,
     block_on_lock: bool = False,
 ) -> bool:
-    """Re-run AST extraction + build + cluster + report for code files. No LLM needed.
+    """Re-run AST extraction + build + optional cluster + report for code files.
 
     When ``force`` is True the node-count safety check in ``to_json`` is bypassed
     so the rebuilt graph overwrites graph.json even if it has fewer nodes.
@@ -142,6 +175,9 @@ def _rebuild_code(
     ``block_on_lock=True`` to wait instead of skip (used by the interactive
     ``graphify update`` CLI).
 
+    ``no_cluster`` skips community detection and writes raw merged extraction
+    JSON to graphify-out/graph.json (mirrors ``extract --no-cluster``).
+
     Returns True on success, False on error or skipped-due-to-lock.
     """
     out = watch_path / _GRAPHIFY_OUT
@@ -156,6 +192,7 @@ def _rebuild_code(
                 changed_paths=changed_paths,
                 follow_symlinks=follow_symlinks,
                 force=force,
+                no_cluster=no_cluster,
                 acquire_lock=False,
             )
 
@@ -166,7 +203,7 @@ def _rebuild_code(
         from graphify.extract import extract, _get_extractor
         from graphify.detect import detect
         from graphify.build import build_from_json
-        from graphify.cluster import cluster, score_all
+        from graphify.cluster import cluster, remap_communities_to_previous, score_all
         from graphify.analyze import god_nodes, surprising_connections, suggest_questions
         from graphify.report import generate
         from graphify.export import to_json, to_html
@@ -225,9 +262,11 @@ def _rebuild_code(
         # source_file matches a path that was changed (re-extracted) or deleted —
         # otherwise the old nodes for those files would survive forever.
         existing_graph = out / "graph.json"
+        existing_graph_data: dict = {}
         if existing_graph.exists():
             try:
                 existing = json.loads(existing_graph.read_text(encoding="utf-8"))
+                existing_graph_data = existing
                 new_ast_ids = {n["id"] for n in result["nodes"]}
                 evict_sources: set[str] = set(deleted_paths)
                 if changed_paths is not None:
@@ -257,6 +296,58 @@ def _rebuild_code(
                 pass  # corrupt graph.json - proceed with AST-only
 
         _relativize_source_files(result, project_root)
+        out.mkdir(exist_ok=True)
+        (out / ".graphify_root").write_text(str(watch_root), encoding="utf-8")
+
+        if no_cluster:
+            candidate_graph_data = dict(result)
+            candidate_graph_text = _json_text(candidate_graph_data)
+            existing_text = existing_graph.read_text(encoding="utf-8") if existing_graph.exists() else ""
+            same_graph = False
+            if existing_graph.exists():
+                try:
+                    existing_payload = json.loads(existing_text)
+                    same_graph = (
+                        json.dumps(_canonical_graph_for_compare(existing_payload), sort_keys=True, ensure_ascii=False)
+                        == json.dumps(_canonical_graph_for_compare(candidate_graph_data), sort_keys=True, ensure_ascii=False)
+                    )
+                except Exception:
+                    same_graph = False
+            if not same_graph:
+                if (not force) and existing_graph_data:
+                    existing_n = len(existing_graph_data.get("nodes", []))
+                    new_n = len(candidate_graph_data.get("nodes", []))
+                    if new_n < existing_n:
+                        print(
+                            f"[graphify] WARNING: new graph has {new_n} nodes but existing "
+                            f"graph.json has {existing_n}. Refusing to overwrite — you may be "
+                            f"missing chunk files from a previous session. "
+                            f"Pass force=True to override.",
+                            file=sys.stderr,
+                        )
+                        return False
+                existing_graph.write_text(candidate_graph_text, encoding="utf-8")
+
+            try:
+                from graphify.detect import save_manifest
+                save_manifest(detected["files"])
+            except Exception:
+                pass
+
+            # clear stale needs_update flag if present
+            flag = out / "needs_update"
+            if flag.exists():
+                flag.unlink()
+
+            if same_graph:
+                print("[graphify watch] No code-graph changes detected (--no-cluster); outputs left untouched.")
+            else:
+                print(
+                    "[graphify watch] Rebuilt (no clustering): "
+                    f"{len(result.get('nodes', []))} nodes, {len(result.get('edges', []))} edges"
+                )
+                print(f"[graphify watch] graph.json updated in {out}")
+            return True
 
         detection = {
             "files": {"code": [str(f) for f in code_files], "document": [], "paper": [], "image": []},
@@ -266,6 +357,9 @@ def _rebuild_code(
 
         G = build_from_json(result)
         communities = cluster(G)
+        previous_node_community = _node_community_map(existing_graph_data)
+        if previous_node_community:
+            communities = remap_communities_to_previous(communities, previous_node_community)
         cohesion = score_all(G, communities)
         gods = god_nodes(G)
         surprises = surprising_connections(G, communities)
@@ -280,13 +374,52 @@ def _rebuild_code(
             if cid not in labels:
                 labels[cid] = "Community " + str(cid)
         questions = suggest_questions(G, communities, labels)
-
-        out.mkdir(exist_ok=True)
-        (out / ".graphify_root").write_text(str(watch_root), encoding="utf-8")
-
-        json_written = to_json(G, communities, str(out / "graph.json"), force=force, built_at_commit=commit)
+        report = generate(G, communities, cohesion, labels, gods, surprises, detection,
+                          {"input": 0, "output": 0}, report_root, suggested_questions=questions,
+                          built_at_commit=commit)
+        report_path = out / "GRAPH_REPORT.md"
+        labels_json = json.dumps({str(k): v for k, v in sorted(labels.items())}, ensure_ascii=False, indent=2) + "\n"
+        graph_tmp = out / ".graph.tmp.json"
+        json_written = to_json(G, communities, str(graph_tmp), force=True, built_at_commit=commit)
         if not json_written:
             return False
+        candidate_graph_data = json.loads(graph_tmp.read_text(encoding="utf-8"))
+        same_graph = False
+        same_report = False
+        if existing_graph.exists():
+            try:
+                existing_payload = json.loads(existing_graph.read_text(encoding="utf-8"))
+                same_graph = (
+                    json.dumps(_canonical_graph_for_compare(existing_payload), sort_keys=True, ensure_ascii=False)
+                    == json.dumps(_canonical_graph_for_compare(candidate_graph_data), sort_keys=True, ensure_ascii=False)
+                )
+            except Exception:
+                same_graph = False
+        if report_path.exists():
+            old_report = report_path.read_text(encoding="utf-8")
+            same_report = _report_for_compare(old_report) == _report_for_compare(report)
+        no_change = same_graph and same_report
+        if no_change:
+            graph_tmp.unlink(missing_ok=True)
+            print("[graphify watch] No code-graph changes detected; graph.json/GRAPH_REPORT.md left untouched.")
+        else:
+            if (not force) and existing_graph_data:
+                existing_n = len(existing_graph_data.get("nodes", []))
+                new_n = len(candidate_graph_data.get("nodes", []))
+                if new_n < existing_n:
+                    graph_tmp.unlink(missing_ok=True)
+                    print(
+                        f"[graphify] WARNING: new graph has {new_n} nodes but existing "
+                        f"graph.json has {existing_n}. Refusing to overwrite — you may be "
+                        f"missing chunk files from a previous session. "
+                        f"Pass force=True to override.",
+                        file=sys.stderr,
+                    )
+                    return False
+            graph_tmp.replace(existing_graph)
+            report_path.write_text(report, encoding="utf-8")
+
+        labels_file.write_text(labels_json, encoding="utf-8")
 
         try:
             from graphify.detect import save_manifest
@@ -294,27 +427,23 @@ def _rebuild_code(
         except Exception:
             pass
 
-        report = generate(G, communities, cohesion, labels, gods, surprises, detection,
-                          {"input": 0, "output": 0}, report_root, suggested_questions=questions,
-                          built_at_commit=commit)
-        (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
-
         # to_html raises ValueError for graphs > MAX_NODES_FOR_VIZ (5000).
         # Wrap so core outputs (graph.json + GRAPH_REPORT.md) always land.
         html_written = False
-        try:
-            to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
-            html_written = True
-        except ValueError as viz_err:
-            print(f"[graphify watch] Skipped graph.html: {viz_err}")
-            stale = out / "graph.html"
-            if stale.exists():
-                stale.unlink()
+        if not no_change:
+            try:
+                to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
+                html_written = True
+            except ValueError as viz_err:
+                print(f"[graphify watch] Skipped graph.html: {viz_err}")
+                stale = out / "graph.html"
+                if stale.exists():
+                    stale.unlink()
 
         # Regenerate callflow HTML if the user previously generated one —
         # opt-in by existence so users who never ran callflow-html aren't affected.
         callflow_files = list(out.glob("*-callflow.html"))
-        if callflow_files:
+        if callflow_files and not no_change:
             try:
                 from graphify.callflow_html import write_callflow_html
                 for cf in callflow_files:
@@ -333,12 +462,13 @@ def _rebuild_code(
         if flag.exists():
             flag.unlink()
 
-        print(f"[graphify watch] Rebuilt: {G.number_of_nodes()} nodes, "
-              f"{G.number_of_edges()} edges, {len(communities)} communities")
-        products = "graph.json" + (", graph.html" if html_written else "") + " and GRAPH_REPORT.md"
-        if callflow_files:
-            products += f", {len(callflow_files)} callflow HTML"
-        print(f"[graphify watch] {products} updated in {out}")
+        if not no_change:
+            print(f"[graphify watch] Rebuilt: {G.number_of_nodes()} nodes, "
+                  f"{G.number_of_edges()} edges, {len(communities)} communities")
+            products = "graph.json" + (", graph.html" if html_written else "") + " and GRAPH_REPORT.md"
+            if callflow_files:
+                products += f", {len(callflow_files)} callflow HTML"
+            print(f"[graphify watch] {products} updated in {out}")
         return True
 
     except Exception as exc:

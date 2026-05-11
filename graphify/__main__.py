@@ -1151,6 +1151,7 @@ def main() -> None:
         print("  update <path>           re-extract code files and update the graph (no LLM needed)")
         print("    --force                 overwrite graph.json even if the rebuild has fewer nodes")
         print("                            (also: GRAPHIFY_FORCE=1 env var; use after refactors that delete code)")
+        print("    --no-cluster            skip clustering, write raw extraction only")
         print("  cluster-only <path>     rerun clustering on an existing graph.json and regenerate report")
         print("    --no-viz                skip graph.html generation (useful for >5000 node graphs / CI)")
         print("    --graph <path>          path to graph.json (default <path>/graphify-out/graph.json)")
@@ -1717,12 +1718,26 @@ def main() -> None:
 
     elif cmd == "update":
         force = os.environ.get("GRAPHIFY_FORCE", "").lower() in ("1", "true", "yes")
-        argv = list(sys.argv)
-        if "--force" in argv[2:]:
-            force = True
-            argv = [a for a in argv if a != "--force"]
-        if len(argv) > 2:
-            watch_path = Path(argv[2])
+        no_cluster = False
+        args = sys.argv[2:]
+        watch_arg: str | None = None
+        for a in args:
+            if a == "--force":
+                force = True
+                continue
+            if a == "--no-cluster":
+                no_cluster = True
+                continue
+            if a.startswith("-"):
+                print(f"error: unknown update option: {a}", file=sys.stderr)
+                sys.exit(2)
+            if watch_arg is not None:
+                print("error: update accepts at most one path argument", file=sys.stderr)
+                sys.exit(2)
+            watch_arg = a
+
+        if watch_arg is not None:
+            watch_path = Path(watch_arg)
         else:
             # Try to recover the scan root saved by the last full build
             saved = Path(_GRAPHIFY_OUT) / ".graphify_root"
@@ -1738,7 +1753,7 @@ def main() -> None:
         # Interactive CLI: block on the per-repo lock rather than skip, so the
         # user sees their explicit `graphify update` complete instead of
         # exiting silently when a hook-driven rebuild happens to be running.
-        ok = _rebuild_code(watch_path, force=force, block_on_lock=True)
+        ok = _rebuild_code(watch_path, force=force, no_cluster=no_cluster, block_on_lock=True)
         if ok:
             print("Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.")
             if not (
