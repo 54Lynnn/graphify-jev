@@ -37,11 +37,6 @@ def _rebuild_lock(out_dir: Path, *, blocking: bool = False):
         except BlockingIOError:
             yield False
             return
-        try:
-            fh.write(str(os.getpid()))
-            fh.flush()
-        except OSError:
-            pass
         yield True
     finally:
         try:
@@ -147,6 +142,66 @@ def _canonical_graph_for_compare(graph_data: dict) -> dict:
     return canonical
 
 
+def _canonical_topology_for_compare(graph_data: dict) -> dict:
+    canonical = dict(graph_data)
+    canonical.pop("built_at_commit", None)
+
+    nodes = canonical.get("nodes")
+    if isinstance(nodes, list):
+        norm_nodes = []
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            n = dict(node)
+            n.pop("community", None)
+            n.pop("norm_label", None)
+            norm_nodes.append(n)
+        canonical["nodes"] = sorted(
+            norm_nodes,
+            key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False, default=str),
+        )
+
+    for key in ("links", "edges"):
+        items = canonical.get(key)
+        if not isinstance(items, list):
+            continue
+        norm_edges = []
+        for edge in items:
+            if not isinstance(edge, dict):
+                continue
+            e = dict(edge)
+            true_src = e.pop("_src", None)
+            true_tgt = e.pop("_tgt", None)
+            if true_src is not None and true_tgt is not None:
+                e["source"] = true_src
+                e["target"] = true_tgt
+            e.pop("confidence_score", None)
+            norm_edges.append(e)
+        canonical[key] = sorted(
+            norm_edges,
+            key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False, default=str),
+        )
+
+    hyperedges = canonical.get("hyperedges")
+    if isinstance(hyperedges, list):
+        canonical["hyperedges"] = sorted(
+            hyperedges,
+            key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False, default=str),
+        )
+
+    return canonical
+
+
+def _topology_from_graph(G) -> dict:
+    from networkx.readwrite import json_graph
+    try:
+        data = json_graph.node_link_data(G, edges="links")
+    except TypeError:
+        data = json_graph.node_link_data(G)
+    data["hyperedges"] = getattr(G, "graph", {}).get("hyperedges", [])
+    return data
+
+
 def _report_for_compare(report_text: str) -> str:
     return re.sub(r"^- Built from commit: `[^`]+`\n?", "", report_text, flags=re.MULTILINE)
 
@@ -165,7 +220,7 @@ def _rebuild_code(
     acquire_lock: bool = True,
     block_on_lock: bool = False,
 ) -> bool:
-    """Re-run AST extraction + build + optional cluster + report for code files.
+    """Re-run AST extraction + build + optional cluster + report for code files. No LLM needed.
 
     When ``force`` is True the node-count safety check in ``to_json`` is bypassed
     so the rebuilt graph overwrites graph.json even if it has fewer nodes.
@@ -364,6 +419,27 @@ def _rebuild_code(
         }
 
         G = build_from_json(result)
+        candidate_topology = _topology_from_graph(G)
+        if existing_graph_data:
+            try:
+                same_topology = (
+                    json.dumps(_canonical_topology_for_compare(existing_graph_data), sort_keys=True, ensure_ascii=False)
+                    == json.dumps(_canonical_topology_for_compare(candidate_topology), sort_keys=True, ensure_ascii=False)
+                )
+            except Exception:
+                same_topology = False
+            if same_topology:
+                try:
+                    from graphify.detect import save_manifest
+                    save_manifest(detected["files"])
+                except Exception:
+                    pass
+                flag = out / "needs_update"
+                if flag.exists():
+                    flag.unlink()
+                print("[graphify watch] No code-graph topology changes detected; outputs left untouched.")
+                return True
+
         communities = cluster(G)
         previous_node_community = _node_community_map(existing_graph_data)
         if previous_node_community:
