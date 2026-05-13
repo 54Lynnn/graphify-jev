@@ -2,6 +2,18 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.7.18 (2026-05-14)
+
+- Fix: `graphify update` is now idempotent — graph.json and GRAPH_REPORT.md are only rewritten when content actually changes; topology comparison short-circuits clustering entirely on unchanged graphs, eliminating residual community-count drift (#824)
+- Fix: community IDs are now stable across rebuilds — Leiden/Louvain receive deterministically sorted input and a fixed random seed; greedy overlap remapper preserves existing IDs so hand-edited `.graphify_labels.json` labels don't drift onto wrong communities (#824)
+- Fix: `--no-cluster` flag added to `graphify update` — writes raw AST graph without clustering, consistent with `graphify extract --no-cluster` (#824)
+- Fix: `graphify update --no-cluster` now writes `"links"` key matching the schema of the full clustered path; previously wrote `"edges"`, causing schema toggle on every mode switch
+- Fix: `.graphify_labels.json` was rewritten on every rebuild even when nothing changed; now only written when outputs actually change
+- Fix: shrink-check (refuse overwrite when new graph has fewer nodes) was duplicated across two code paths; unified into a single `_check_shrink()` helper
+- Fix: node ID format in skill.md corrected to `{parent_dir}_{filename_stem}_{entity}` — the old filename-only format caused ghost-duplicate nodes when AST and semantic extractors disagreed on the stem; top-level files use just the filename stem; existing graphs with ghost duplicates can be cleaned up with `graphify extract --force`
+- Fix: safer JSON serialization in clustering sort keys (`default=str`) prevents crashes when edge attributes contain non-serializable values
+- Docs: added Prerequisites, optional extras table, environment variables reference, troubleshooting, and dev setup to README (#833)
+
 ## 0.7.17 (2026-05-13)
 
 - Fix: `graphify path` and `graphify explain` now render arrow direction correctly — `-->` for caller→callee, `<--` for callee←caller; previously the graph was loaded undirected so every hop printed `-->` regardless of stored direction (#849, #853)

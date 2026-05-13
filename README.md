@@ -470,6 +470,8 @@ graphify --version                                    # print installed version
 graphify watch ./src
 graphify check-update ./src
 graphify update ./src
+graphify update ./src --no-cluster  # skip reclustering, write raw AST graph only
+graphify update ./src --force       # overwrite even if new graph has fewer nodes
 graphify cluster-only ./my-project
 graphify cluster-only ./my-project --graph path/to/graph.json  # custom graph location
 ```
