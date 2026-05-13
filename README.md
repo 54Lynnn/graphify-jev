@@ -355,6 +355,12 @@ PowerShell treats a leading `/` as a path separator. Use `graphify .` (no slash)
 **Graph has fewer nodes after `--update` or rebuild**
 If a refactor deleted files, the old nodes linger. Pass `--force` (or set `GRAPHIFY_FORCE=1`) to overwrite even when the rebuild has fewer nodes.
 
+**Graph has duplicate nodes for the same entity (ghost duplicates)**
+This happens when semantic and AST extraction disagreed on the node ID format. Run a full re-extract to clean up:
+```bash
+graphify extract . --force
+```
+
 **Ollama runs out of VRAM / context window exceeded**
 The KV-cache window is auto-sized but may be too large for your GPU. Reduce it:
 ```bash
@@ -450,6 +456,7 @@ graphify extract ./docs --max-concurrency 2    # fewer parallel LLM calls (usefu
 graphify extract ./docs --api-timeout 900      # longer HTTP timeout for slow local models (default 600s)
 graphify extract ./docs --google-workspace     # export .gdoc/.gsheet/.gslides via gws before extraction
 graphify extract ./docs --no-cluster           # raw extraction only, skip clustering
+graphify extract ./docs --force                # overwrite graph.json even if new graph has fewer nodes (use after refactors or to clear ghost duplicates)
 graphify extract ./docs --dedup-llm            # LLM tiebreaker for ambiguous entity pairs (uses same API key)
 graphify extract ./docs --global --as myrepo   # extract and register into the cross-project global graph
 GRAPHIFY_MAX_OUTPUT_TOKENS=32768 graphify extract ./docs --backend claude  # raise output cap for dense corpora
