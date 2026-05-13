@@ -2,6 +2,16 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.7.17 (2026-05-13)
+
+- Fix: `graphify path` and `graphify explain` now render arrow direction correctly — `-->` for caller→callee, `<--` for callee←caller; previously the graph was loaded undirected so every hop printed `-->` regardless of stored direction (#849, #853)
+- Fix: MCP `shortest_path` and `get_neighbors` tools had the same reversed-arrow bug; now fixed in `serve.py` alongside the CLI commands (#849, #853)
+- Fix: `graphify extract --backend bedrock` was rejected by the CLI guard even when `AWS_PROFILE`/`AWS_REGION`/`AWS_DEFAULT_REGION`/`AWS_ACCESS_KEY_ID` were set — boto3 session auth was never reached (#846)
+- Fix: BFS/DFS query traversal now skips expanding high-degree hub nodes (threshold: `max(50, p99_degree)`) as transit — hubs can still be destinations but no longer produce semantically meaningless 2-hop paths like `ClassA → View → ClassB` in Android/Spring corpora (#830)
+- Fix: `--update` manifest shrink — after an incremental run, `manifest.json` was overwritten with only the changed-file subset, causing the next `--update` to re-flag the entire unchanged corpus as new; Step 9 now persists the full corpus via `all_files` fallback (#837)
+- Fix: `file_type` enum aligned across `skill.md` and `llm.py` (both now enumerate all six values: `code`, `document`, `paper`, `image`, `rationale`, `concept`); synonym mapper in `build.py` silently coerces known LLM-emitted synonyms (`pattern→concept`, `markdown→document`, `tool→code`, etc.) before validation (#840)
+- Fix: Fortran test fixture renamed `sample.F90` → `sample_preprocessed.F90` to avoid case-collision with `sample.f90` on macOS case-insensitive filesystems (credit: @FatahChan, #823)
+
 ## 0.7.16 (2026-05-12)
 
 - Fix: all `read_text()`/`write_text()` calls in `skill.md` and `skill-windows.md` now specify `encoding="utf-8"` — bare calls defaulted to the system codepage on Chinese-locale Windows, silently mojibaking node labels and Markdown content on `--update` (#832)
