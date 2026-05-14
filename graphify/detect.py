@@ -370,6 +370,12 @@ _SKIP_DIRS = {
     ".pytest_cache", ".mypy_cache", ".ruff_cache",
     ".tox", ".eggs", "*.egg-info",
     "graphify-out",  # never treat own output as source input (#524)
+    # Coverage/test-artefact dirs — generated, never architecturally meaningful
+    "coverage", "lcov-report",              # Vitest/Istanbul/nyc HTML reports (#870)
+    "visual-tests", "visual-test",          # Playwright/visual-regression bundles (#869)
+    "__snapshots__", "snapshots",           # Jest/Vitest snapshot dirs
+    "storybook-static",                     # Storybook production build output
+    "dist-protected",                       # Protected dist variants (same noise as dist)
 }
 
 # Large generated files that are never useful to extract
