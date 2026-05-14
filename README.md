@@ -229,7 +229,7 @@ You can also set `GRAPHIFY_GOOGLE_WORKSPACE=1`. Graphify exports shortcuts into
 /graphify . --cluster-only         # rerun clustering without re-extracting
 /graphify . --no-viz               # skip the HTML, just the report + JSON
 /graphify . --wiki                 # build a markdown wiki from the graph
-graphify export callflow-html      # architecture/call-flow HTML from graphify-out/
+graphify export callflow-html      # Mermaid architecture/call-flow HTML (auto-regenerates on every git commit if hook is installed)
 
 /graphify query "what connects auth to the database?"
 /graphify path "UserService" "DatabasePool"
