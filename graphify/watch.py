@@ -440,7 +440,7 @@ def _rebuild_code(
 
             try:
                 from graphify.detect import save_manifest
-                save_manifest(detected["files"])
+                save_manifest(detected["files"], kind="ast")
             except Exception:
                 pass
 
@@ -478,7 +478,7 @@ def _rebuild_code(
             if same_topology:
                 try:
                     from graphify.detect import save_manifest
-                    save_manifest(detected["files"])
+                    save_manifest(detected["files"], kind="ast")
                 except Exception:
                     pass
                 flag = out / "needs_update"
@@ -542,7 +542,7 @@ def _rebuild_code(
 
         try:
             from graphify.detect import save_manifest
-            save_manifest(detected["files"])
+            save_manifest(detected["files"], kind="ast")
         except Exception:
             pass
 
