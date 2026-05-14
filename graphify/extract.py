@@ -5696,9 +5696,14 @@ def extract_bash(path: Path) -> dict:
                         line = node.start_point[0] + 1
                         if raw.startswith((".", "/")):
                             resolved = (path.parent / raw).resolve()
-                            tgt_nid = _make_id(str(resolved))
-                            add_edge(file_nid, tgt_nid, "imports_from", line,
-                                     context="import")
+                            # Only emit the edge if the target actually exists on
+                            # disk — prevents graph pollution from crafted paths
+                            # like `source ../../etc/passwd` that traverse outside
+                            # the project tree (B-1).
+                            if resolved.exists():
+                                tgt_nid = _make_id(str(resolved))
+                                add_edge(file_nid, tgt_nid, "imports_from", line,
+                                         context="import")
                         else:
                             tgt_nid = _make_id(raw)
                             if tgt_nid:
@@ -5744,11 +5749,15 @@ def extract_json(path: Path) -> dict:
         return {"nodes": [], "edges": [], "error": "tree-sitter-json not installed"}
 
     try:
-        if path.stat().st_size > _JSON_MAX_BYTES:
+        # Bounded read instead of stat()+read() to eliminate TOCTOU (J-1):
+        # read one byte beyond the limit so we can detect oversized files even
+        # if the file grows between stat and read.
+        with path.open("rb") as _f:
+            source = _f.read(_JSON_MAX_BYTES + 1)
+        if len(source) > _JSON_MAX_BYTES:
             return {"nodes": [], "edges": [], "error": "json file too large to index"}
         language = Language(tsjson.language())
         parser = Parser(language)
-        source = path.read_bytes()
         tree = parser.parse(source)
         root = tree.root_node
     except Exception as e:
@@ -5805,11 +5814,13 @@ def extract_json(path: Path) -> dict:
 
     def walk_object(obj_node, parent_nid: str, parent_key: str | None,
                     depth: int, pair_count: list) -> None:
-        if depth > 6 or pair_count[0] > 500:
+        if depth > 6:
             return
         for child in obj_node.children:
             if child.type != "pair":
                 continue
+            if pair_count[0] >= 500:  # check per-pair so the cap is honoured exactly (J-3)
+                return
             pair_count[0] += 1
             key = _key_text(child)
             if not key:
@@ -5829,13 +5840,15 @@ def extract_json(path: Path) -> dict:
                 walk_object(val, key_nid, key, depth + 1, pair_count)
 
             elif val.type == "array":
-                # For "extends" arrays (tsconfig, eslint): each string element
+                # For "extends" arrays (tsconfig, eslint): each string element.
+                # Prefix with "ref_" so external refs don't collide with real
+                # code/file node IDs that share the same collapsed _make_id (J-4).
                 for item in val.children:
                     if item.type == "string":
                         content = item.child_by_field_name("string_content")
                         ref = _read_text(content, source) if content else _read_text(item, source).strip('"\'')
                         if ref:
-                            ref_nid = _make_id(ref)
+                            ref_nid = _make_id("ref", ref)
                             if ref_nid:
                                 add_edge(key_nid, ref_nid, "extends", line, context="import")
 
@@ -5844,12 +5857,14 @@ def extract_json(path: Path) -> dict:
                 val_text = _read_text(content, source) if content else _read_text(val, source).strip('"\'')
 
                 if key == "extends" and val_text:
-                    ref_nid = _make_id(val_text)
+                    # Namespace external refs to avoid ID collision with file nodes (J-4)
+                    ref_nid = _make_id("ref", val_text)
                     if ref_nid:
                         add_edge(file_nid, ref_nid, "extends", line, context="import")
 
                 elif key == "$ref" and val_text:
-                    ref_nid = _make_id(val_text)
+                    # Namespace $ref values to prevent edge hijacking into code nodes (J-4)
+                    ref_nid = _make_id("ref", val_text)
                     if ref_nid:
                         add_edge(parent_nid, ref_nid, "references", line)
 

@@ -230,7 +230,11 @@ def test_detect_incremental_propagates_follow_symlinks(tmp_path, monkeypatch):
     (real_dir / "note.md").write_text("# real note\n\nsome content")
     (tmp_path / "linked_corpus").symlink_to(real_dir)
 
-    manifest_path = str(tmp_path / "manifest.json")
+    # Store manifest inside graphify-out/ so it is pruned by _SKIP_DIRS
+    # and doesn't get re-detected as a code file now that .json is indexed.
+    manifest_dir = tmp_path / "graphify-out"
+    manifest_dir.mkdir()
+    manifest_path = str(manifest_dir / "manifest.json")
 
     # Without following symlinks, the symlinked dir contents are invisible.
     no_link = detect_incremental(tmp_path, manifest_path, follow_symlinks=False)

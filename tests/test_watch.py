@@ -47,7 +47,9 @@ def test_watched_extensions_includes_images():
     assert ".jpg" in _WATCHED_EXTENSIONS
 
 def test_watched_extensions_excludes_noise():
-    assert ".json" not in _WATCHED_EXTENSIONS
+    # .json is now indexed (bash/JSON extractors added in #866)
+    assert ".json" in _WATCHED_EXTENSIONS
+    assert ".sh" in _WATCHED_EXTENSIONS
     assert ".pyc" not in _WATCHED_EXTENSIONS
     assert ".log" not in _WATCHED_EXTENSIONS
 
