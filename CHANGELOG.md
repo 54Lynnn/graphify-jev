@@ -2,9 +2,11 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## Unreleased
+## 0.7.19 (2026-05-14)
 
-- Fix: `graphify-out/.rebuild.lock` no longer accumulates concatenated PIDs across post-commit rebuilds — the lock file now contains a single owning PID followed by a newline while the rebuild runs, and is unlinked when it completes so downstream tooling that polls for its absence unblocks promptly (#858)
+- Feat: `.astro` files now extracted as code — frontmatter static imports, dynamic imports, and `<script>` block imports all produce edges; tsconfig path aliases resolved (#850, PR #852)
+- Fix: `.rebuild.lock` no longer accumulates PIDs across rebuilds — now contains a single owning PID while running and is unlinked on release so downstream tooling polling for its absence unblocks promptly (#858, PR #859)
+- Docs: skill.md now clarifies that graphify does not read `ANTHROPIC_API_KEY` or other provider keys during `/graphify` skill runs — the host IDE session provides the LLM (PR #864)
 
 ## 0.7.18 (2026-05-14)
 
