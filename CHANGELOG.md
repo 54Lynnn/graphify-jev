@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased
+
+- Fix: `graphify-out/.rebuild.lock` no longer accumulates concatenated PIDs across post-commit rebuilds — the lock file now contains a single owning PID followed by a newline while the rebuild runs, and is unlinked when it completes so downstream tooling that polls for its absence unblocks promptly (#858)
+
 ## 0.7.18 (2026-05-14)
 
 - Fix: `graphify update` is now idempotent — graph.json and GRAPH_REPORT.md are only rewritten when content actually changes; topology comparison short-circuits clustering entirely on unchanged graphs, eliminating residual community-count drift (#824)
