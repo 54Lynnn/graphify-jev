@@ -2,6 +2,31 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.5 (2026-05-15)
+
+- Fix: `.graphifyignore` parent-exclusion rule now correctly blocks files under an excluded directory even when a `!` negation exists elsewhere in the file — previously any negation pattern disabled directory pruning entirely (#882)
+- Fix: dedup no longer false-merges chip/model SKU variants like `ASR1603`/`ASR1605` or `M1`/`M1 Pro` — Jaro-Winkler prefix bonus is now gated by `_is_variant_pair` and `_short_label_blocked` guards; real typos on short labels still merge (#878)
+
+## 0.8.4 (2026-05-15)
+
+- Feat: Firebird SQL — trigger and stored procedure extraction via `CREATE TRIGGER` and regex fallback; FK detection via global regex covering `REFERENCES` and `FOREIGN KEY` clauses (#875)
+- Fix: SQL extraction regex fallback now decodes source as UTF-8 instead of latin-1, preventing non-ASCII identifier hash mismatches (#875)
+- Fix: `--update` deletion pruning now matches on full source file paths instead of basenames, preventing false node removal when different directories contain files with the same name (#876)
+- Fix: `--update` now also prunes edges whose `source_file` attr points to deleted files, not just nodes (#876)
+- Fix: community label keys from `graph.json` (stored as strings) are now coerced to int before lookup, fixing blank community names in GRAPH_REPORT.md and graph.html (#877)
+
+## 0.8.3 (2026-05-15)
+
+- Fix: Windows skill temp files (chunk JSONs, `.graphify_python`, `.graphify_root`) no longer pollute the project root — all written under `graphify-out/` (#831)
+- Fix: `--update` with deletions-only no longer errors when `.graphify_extract.json` does not yet exist — creates an empty extraction file before merging (#876)
+
+## 0.8.2 (2026-05-15)
+
+- Fix: Python interpreter detection for `uv tool` and `pipx` installs on Windows — `graphify install` and all skill steps now find the correct executable (#831)
+- Fix: antigravity Windows skill path resolution (#831)
+- Fix: dot directories (e.g. `.github/`, `.vscode/`) are now indexed when explicitly included via `.graphifyignore` (#873)
+- Fix: MCP server hot-reloads the graph when `graph.json` changes on disk (#874)
+
 ## 0.8.1 (2026-05-15)
 
 - Feat: Bash extractor — `.sh` and `.bash` files now indexed via tree-sitter; extracts functions, cross-function calls, `source`/`.` imports resolved to real file paths, and `export`/`declare` variable declarations (#866)
