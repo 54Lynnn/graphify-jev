@@ -28,6 +28,10 @@ def generate(
 ) -> str:
     today = date.today().isoformat()
 
+    # JSON deserialization produces string keys; normalize to int so .get(cid) works.
+    if community_labels:
+        community_labels = {int(k) if isinstance(k, str) else k: v for k, v in community_labels.items()}
+
     confidences = [d.get("confidence", "EXTRACTED") for _, _, d in G.edges(data=True)]
     total = len(confidences) or 1
     ext_pct = round(confidences.count("EXTRACTED") / total * 100)

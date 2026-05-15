@@ -380,6 +380,9 @@ def suggest_questions(
     Based on: AMBIGUOUS edges, bridge nodes, underexplored god nodes, isolated nodes.
     Each question has a 'type', 'question', and 'why' field.
     """
+    if community_labels:
+        community_labels = {int(k) if isinstance(k, str) else k: v for k, v in community_labels.items()}
+
     questions = []
     node_community = _node_community_map(communities)
 

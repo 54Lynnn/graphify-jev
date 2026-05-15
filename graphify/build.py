@@ -295,11 +295,12 @@ def build_merge(
     all_chunks = base + list(new_chunks)
     G = build(all_chunks, directed=directed, dedup=dedup, dedup_llm_backend=dedup_llm_backend)
 
-    # Prune nodes from deleted source files
+    # Prune nodes and edges from deleted source files
     if prune_sources:
+        prune_set = set(prune_sources)
         to_remove = [
             n for n, d in G.nodes(data=True)
-            if d.get("source_file") in prune_sources
+            if d.get("source_file") in prune_set
         ]
         G.remove_nodes_from(to_remove)
         n_files = len(prune_sources)
@@ -309,10 +310,22 @@ def build_merge(
                 f"[graphify] Pruned {n_nodes} node(s) from {n_files} deleted source file(s).",
                 file=sys.stderr,
             )
-        else:
+
+        edges_to_remove = [
+            (u, v) for u, v, d in G.edges(data=True)
+            if d.get("source_file") in prune_set
+        ]
+        if edges_to_remove:
+            G.remove_edges_from(edges_to_remove)
+            print(
+                f"[graphify] Pruned {len(edges_to_remove)} edge(s) from deleted source file(s).",
+                file=sys.stderr,
+            )
+
+        if not n_nodes and not edges_to_remove:
             print(
                 f"[graphify] {n_files} source file(s) deleted since last run — "
-                f"no matching nodes in graph, already clean.",
+                f"no matching nodes or edges in graph, already clean.",
                 file=sys.stderr,
             )
 
