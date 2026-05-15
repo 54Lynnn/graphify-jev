@@ -123,6 +123,98 @@ def test_surprising_connections_cross_type_scores_higher():
     assert any("code" in r and "paper" in r for r in reasons_cross)
 
 
+def _make_cross_lang_graph():
+    """Helper: Python node in backend/, TypeScript node in frontend/, different communities."""
+    G = nx.Graph()
+    G.add_node("py_auth", label="AuthError", source_file="backend/auth.py", file_type="code")
+    G.add_node("ts_member", label="Member", source_file="frontend/types.ts", file_type="code")
+    G.add_node("py_a", label="ServiceA", source_file="backend/service.py", file_type="code")
+    G.add_node("py_b", label="ServiceB", source_file="backend/utils.py", file_type="code")
+    return G
+
+
+def test_cross_language_inferred_calls_suppressed():
+    """Cross-language INFERRED calls edge should score lower than same-language EXTRACTED."""
+    G = _make_cross_lang_graph()
+    G.add_edge("py_auth", "ts_member", relation="calls", confidence="INFERRED",
+               weight=0.8, source_file="backend/auth.py")
+    G.add_edge("py_a", "py_b", relation="calls", confidence="EXTRACTED",
+               weight=1.0, source_file="backend/service.py")
+    nc = {"py_auth": 0, "ts_member": 1, "py_a": 0, "py_b": 0}
+    score_cross, _ = _surprise_score(G, "py_auth", "ts_member",
+                                      G.edges["py_auth", "ts_member"], nc,
+                                      "backend/auth.py", "frontend/types.ts")
+    score_same, _ = _surprise_score(G, "py_a", "py_b",
+                                     G.edges["py_a", "py_b"], nc,
+                                     "backend/service.py", "backend/utils.py")
+    assert score_cross <= score_same
+
+
+def test_cross_language_inferred_uses_suppressed():
+    """Cross-language INFERRED uses edge (the exact rsl-siege-manager false positive) should be suppressed."""
+    G = _make_cross_lang_graph()
+    G.add_edge("py_auth", "ts_member", relation="uses", confidence="INFERRED",
+               weight=0.8, source_file="backend/auth.py")
+    G.add_edge("py_a", "py_b", relation="calls", confidence="EXTRACTED",
+               weight=1.0, source_file="backend/service.py")
+    nc = {"py_auth": 0, "ts_member": 1, "py_a": 0, "py_b": 0}
+    score_cross, _ = _surprise_score(G, "py_auth", "ts_member",
+                                      G.edges["py_auth", "ts_member"], nc,
+                                      "backend/auth.py", "frontend/types.ts")
+    score_same, _ = _surprise_score(G, "py_a", "py_b",
+                                     G.edges["py_a", "py_b"], nc,
+                                     "backend/service.py", "backend/utils.py")
+    assert score_cross <= score_same
+
+
+def test_cross_language_semantically_similar_not_suppressed():
+    """`semantically_similar_to` across languages is a genuine insight — must not be suppressed."""
+    G = _make_cross_lang_graph()
+    G.add_edge("py_auth", "ts_member", relation="semantically_similar_to",
+               confidence="INFERRED", weight=0.85, source_file="backend/auth.py")
+    G.add_edge("py_a", "py_b", relation="calls", confidence="EXTRACTED",
+               weight=1.0, source_file="backend/service.py")
+    nc = {"py_auth": 0, "ts_member": 1, "py_a": 0, "py_b": 0}
+    score_sem, _ = _surprise_score(G, "py_auth", "ts_member",
+                                    G.edges["py_auth", "ts_member"], nc,
+                                    "backend/auth.py", "frontend/types.ts")
+    score_same, _ = _surprise_score(G, "py_a", "py_b",
+                                     G.edges["py_a", "py_b"], nc,
+                                     "backend/service.py", "backend/utils.py")
+    assert score_sem > score_same
+
+
+def test_same_language_inferred_calls_not_suppressed():
+    """INFERRED calls within the same language family must not be affected."""
+    G = nx.Graph()
+    G.add_node("py_a", label="ModuleA", source_file="src/a.py", file_type="code")
+    G.add_node("py_b", label="ModuleB", source_file="src/b.py", file_type="code")
+    G.add_node("py_c", label="ModuleC", source_file="src/c.py", file_type="code")
+    G.add_node("py_d", label="ModuleD", source_file="src/d.py", file_type="code")
+    G.add_edge("py_a", "py_b", relation="calls", confidence="INFERRED",
+               weight=0.8, source_file="src/a.py")
+    G.add_edge("py_c", "py_d", relation="calls", confidence="EXTRACTED",
+               weight=1.0, source_file="src/c.py")
+    nc = {"py_a": 0, "py_b": 1, "py_c": 0, "py_d": 1}
+    score_inf, _ = _surprise_score(G, "py_a", "py_b", G.edges["py_a", "py_b"], nc,
+                                    "src/a.py", "src/b.py")
+    score_ext, _ = _surprise_score(G, "py_c", "py_d", G.edges["py_c", "py_d"], nc,
+                                    "src/c.py", "src/d.py")
+    assert score_inf > score_ext
+
+
+def test_cross_language_extracted_calls_not_suppressed():
+    """EXTRACTED cross-language edges are real structural facts — must not be penalised."""
+    G = _make_cross_lang_graph()
+    G.add_edge("py_auth", "ts_member", relation="calls", confidence="EXTRACTED",
+               weight=1.0, source_file="backend/auth.py")
+    nc = {"py_auth": 0, "ts_member": 1}
+    score, _ = _surprise_score(G, "py_auth", "ts_member",
+                                G.edges["py_auth", "ts_member"], nc,
+                                "backend/auth.py", "frontend/types.ts")
+    assert score >= 1
+
+
 def test_surprising_connections_have_why_field():
     G = make_graph()
     communities = cluster(G)

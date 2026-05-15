@@ -175,9 +175,20 @@ def _surprise_score(
     relation = data.get("relation", "")
     conf_bonus = {"AMBIGUOUS": 3, "INFERRED": 2, "EXTRACTED": 1}.get(conf, 1)
 
-    # Cross-language INFERRED calls are likely resolver pollution, not real surprises
-    if conf == "INFERRED" and relation == "calls" and _cross_language(u_source, v_source):
-        conf_bonus = 0  # downgrade: don't promote likely false positives
+    # Cross-language INFERRED calls/uses edges are resolver pollution in monorepos:
+    # the call and import resolvers match by label across language boundaries, so
+    # a Python `AuthError` resolves to a TypeScript `Member` purely by name.
+    # Zero all structural bonuses for these — they would otherwise score 4-5 from
+    # cross-dir + cross-community and dominate "Surprising Connections".
+    # Excludes `semantically_similar_to` (LLM-emitted, explicitly cross-language
+    # insight) and all AMBIGUOUS/EXTRACTED edges (not from the resolver path).
+    _suppress_structural = (
+        conf == "INFERRED"
+        and relation in ("calls", "uses")
+        and _cross_language(u_source, v_source)
+    )
+    if _suppress_structural:
+        conf_bonus = 0
 
     score += conf_bonus
     if conf in ("AMBIGUOUS", "INFERRED"):
@@ -191,14 +202,14 @@ def _surprise_score(
         reasons.append(f"crosses file types ({cat_u} ↔ {cat_v})")
 
     # 3. Cross-repo bonus - different top-level directory
-    if _top_level_dir(u_source) != _top_level_dir(v_source):
+    if _top_level_dir(u_source) != _top_level_dir(v_source) and not _suppress_structural:
         score += 2
         reasons.append("connects across different repos/directories")
 
     # 4. Cross-community bonus - Leiden says these are structurally distant
     cid_u = node_community.get(u)
     cid_v = node_community.get(v)
-    if cid_u is not None and cid_v is not None and cid_u != cid_v:
+    if cid_u is not None and cid_v is not None and cid_u != cid_v and not _suppress_structural:
         score += 1
         reasons.append("bridges separate communities")
 
