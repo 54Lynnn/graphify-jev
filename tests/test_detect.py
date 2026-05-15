@@ -416,3 +416,47 @@ def test_detect_skips_graphify_own_cache(tmp_path):
     all_files = [f for files in result["files"].values() for f in files]
     assert not any(".graphify" in f for f in all_files)
     assert any("app.py" in f for f in all_files)
+
+
+# --- #882: gitignore parent-exclusion rule for ! re-includes ---
+
+def test_negation_cannot_rescue_file_under_excluded_dir(tmp_path):
+    """A ! re-include cannot un-ignore a file whose parent dir is excluded (#882)."""
+    from graphify.detect import _is_ignored, _load_graphifyignore
+    android = tmp_path / "android" / "app" / "src"
+    android.mkdir(parents=True)
+    victim = android / "Main.kt"
+    victim.write_text("fun main() {}")
+    (tmp_path / ".graphifyignore").write_text("android/\n!src/\n")
+    patterns = _load_graphifyignore(tmp_path)
+    assert _is_ignored(victim, tmp_path, patterns), (
+        "android/app/src/Main.kt must remain ignored even with !src/ because "
+        "the parent android/ is excluded"
+    )
+
+
+def test_negation_works_when_no_ancestor_excluded(tmp_path):
+    """A ! re-include must still un-ignore a file when no ancestor is excluded (#882)."""
+    from graphify.detect import _is_ignored, _load_graphifyignore
+    src = tmp_path / "src"
+    src.mkdir()
+    keep = src / "keep.py"
+    keep.write_text("x = 1")
+    (tmp_path / ".graphifyignore").write_text("*.py\n!src/keep.py\n")
+    patterns = _load_graphifyignore(tmp_path)
+    assert not _is_ignored(keep, tmp_path, patterns), (
+        "src/keep.py should be un-ignored by !src/keep.py since src/ itself is not excluded"
+    )
+
+
+def test_negation_ancestor_itself_reincluded(tmp_path):
+    """If the ancestor dir itself is re-included, its children should not be blocked (#882)."""
+    from graphify.detect import _is_ignored, _load_graphifyignore
+    vendor = tmp_path / "vendor" / "lib"
+    vendor.mkdir(parents=True)
+    f = vendor / "utils.py"
+    f.write_text("x = 1")
+    (tmp_path / ".graphifyignore").write_text("vendor/\n!vendor/\n")
+    patterns = _load_graphifyignore(tmp_path)
+    # vendor/ is excluded then re-included; ancestor eval returns False so file is evaluated on its own
+    assert not _is_ignored(f, tmp_path, patterns)
