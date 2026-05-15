@@ -63,25 +63,53 @@ Follow these steps in order. Do not skip steps.
 ### Step 1 - Ensure graphify is installed
 
 ```powershell
-# Detect Python and install graphify if needed
-@'
-import graphify
-'@ | Out-File -FilePath .graphify_step_1_ensure_graphify_is_installed_1.py -Encoding utf8
-python .graphify_step_1_ensure_graphify_is_installed_1.py 2>$null
-Remove-Item -ErrorAction SilentlyContinue .graphify_step_1_ensure_graphify_is_installed_1.py
-if ($LASTEXITCODE -ne 0) {
+# Detect Python with graphify — uv/pipx-aware (fixes #831)
+New-Item -ItemType Directory -Force -Path graphify-out | Out-Null
+$GRAPHIFY_PYTHON = $null
+
+function Find-GraphifyPython {
+    # graphify.exe and python.exe live in the same Scripts\ dir for both uv tool and pipx installs
+    $cmd = Get-Command graphify -ErrorAction SilentlyContinue
+    if (-not $cmd) { return $null }
+    $candidatePy = Join-Path (Split-Path $cmd.Source) "python.exe"
+    if (-not (Test-Path $candidatePy)) { return $null }
+    & $candidatePy -c "import graphify" 2>$null
+    if ($LASTEXITCODE -eq 0) { return $candidatePy }
+    return $null
+}
+
+# 1. Find Python co-located with the graphify binary (uv tool / pipx)
+$GRAPHIFY_PYTHON = Find-GraphifyPython
+
+# 2. Fall back to bare python if graphify is already importable there
+if (-not $GRAPHIFY_PYTHON) {
+    $pyCmd = Get-Command python -ErrorAction SilentlyContinue
+    if ($pyCmd) {
+        python -c "import graphify" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $GRAPHIFY_PYTHON = (python -c "import sys; print(sys.executable)").Trim()
+        }
+    }
+}
+
+# 3. Install if not found anywhere, then re-detect
+if (-not $GRAPHIFY_PYTHON) {
     if (Get-Command uv -ErrorAction SilentlyContinue) {
         uv tool install --upgrade graphifyy -q 2>&1 | Select-Object -Last 3
     } else {
         pip install graphifyy -q 2>&1 | Select-Object -Last 3
     }
+    # Re-detect after install using the same reliable method
+    $GRAPHIFY_PYTHON = Find-GraphifyPython
+    # Last resort: bare python (covers pip-into-active-venv installs)
+    if (-not $GRAPHIFY_PYTHON) {
+        $pyCmd = Get-Command python -ErrorAction SilentlyContinue
+        if ($pyCmd) { $GRAPHIFY_PYTHON = (python -c "import sys; print(sys.executable)").Trim() }
+    }
 }
-# Write interpreter path for all subsequent steps
-@'
-import sys; open('.graphify_python', 'w', encoding='utf-8').write(sys.executable)
-'@ | Out-File -FilePath .graphify_step_1_ensure_graphify_is_installed_2.py -Encoding utf8
-python .graphify_step_1_ensure_graphify_is_installed_2.py
-Remove-Item -ErrorAction SilentlyContinue .graphify_step_1_ensure_graphify_is_installed_2.py
+
+# Save interpreter path — all subsequent steps read this
+$GRAPHIFY_PYTHON | Out-File -FilePath graphify-out\.graphify_python -Encoding utf8 -NoNewline
 ```
 
 If the import succeeds, print nothing and move straight to Step 2.
@@ -96,7 +124,7 @@ from pathlib import Path
 result = detect(Path('INPUT_PATH'))
 print(json.dumps(result, ensure_ascii=False))
 '@ | Out-File -FilePath .graphify_step_2_detect_files_3.py -Encoding utf8
-python .graphify_step_2_detect_files_3.py > .graphify_detect.json
+& (Get-Content graphify-out\.graphify_python) .graphify_step_2_detect_files_3.py > .graphify_detect.json
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_2_detect_files_3.py
 ```
 
@@ -209,7 +237,7 @@ def main():
 if __name__ == '__main__':
     main()
 '@ | Out-File -FilePath .graphify_step_ast.py -Encoding utf8
-python .graphify_step_ast.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_ast.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_ast.py
 ```
 
@@ -245,7 +273,7 @@ if cached_nodes or cached_edges or cached_hyperedges:
 Path('graphify-out/.graphify_uncached.txt').write_text('\n'.join(uncached), encoding="utf-8")
 print(f'Cache: {len(all_files)-len(uncached)} files hit, {len(uncached)} files need extraction')
 '@ | Out-File -FilePath .graphify_step_3_extract_entities_and_relations_5.py -Encoding utf8
-python .graphify_step_3_extract_entities_and_relations_5.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_3_extract_entities_and_relations_5.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_3_extract_entities_and_relations_5.py
 ```
 
@@ -340,8 +368,8 @@ Wait for all subagents. For each result:
 If more than half the chunks failed or are missing, stop and tell the user to re-run and ensure `subagent_type="general-purpose"` is used.
 
 Merge all chunk files into `.graphify_semantic_new.json`. **After each Agent call completes, read the real token counts from the Agent tool result's `usage` field and write them back into the chunk JSON before merging** — the chunk JSON itself always has placeholder zeros. Then run:
-```bash
-$(cat graphify-out/.graphify_python) -c "
+```powershell
+& (Get-Content graphify-out\.graphify_python) -c "
 import json, glob
 from pathlib import Path
 
@@ -374,7 +402,7 @@ new = json.loads(Path('graphify-out/.graphify_semantic_new.json').read_text(enco
 saved = save_semantic_cache(new.get('nodes', []), new.get('edges', []), new.get('hyperedges', []))
 print(f'Cached {saved} files')
 '@ | Out-File -FilePath .graphify_step_3_extract_entities_and_relations_6.py -Encoding utf8
-python .graphify_step_3_extract_entities_and_relations_6.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_3_extract_entities_and_relations_6.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_3_extract_entities_and_relations_6.py
 ```
 
@@ -407,7 +435,7 @@ merged = {
 Path('graphify-out/.graphify_semantic.json').write_text(json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8")
 print(f'Extraction complete - {len(deduped)} nodes, {len(all_edges)} edges ({len(cached["nodes"])} from cache, {len(new.get("nodes",[]))} new)')
 '@ | Out-File -FilePath .graphify_step_3_extract_entities_and_relations_7.py -Encoding utf8
-python .graphify_step_3_extract_entities_and_relations_7.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_3_extract_entities_and_relations_7.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_3_extract_entities_and_relations_7.py
 ```
 Clean up temp files: `Remove-Item -ErrorAction SilentlyContinue graphify-out\.graphify_cached.json, graphify-out\.graphify_uncached.txt, graphify-out\.graphify_semantic_new.json`
@@ -444,7 +472,7 @@ total = len(merged_nodes)
 edges = len(merged_edges)
 print(f'Merged: {total} nodes, {edges} edges ({len(ast["nodes"])} AST + {len(sem["nodes"])} semantic)')
 '@ | Out-File -FilePath .graphify_step_3_extract_entities_and_relations_8.py -Encoding utf8
-python .graphify_step_3_extract_entities_and_relations_8.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_3_extract_entities_and_relations_8.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_3_extract_entities_and_relations_8.py
 ```
 
@@ -492,7 +520,7 @@ if G.number_of_nodes() == 0:
     raise SystemExit(1)
 print(f'Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges, {len(communities)} communities')
 '@ | Out-File -FilePath .graphify_step_4_build_graph_cluster_analyze_ge_9.py -Encoding utf8
-python .graphify_step_4_build_graph_cluster_analyze_ge_9.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_4_build_graph_cluster_analyze_ge_9.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_4_build_graph_cluster_analyze_ge_9.py
 ```
 
@@ -535,7 +563,7 @@ Path('graphify-out/GRAPH_REPORT.md').write_text(report, encoding="utf-8")
 Path('.graphify_labels.json').write_text(json.dumps({str(k): v for k, v in labels.items()}, ensure_ascii=False), encoding="utf-8")
 print('Report updated with community labels')
 '@ | Out-File -FilePath .graphify_step_5_label_communities_10.py -Encoding utf8
-python .graphify_step_5_label_communities_10.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_5_label_communities_10.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_5_label_communities_10.py
 ```
 
@@ -579,7 +607,7 @@ print('  Graph view   - nodes colored by community (set automatically)')
 print('  graph.canvas - structured layout with communities as groups')
 print('  _COMMUNITY_* - overview notes with cohesion scores and dataview queries')
 '@ | Out-File -FilePath .graphify_step_6_generate_obsidian_vault_opt_in_11.py -Encoding utf8
-python .graphify_step_6_generate_obsidian_vault_opt_in_11.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_6_generate_obsidian_vault_opt_in_11.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_6_generate_obsidian_vault_opt_in_11.py
 ```
 
@@ -606,7 +634,7 @@ else:
     to_html(G, communities, 'graphify-out/graph.html', community_labels=labels or None)
     print('graph.html written - open in any browser, no server needed')
 '@ | Out-File -FilePath .graphify_step_6_generate_obsidian_vault_opt_in_12.py -Encoding utf8
-python .graphify_step_6_generate_obsidian_vault_opt_in_12.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_6_generate_obsidian_vault_opt_in_12.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_6_generate_obsidian_vault_opt_in_12.py
 ```
 
@@ -625,7 +653,7 @@ G = build_from_json(json.loads(Path('.graphify_extract.json').read_text(encoding
 to_cypher(G, 'graphify-out/cypher.txt')
 print('cypher.txt written - import with: cypher-shell < graphify-out/cypher.txt')
 '@ | Out-File -FilePath .graphify_step_7_neo4j_export_only_if_neo4j_or__13.py -Encoding utf8
-python .graphify_step_7_neo4j_export_only_if_neo4j_or__13.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_7_neo4j_export_only_if_neo4j_or__13.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_7_neo4j_export_only_if_neo4j_or__13.py
 ```
 
@@ -647,7 +675,7 @@ communities = {int(k): v for k, v in analysis['communities'].items()}
 result = push_to_neo4j(G, uri='NEO4J_URI', user='NEO4J_USER', password='NEO4J_PASSWORD', communities=communities)
 print(f'Pushed to Neo4j: {result["nodes"]} nodes, {result["edges"]} edges')
 '@ | Out-File -FilePath .graphify_step_7_neo4j_export_only_if_neo4j_or__14.py -Encoding utf8
-python .graphify_step_7_neo4j_export_only_if_neo4j_or__14.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_7_neo4j_export_only_if_neo4j_or__14.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_7_neo4j_export_only_if_neo4j_or__14.py
 ```
 
@@ -673,7 +701,7 @@ labels = {int(k): v for k, v in labels_raw.items()}
 to_svg(G, communities, 'graphify-out/graph.svg', community_labels=labels or None)
 print('graph.svg written - embeds in Obsidian, Notion, GitHub READMEs')
 '@ | Out-File -FilePath .graphify_step_7b_svg_export_only_if_svg_flag_15.py -Encoding utf8
-python .graphify_step_7b_svg_export_only_if_svg_flag_15.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_7b_svg_export_only_if_svg_flag_15.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_7b_svg_export_only_if_svg_flag_15.py
 ```
 
@@ -695,14 +723,14 @@ communities = {int(k): v for k, v in analysis['communities'].items()}
 to_graphml(G, communities, 'graphify-out/graph.graphml')
 print('graph.graphml written - open in Gephi, yEd, or any GraphML tool')
 '@ | Out-File -FilePath .graphify_step_7c_graphml_export_only_if_graphml_16.py -Encoding utf8
-python .graphify_step_7c_graphml_export_only_if_graphml_16.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_7c_graphml_export_only_if_graphml_16.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_7c_graphml_export_only_if_graphml_16.py
 ```
 
 ### Step 7d - MCP server (only if --mcp flag)
 
 ```powershell
-python -m graphify.serve graphify-out/graph.json
+& (Get-Content graphify-out\.graphify_python) -m graphify.serve graphify-out/graph.json
 ```
 
 This starts a stdio MCP server that exposes tools: `query_graph`, `get_node`, `get_neighbors`, `get_community`, `god_nodes`, `graph_stats`, `shortest_path`. Add to Claude Desktop or any MCP-compatible agent orchestrator so other agents can query the graph live.
@@ -733,7 +761,7 @@ detection = json.loads(Path('.graphify_detect.json').read_text(encoding="utf-8")
 result = run_benchmark('graphify-out/graph.json', corpus_words=detection['total_words'])
 print_benchmark(result)
 '@ | Out-File -FilePath .graphify_step_8_token_reduction_benchmark_only_17.py -Encoding utf8
-python .graphify_step_8_token_reduction_benchmark_only_17.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_8_token_reduction_benchmark_only_17.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_8_token_reduction_benchmark_only_17.py
 ```
 
@@ -778,7 +806,7 @@ cost_path.write_text(json.dumps(cost, indent=2, ensure_ascii=False), encoding="u
 print(f'This run: {input_tok:,} input tokens, {output_tok:,} output tokens')
 print(f'All time: {cost["total_input_tokens"]:,} input, {cost["total_output_tokens"]:,} output ({len(cost["runs"])} runs)')
 '@ | Out-File -FilePath .graphify_step_9_save_manifest_update_cost_trac_18.py -Encoding utf8
-python .graphify_step_9_save_manifest_update_cost_trac_18.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_9_save_manifest_update_cost_trac_18.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_9_save_manifest_update_cost_trac_18.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_detect.json, .graphify_extract.json, .graphify_ast.json, .graphify_semantic.json, .graphify_analysis.json, .graphify_labels.json
 Remove-Item -ErrorAction SilentlyContinue graphify-out/.needs_update
@@ -834,7 +862,7 @@ if new_total == 0:
     raise SystemExit(0)
 print(f'{new_total} new/changed file(s) to re-extract.')
 '@ | Out-File -FilePath .graphify_step_for_update_incremental_re_extracti_19.py -Encoding utf8
-python .graphify_step_for_update_incremental_re_extracti_19.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_update_incremental_re_extracti_19.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_update_incremental_re_extracti_19.py
 ```
 
@@ -852,7 +880,7 @@ all_changed = [f for files in new_files.values() for f in files]
 code_only = all(Path(f).suffix.lower() in code_exts for f in all_changed)
 print('code_only:', code_only)
 '@ | Out-File -FilePath .graphify_step_for_update_incremental_re_extracti_20.py -Encoding utf8
-python .graphify_step_for_update_incremental_re_extracti_20.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_update_incremental_re_extracti_20.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_update_incremental_re_extracti_20.py
 ```
 
@@ -902,7 +930,7 @@ from graphify.detect import save_manifest
 save_manifest(incremental['files'])
 print('[graphify update] Manifest saved.')
 '@ | Out-File -FilePath .graphify_step_for_update_incremental_re_extracti_21.py -Encoding utf8
-python .graphify_step_for_update_incremental_re_extracti_21.py 
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_update_incremental_re_extracti_21.py 
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_update_incremental_re_extracti_21.py
 ```
 
@@ -933,7 +961,7 @@ if old_data:
     if diff['new_edges']:
         print('New edges:', len(diff['new_edges']))
 '@ | Out-File -FilePath .graphify_step_for_update_incremental_re_extracti_22.py -Encoding utf8
-python .graphify_step_for_update_incremental_re_extracti_22.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_update_incremental_re_extracti_22.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_update_incremental_re_extracti_22.py
 ```
 
@@ -983,7 +1011,7 @@ analysis = {
 Path('.graphify_analysis.json').write_text(json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8")
 print(f'Re-clustered: {len(communities)} communities')
 '@ | Out-File -FilePath .graphify_step_for_cluster_only_23.py -Encoding utf8
-python .graphify_step_for_cluster_only_23.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_cluster_only_23.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_cluster_only_23.py
 ```
 
@@ -1008,7 +1036,7 @@ if not Path('graphify-out/graph.json').exists():
     print('ERROR: No graph found. Run /graphify <path> first to build the graph.')
     raise SystemExit(1)
 '@ | Out-File -FilePath .graphify_step_for_graphify_query_24.py -Encoding utf8
-python .graphify_step_for_graphify_query_24.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_graphify_query_24.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_graphify_query_24.py
 ```
 If it fails, stop and tell the user to run `/graphify <path>` first.
@@ -1106,7 +1134,7 @@ if len(output) > char_budget:
     output = output[:char_budget] + f'\n... (truncated at ~{token_budget} token budget - use --budget N for more)'
 print(output)
 '@ | Out-File -FilePath .graphify_step_for_graphify_query_25.py -Encoding utf8
-python .graphify_step_for_graphify_query_25.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_graphify_query_25.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_graphify_query_25.py
 ```
 
@@ -1115,7 +1143,7 @@ Replace `QUESTION` with the user's actual question, `MODE` with `bfs` or `dfs`, 
 After writing the answer, save it back into the graph so it improves future queries:
 
 ```powershell
-python -m graphify save-result --question "QUESTION" --answer "ANSWER" --type query --nodes NODE1 NODE2
+& (Get-Content graphify-out\.graphify_python) -m graphify save-result --question "QUESTION" --answer "ANSWER" --type query --nodes NODE1 NODE2
 ```
 
 Replace `QUESTION` with the question, `ANSWER` with your full answer text, `SOURCE_NODES` with the list of node labels you cited. This closes the feedback loop: the next `--update` will extract this Q&A as a node in the graph.
@@ -1134,7 +1162,7 @@ if not Path('graphify-out/graph.json').exists():
     print('ERROR: No graph found. Run /graphify <path> first to build the graph.')
     raise SystemExit(1)
 '@ | Out-File -FilePath .graphify_step_for_graphify_path_26.py -Encoding utf8
-python .graphify_step_for_graphify_path_26.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_graphify_path_26.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_graphify_path_26.py
 ```
 If it fails, stop and tell the user to run `/graphify <path>` first.
@@ -1185,7 +1213,7 @@ except nx.NetworkXNoPath:
 except nx.NodeNotFound as e:
     print(f'Node not found: {e}')
 '@ | Out-File -FilePath .graphify_step_for_graphify_path_27.py -Encoding utf8
-python .graphify_step_for_graphify_path_27.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_graphify_path_27.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_graphify_path_27.py
 ```
 
@@ -1194,7 +1222,7 @@ Replace `NODE_A` and `NODE_B` with the actual concept names from the user. Then 
 After writing the explanation, save it back:
 
 ```powershell
-python -m graphify save-result --question "Path from NODE_A to NODE_B" --answer "ANSWER" --type path_query --nodes NODE_A NODE_B
+& (Get-Content graphify-out\.graphify_python) -m graphify save-result --question "Path from NODE_A to NODE_B" --answer "ANSWER" --type path_query --nodes NODE_A NODE_B
 ```
 
 ---
@@ -1211,7 +1239,7 @@ if not Path('graphify-out/graph.json').exists():
     print('ERROR: No graph found. Run /graphify <path> first to build the graph.')
     raise SystemExit(1)
 '@ | Out-File -FilePath .graphify_step_for_graphify_explain_28.py -Encoding utf8
-python .graphify_step_for_graphify_explain_28.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_graphify_explain_28.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_graphify_explain_28.py
 ```
 If it fails, stop and tell the user to run `/graphify <path>` first.
@@ -1255,7 +1283,7 @@ for neighbor in G.neighbors(nid):
     src_file = G.nodes[neighbor].get('source_file', '')
     print(f'  --{rel}--> {nlabel} [{conf}] ({src_file})')
 '@ | Out-File -FilePath .graphify_step_for_graphify_explain_29.py -Encoding utf8
-python .graphify_step_for_graphify_explain_29.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_graphify_explain_29.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_graphify_explain_29.py
 ```
 
@@ -1264,7 +1292,7 @@ Replace `NODE_NAME` with the concept the user asked about. Then write a 3-5 sent
 After writing the explanation, save it back:
 
 ```powershell
-python -m graphify save-result --question "Explain NODE_NAME" --answer "ANSWER" --type explain --nodes NODE_NAME
+& (Get-Content graphify-out\.graphify_python) -m graphify save-result --question "Explain NODE_NAME" --answer "ANSWER" --type explain --nodes NODE_NAME
 ```
 
 ---
@@ -1289,7 +1317,7 @@ except RuntimeError as e:
     print(f'error: {e}', file=sys.stderr)
     sys.exit(1)
 '@ | Out-File -FilePath .graphify_step_for_graphify_add_30.py -Encoding utf8
-python .graphify_step_for_graphify_add_30.py
+& (Get-Content graphify-out\.graphify_python) .graphify_step_for_graphify_add_30.py
 Remove-Item -ErrorAction SilentlyContinue .graphify_step_for_graphify_add_30.py
 ```
 
@@ -1309,7 +1337,7 @@ Supported URL types (auto-detected):
 Start a background watcher that monitors a folder and auto-updates the graph when files change.
 
 ```powershell
-python -m graphify.watch INPUT_PATH --debounce 3
+& (Get-Content graphify-out\.graphify_python) -m graphify.watch INPUT_PATH --debounce 3
 ```
 
 Replace INPUT_PATH with the folder to watch. Behavior depends on what changed:
