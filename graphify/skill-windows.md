@@ -68,44 +68,50 @@ New-Item -ItemType Directory -Force -Path graphify-out | Out-Null
 $GRAPHIFY_PYTHON = $null
 
 function Find-GraphifyPython {
-    # graphify.exe and python.exe live in the same Scripts\ dir for both uv tool and pipx installs
-    $cmd = Get-Command graphify -ErrorAction SilentlyContinue
-    if (-not $cmd) { return $null }
-    $candidatePy = Join-Path (Split-Path $cmd.Source) "python.exe"
-    if (-not (Test-Path $candidatePy)) { return $null }
-    & $candidatePy -c "import graphify" 2>$null
-    if ($LASTEXITCODE -eq 0) { return $candidatePy }
+    # 1. uv tool install — 'uv tool dir' is authoritative, respects UV_TOOL_DIR automatically
+    if (Get-Command uv -ErrorAction SilentlyContinue) {
+        $uvDir = (uv tool dir 2>$null).Trim()
+        if ($uvDir) {
+            $py = Join-Path $uvDir "graphifyy\Scripts\python.exe"
+            if (Test-Path $py) {
+                & $py -c "import graphify" 2>$null
+                if ($LASTEXITCODE -eq 0) { return $py }
+            }
+        }
+    }
+    # 2. pipx install — 'pipx environment' respects PIPX_HOME automatically
+    if (Get-Command pipx -ErrorAction SilentlyContinue) {
+        $venvs = (pipx environment --value PIPX_LOCAL_VENVS 2>$null).Trim()
+        if ($venvs) {
+            $py = Join-Path $venvs "graphifyy\Scripts\python.exe"
+            if (Test-Path $py) {
+                & $py -c "import graphify" 2>$null
+                if ($LASTEXITCODE -eq 0) { return $py }
+            }
+        }
+    }
+    # 3. Active venv / conda / pip-into-current-env
+    $pyCmd = Get-Command python -ErrorAction SilentlyContinue
+    if ($pyCmd) {
+        & $pyCmd.Source -c "import graphify" 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            return (& $pyCmd.Source -c "import sys; print(sys.executable)").Trim()
+        }
+    }
     return $null
 }
 
-# 1. Find Python co-located with the graphify binary (uv tool / pipx)
+# Try to find the right Python (uv → pipx → active env)
 $GRAPHIFY_PYTHON = Find-GraphifyPython
 
-# 2. Fall back to bare python if graphify is already importable there
-if (-not $GRAPHIFY_PYTHON) {
-    $pyCmd = Get-Command python -ErrorAction SilentlyContinue
-    if ($pyCmd) {
-        python -c "import graphify" 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            $GRAPHIFY_PYTHON = (python -c "import sys; print(sys.executable)").Trim()
-        }
-    }
-}
-
-# 3. Install if not found anywhere, then re-detect
+# Not found — install then re-detect
 if (-not $GRAPHIFY_PYTHON) {
     if (Get-Command uv -ErrorAction SilentlyContinue) {
         uv tool install --upgrade graphifyy -q 2>&1 | Select-Object -Last 3
     } else {
         pip install graphifyy -q 2>&1 | Select-Object -Last 3
     }
-    # Re-detect after install using the same reliable method
     $GRAPHIFY_PYTHON = Find-GraphifyPython
-    # Last resort: bare python (covers pip-into-active-venv installs)
-    if (-not $GRAPHIFY_PYTHON) {
-        $pyCmd = Get-Command python -ErrorAction SilentlyContinue
-        if ($pyCmd) { $GRAPHIFY_PYTHON = (python -c "import sys; print(sys.executable)").Trim() }
-    }
 }
 
 # Save interpreter path — all subsequent steps read this

@@ -145,6 +145,11 @@ _PLATFORM_CONFIG: dict[str, dict] = {
         "skill_dst": Path(".agents") / "skills" / "graphify" / "SKILL.md",
         "claude_md": False,
     },
+    "antigravity-windows": {
+        "skill_file": "skill-windows.md",
+        "skill_dst": Path(".agents") / "skills" / "graphify" / "SKILL.md",
+        "claude_md": False,
+    },
     "windows": {
         "skill_file": "skill-windows.md",
         "skill_dst": Path(".claude") / "skills" / "graphify" / "SKILL.md",
@@ -165,6 +170,9 @@ def install(platform: str = "claude") -> None:
     if platform == "cursor":
         _cursor_install(Path("."))
         return
+    # On Windows, antigravity needs the PowerShell skill, not the bash one
+    if platform == "antigravity" and sys.platform == "win32":
+        platform = "antigravity-windows"
     if platform not in _PLATFORM_CONFIG:
         print(
             f"error: unknown platform '{platform}'. Choose from: {', '.join(_PLATFORM_CONFIG)}, gemini, cursor",
