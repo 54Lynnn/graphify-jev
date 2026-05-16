@@ -1,6 +1,7 @@
 # MCP stdio server - exposes graph query tools to Claude and other agents
 from __future__ import annotations
 import json
+import math
 import sys
 from pathlib import Path
 import networkx as nx
@@ -55,28 +56,74 @@ _SUBSTRING_MATCH_BONUS = 1.0
 _SOURCE_MATCH_BONUS = 0.5
 
 
+def _compute_idf(G: nx.Graph, terms: list[str]) -> dict[str, float]:
+    """IDF weights for query terms, cached in G.graph['_idf_cache'].
+
+    Common terms like 'error' or 'exception' that match hundreds of nodes get
+    low weights; rare identifiers like 'FooBarService' get high weights.
+    Cache is stored on the graph object itself so it auto-invalidates when
+    _maybe_reload() replaces G with a new object.
+    """
+    cache: dict[str, float] = G.graph.setdefault("_idf_cache", {})
+    N = G.number_of_nodes() or 1
+    uncached = [t for t in terms if t not in cache]
+    if uncached:
+        df: dict[str, int] = {t: 0 for t in uncached}
+        for _, data in G.nodes(data=True):
+            norm_label = (
+                data.get("norm_label") or _strip_diacritics(data.get("label") or "")
+            ).lower()
+            for t in uncached:
+                if t in norm_label:
+                    df[t] += 1
+        for t in uncached:
+            cache[t] = math.log(1 + N / (1 + df[t]))
+    return {t: cache.get(t, math.log(1 + N)) for t in terms}
+
+
 def _score_nodes(G: nx.Graph, terms: list[str]) -> list[tuple[float, str]]:
     scored = []
     norm_terms = [_strip_diacritics(t).lower() for t in terms]
+    idf = _compute_idf(G, norm_terms)
     for nid, data in G.nodes(data=True):
         norm_label = data.get("norm_label") or _strip_diacritics(data.get("label") or "").lower()
         bare_label = norm_label.rstrip("()")
         source = (data.get("source_file") or "").lower()
         score = 0.0
         for t in norm_terms:
+            w = idf.get(t, 1.0)
             # Three-tier precedence: exact > prefix > substring (take the
             # strongest tier per term so a single term cannot double-count).
             if t == norm_label or t == bare_label:
-                score += _EXACT_MATCH_BONUS
+                score += _EXACT_MATCH_BONUS * w
             elif norm_label.startswith(t) or bare_label.startswith(t):
-                score += _PREFIX_MATCH_BONUS
+                score += _PREFIX_MATCH_BONUS * w
             elif t in norm_label:
-                score += _SUBSTRING_MATCH_BONUS
+                score += _SUBSTRING_MATCH_BONUS * w
             if t in source:
-                score += _SOURCE_MATCH_BONUS
+                score += _SOURCE_MATCH_BONUS * w
         if score > 0:
             scored.append((score, nid))
     return sorted(scored, reverse=True)
+
+
+def _pick_seeds(scored: list[tuple[float, str]], max_k: int = 3, gap_ratio: float = 0.2) -> list[str]:
+    """Select BFS seed nodes, stopping when score drops too far below the top.
+
+    Prevents high-frequency noise terms (error, exception) from stealing seed
+    slots from a dominant identifier match. When FooBarService scores 1000 and
+    error nodes score 1.0, only FooBarService is seeded — the score gap is 99.9%
+    which is well above the 20% threshold that would allow additional seeds.
+    """
+    if not scored:
+        return []
+    top_score = scored[0][0]
+    seeds = []
+    for score, nid in scored[:max_k]:
+        if seeds and score < top_score * gap_ratio:
+            break
+        seeds.append(nid)
+    return seeds
 
 
 _CONTEXT_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -237,7 +284,16 @@ def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_bu
             lines.append(line)
     output = "\n".join(lines)
     if len(output) > char_budget:
-        output = output[:char_budget] + f"\n... (truncated to ~{token_budget} token budget)"
+        cut_at = output[:char_budget].rfind("\n")
+        cut_at = cut_at if cut_at > 0 else char_budget
+        total_nodes = sum(1 for l in lines if l.startswith("NODE "))
+        shown_nodes = output[:cut_at].count("\nNODE ") + (1 if output.startswith("NODE ") else 0)
+        cut_count = total_nodes - shown_nodes
+        output = (
+            output[:cut_at]
+            + f"\n... (truncated — {cut_count} more nodes cut by ~{token_budget}-token budget."
+            f" Narrow with context_filter=['call'] or use get_node for a specific symbol)"
+        )
     return output
 
 
@@ -252,7 +308,7 @@ def _query_graph_text(
 ) -> str:
     terms = [t.lower() for t in question.split() if len(t) > 2]
     scored = _score_nodes(G, terms)
-    start_nodes = [nid for _, nid in scored[:3]]
+    start_nodes = _pick_seeds(scored)
     if not start_nodes:
         return "No matching nodes found."
     resolved_filters, filter_source = _resolve_context_filters(question, context_filters)

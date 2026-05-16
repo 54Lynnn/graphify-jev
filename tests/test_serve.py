@@ -7,6 +7,8 @@ from networkx.readwrite import json_graph
 from graphify.serve import (
     _communities_from_graph,
     _score_nodes,
+    _compute_idf,
+    _pick_seeds,
     _bfs,
     _dfs,
     _filter_graph_by_context,
@@ -250,3 +252,117 @@ def test_load_graph_cache_key_changes_with_content(tmp_path):
     key2 = (s2.st_mtime_ns, s2.st_size)
 
     assert key1 != key2, "stat key must change when file content changes"
+
+
+# --- IDF weighting tests (#897) ---
+
+def _make_noisy_graph() -> nx.Graph:
+    """20 error-handler nodes + 1 rare identifier: FooBarService."""
+    G = nx.Graph()
+    for i in range(20):
+        G.add_node(f"err{i}", label=f"error_handler_{i}", source_file=f"err{i}.py", community=0)
+        if i > 0:
+            G.add_edge(f"err{i-1}", f"err{i}", relation="calls", confidence="EXTRACTED")
+    G.add_node("fbs", label="FooBarService", source_file="service.py", community=1)
+    G.add_node("fbs_dep", label="ServiceClient", source_file="client.py", community=1)
+    G.add_edge("fbs", "fbs_dep", relation="uses", confidence="EXTRACTED")
+    return G
+
+
+def test_idf_downweights_common_terms():
+    """'error' matches 20 nodes, 'foobarservice' matches 1 — IDF should make
+    FooBarService rank first despite error's higher raw frequency."""
+    G = _make_noisy_graph()
+    scored = _score_nodes(G, ["foobarservice", "error"])
+    assert scored, "should have results"
+    assert scored[0][1] == "fbs", (
+        f"FooBarService should rank first, got {scored[0][1]}"
+    )
+
+
+def test_idf_cached_on_graph():
+    """IDF results are stored in G.graph so repeated queries don't recompute."""
+    G = _make_graph()
+    _score_nodes(G, ["extract"])
+    assert "_idf_cache" in G.graph
+    assert "extract" in G.graph["_idf_cache"]
+
+
+def test_idf_new_graph_starts_fresh():
+    """Two separate graph instances must not share an IDF cache."""
+    G1 = _make_graph()
+    G2 = _make_graph()
+    _score_nodes(G1, ["extract"])
+    assert "_idf_cache" not in G2.graph
+
+
+def test_idf_rare_term_gets_high_weight():
+    """A term matching only 1 of N nodes should get IDF > 1."""
+    import math
+    G = _make_graph()  # 5 nodes
+    idf = _compute_idf(G, ["extract"])
+    # extract matches only n1: IDF = log(1 + 5/2) ≈ 1.25
+    assert idf["extract"] > 1.0
+
+
+def test_idf_common_term_gets_low_weight():
+    """A term matching most nodes should get IDF < 1."""
+    import math
+    G = nx.Graph()
+    # 'handle' in every node label
+    for i in range(20):
+        G.add_node(f"n{i}", label=f"handle_{i}", source_file=f"f{i}.py")
+    idf = _compute_idf(G, ["handle"])
+    assert idf["handle"] < 1.0
+
+
+# --- _pick_seeds tests (#897) ---
+
+def test_pick_seeds_dominant_identifier_gives_one_seed():
+    """FooBarService at 1000 vs error nodes at 1.0 → only 1 seed chosen."""
+    scored = [(1000.0, "fbs"), (1.0, "err1"), (0.9, "err2")]
+    seeds = _pick_seeds(scored)
+    assert seeds == ["fbs"]
+
+
+def test_pick_seeds_close_scores_keeps_multiple():
+    """When all scores are within 20% of the top, keep up to 3 seeds."""
+    scored = [(10.0, "a"), (9.0, "b"), (8.5, "c")]
+    seeds = _pick_seeds(scored)
+    assert len(seeds) == 3
+
+
+def test_pick_seeds_empty():
+    assert _pick_seeds([]) == []
+
+
+def test_pick_seeds_single():
+    assert _pick_seeds([(5.0, "x")]) == ["x"]
+
+
+def test_pick_seeds_respects_max_k():
+    """Never return more than max_k seeds even when all scores are close."""
+    scored = [(10.0, f"n{i}") for i in range(10)]
+    seeds = _pick_seeds(scored, max_k=3)
+    assert len(seeds) == 3
+
+
+# --- actionable truncation hint (#897) ---
+
+def test_subgraph_to_text_truncation_hint_is_actionable():
+    """Truncation message must tell Claude what to do, not just say truncated."""
+    G = _make_graph()
+    text = _subgraph_to_text(G, {"n1", "n2", "n3", "n4"}, [("n1", "n2")], token_budget=1)
+    assert "truncated" in text
+    assert "get_node" in text or "context_filter" in text
+
+
+# --- integration: identifier + noise query seeds from identifier (#897) ---
+
+def test_query_seeds_from_identifier_not_noise():
+    """'FooBarService error handling' should expand from FooBarService,
+    not from error-handler nodes, so ServiceClient appears in results."""
+    G = _make_noisy_graph()
+    text = _query_graph_text(G, "FooBarService error handling", mode="bfs", depth=2)
+    assert "FooBarService" in text
+    assert "ServiceClient" in text
