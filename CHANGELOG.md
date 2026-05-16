@@ -2,6 +2,16 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.7 (2026-05-16)
+
+- Fix: query seed selection now uses IDF weighting — common terms like `error` or `handle` that match dozens of nodes are down-weighted so a rare identifier like `FooBarService` ranks first and BFS expands from the right node (#897)
+- Fix: seed count is now dynamic — a dominant match (score gap >80% vs next candidate) gets one seed rather than always picking three, preventing noise nodes from consuming BFS slots alongside the target (#897)
+- Fix: truncation message in `query_graph` now tells Claude what to do (call `get_node` or add a `context_filter`) rather than just saying "truncated" (#897)
+- Fix: C++ class data members (`int x;`, `static const int MAX = 100;`) now extracted as nodes with `defines` edges from the parent class — previously the field_declaration branch was a no-op due to a wrong child type guard (#898)
+- Fix: dedup Pass 1 now partitions same-label groups by source_file before merging — nodes with generic labels (`handle`, `init`, `run`) from different files no longer collapse into artificial god nodes; cross-file matches are routed to Pass 2 fuzzy (#895)
+- Fix: C/C++ `#include "path/to/file.h"` edges now resolve the include path relative to the including file and use the full resolved path as the target node ID, matching what extraction creates for the included file — previously all include edges dangled with a basename-only ID (#899)
+- Fix: `exact_merges` counter in dedup now reports only merges actually performed rather than counting all same-label nodes across files (#895)
+
 ## 0.8.6 (2026-05-16)
 
 - Fix: cross-language INFERRED `calls`/`uses` edges (e.g. Python → TypeScript) are suppressed in Surprising Connections — label-matching across language boundaries in monorepos is resolver pollution, not structural insight; all structural bonuses zeroed for these edges
