@@ -2,6 +2,15 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.6 (2026-05-16)
+
+- Fix: cross-language INFERRED `calls`/`uses` edges (e.g. Python → TypeScript) are suppressed in Surprising Connections — label-matching across language boundaries in monorepos is resolver pollution, not structural insight; all structural bonuses zeroed for these edges
+- Fix: code-to-doc INFERRED `calls`/`uses` edges suppressed in Surprising Connections — the LLM seeing a symbol name in a README and emitting a `calls` edge is documentation cross-reference noise, not a real architectural connection (#890)
+- Fix: generic JSON key nodes (`name`, `id`, `type`, `start`, `end`, `key`, `value`, `data`, `items`, `title`, `description`, `version`, `properties`) filtered from god_nodes — their degree is positional (every sibling record in the same JSON file references them), not architectural (#890)
+- Fix: Alembic migrations, Django migrations, and protobuf-generated files now have their module-level docstrings suppressed from rationale extraction — these are boilerplate headers, not design intent; function docstrings inside migration files are still captured
+- Feat: `--follow-symlinks` is now auto-detected — if symlinked children are present in the target directory, follow-symlinks is enabled automatically without requiring an explicit flag (#887)
+- Fix: install guidance now directs users to run `/graphify query` interactively rather than reading `GRAPH_REPORT.md` first; the report is a summary, not a starting point (#891)
+
 ## 0.8.5 (2026-05-15)
 
 - Fix: `.graphifyignore` parent-exclusion rule now correctly blocks files under an excluded directory even when a `!` negation exists elsewhere in the file — previously any negation pattern disabled directory pruning entirely (#882)
