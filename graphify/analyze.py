@@ -65,6 +65,20 @@ def _is_file_node(G: nx.Graph, node_id: str) -> bool:
     return False
 
 
+_JSON_NOISE_LABELS: frozenset[str] = frozenset({
+    "start", "end", "name", "id", "type", "properties",
+    "value", "key", "data", "items", "title", "description", "version",
+})
+
+
+def _is_json_key_node(G: nx.Graph, node_id: str) -> bool:
+    src = G.nodes[node_id].get("source_file", "")
+    if not src.endswith(".json"):
+        return False
+    label = G.nodes[node_id].get("label", "").lower().strip()
+    return label in _JSON_NOISE_LABELS
+
+
 def god_nodes(G: nx.Graph, top_n: int = 10) -> list[dict]:
     """Return the top_n most-connected real entities - the core abstractions.
 
@@ -75,7 +89,7 @@ def god_nodes(G: nx.Graph, top_n: int = 10) -> list[dict]:
     sorted_nodes = sorted(degree.items(), key=lambda x: x[1], reverse=True)
     result = []
     for node_id, deg in sorted_nodes:
-        if _is_file_node(G, node_id) or _is_concept_node(G, node_id):
+        if _is_file_node(G, node_id) or _is_concept_node(G, node_id) or _is_json_key_node(G, node_id):
             continue
         result.append({
             "id": node_id,
@@ -175,17 +189,19 @@ def _surprise_score(
     relation = data.get("relation", "")
     conf_bonus = {"AMBIGUOUS": 3, "INFERRED": 2, "EXTRACTED": 1}.get(conf, 1)
 
-    # Cross-language INFERRED calls/uses edges are resolver pollution in monorepos:
-    # the call and import resolvers match by label across language boundaries, so
-    # a Python `AuthError` resolves to a TypeScript `Member` purely by name.
-    # Zero all structural bonuses for these — they would otherwise score 4-5 from
-    # cross-dir + cross-community and dominate "Surprising Connections".
-    # Excludes `semantically_similar_to` (LLM-emitted, explicitly cross-language
-    # insight) and all AMBIGUOUS/EXTRACTED edges (not from the resolver path).
+    cat_u = _file_category(u_source)
+    cat_v = _file_category(v_source)
+
+    # Suppress all structural bonuses for INFERRED calls/uses that cross language
+    # boundaries or connect code to a doc file.  Both cases are resolver pollution:
+    # label-matching fires across language families in monorepos, and code→doc
+    # "calls" edges are extraction artefacts, not real architecture.
+    # Excludes `semantically_similar_to` (genuine cross-boundary insight) and all
+    # AMBIGUOUS/EXTRACTED edges (not from the resolver path).
     _suppress_structural = (
         conf == "INFERRED"
         and relation in ("calls", "uses")
-        and _cross_language(u_source, v_source)
+        and (_cross_language(u_source, v_source) or {cat_u, cat_v} == {"code", "doc"})
     )
     if _suppress_structural:
         conf_bonus = 0
@@ -195,9 +211,7 @@ def _surprise_score(
         reasons.append(f"{conf.lower()} connection - not explicitly stated in source")
 
     # 2. Cross file-type bonus - code↔paper or code↔image is non-obvious
-    cat_u = _file_category(u_source)
-    cat_v = _file_category(v_source)
-    if cat_u != cat_v:
+    if cat_u != cat_v and not _suppress_structural:
         score += 2
         reasons.append(f"crosses file types ({cat_u} ↔ {cat_v})")
 

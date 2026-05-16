@@ -4,7 +4,7 @@ import networkx as nx
 from pathlib import Path
 from graphify.build import build_from_json
 from graphify.cluster import cluster
-from graphify.analyze import god_nodes, surprising_connections, _is_concept_node, graph_diff, _surprise_score, _file_category
+from graphify.analyze import god_nodes, surprising_connections, _is_concept_node, graph_diff, _surprise_score, _file_category, _is_json_key_node
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -322,3 +322,120 @@ def test_graph_diff_empty_diff():
     assert diff["new_edges"] == []
     assert diff["removed_edges"] == []
     assert diff["summary"] == "no changes"
+
+
+# --- code↔doc INFERRED suppression tests ---
+
+def _make_code_doc_graph():
+    G = nx.Graph()
+    G.add_node("py_fn", label="ProcessData", source_file="src/processor.py", file_type="code")
+    G.add_node("md_doc", label="README Section", source_file="docs/readme.md", file_type="document")
+    G.add_node("py_a", label="ServiceA", source_file="src/service.py", file_type="code")
+    G.add_node("py_b", label="ServiceB", source_file="src/utils.py", file_type="code")
+    return G
+
+
+def test_code_doc_inferred_calls_suppressed():
+    """Code→doc INFERRED calls edge should score lower than same-language EXTRACTED."""
+    G = _make_code_doc_graph()
+    G.add_edge("py_fn", "md_doc", relation="calls", confidence="INFERRED",
+               weight=0.8, source_file="src/processor.py")
+    G.add_edge("py_a", "py_b", relation="calls", confidence="EXTRACTED",
+               weight=1.0, source_file="src/service.py")
+    nc = {"py_fn": 0, "md_doc": 1, "py_a": 0, "py_b": 0}
+    score_noise, _ = _surprise_score(G, "py_fn", "md_doc",
+                                     G.edges["py_fn", "md_doc"], nc,
+                                     "src/processor.py", "docs/readme.md")
+    score_real, _ = _surprise_score(G, "py_a", "py_b",
+                                    G.edges["py_a", "py_b"], nc,
+                                    "src/service.py", "src/utils.py")
+    assert score_noise <= score_real
+
+
+def test_code_doc_inferred_uses_suppressed():
+    """Code→doc INFERRED uses edge should score lower than same-language EXTRACTED."""
+    G = _make_code_doc_graph()
+    G.add_edge("py_fn", "md_doc", relation="uses", confidence="INFERRED",
+               weight=0.8, source_file="src/processor.py")
+    G.add_edge("py_a", "py_b", relation="calls", confidence="EXTRACTED",
+               weight=1.0, source_file="src/service.py")
+    nc = {"py_fn": 0, "md_doc": 1, "py_a": 0, "py_b": 0}
+    score_noise, _ = _surprise_score(G, "py_fn", "md_doc",
+                                     G.edges["py_fn", "md_doc"], nc,
+                                     "src/processor.py", "docs/readme.md")
+    score_real, _ = _surprise_score(G, "py_a", "py_b",
+                                    G.edges["py_a", "py_b"], nc,
+                                    "src/service.py", "src/utils.py")
+    assert score_noise <= score_real
+
+
+def test_code_doc_extracted_calls_not_suppressed():
+    """EXTRACTED code↔doc edges are real facts — must not be penalised."""
+    G = _make_code_doc_graph()
+    G.add_edge("py_fn", "md_doc", relation="calls", confidence="EXTRACTED",
+               weight=1.0, source_file="src/processor.py")
+    nc = {"py_fn": 0, "md_doc": 1}
+    score, _ = _surprise_score(G, "py_fn", "md_doc",
+                               G.edges["py_fn", "md_doc"], nc,
+                               "src/processor.py", "docs/readme.md")
+    assert score >= 1
+
+
+def test_code_paper_inferred_calls_not_suppressed():
+    """Code↔paper INFERRED calls should still surface — it is a meaningful link."""
+    G = nx.Graph()
+    G.add_node("py_model", label="Transformer", source_file="src/model.py", file_type="code")
+    G.add_node("pdf_paper", label="Attention Is All You Need", source_file="papers/vaswani.pdf",
+               file_type="paper")
+    G.add_node("py_a", label="ServiceA", source_file="src/service.py", file_type="code")
+    G.add_node("py_b", label="ServiceB", source_file="src/utils.py", file_type="code")
+    G.add_edge("py_model", "pdf_paper", relation="calls", confidence="INFERRED",
+               weight=0.8, source_file="src/model.py")
+    G.add_edge("py_a", "py_b", relation="calls", confidence="EXTRACTED",
+               weight=1.0, source_file="src/service.py")
+    nc = {"py_model": 0, "pdf_paper": 1, "py_a": 0, "py_b": 1}
+    score_cross, _ = _surprise_score(G, "py_model", "pdf_paper",
+                                     G.edges["py_model", "pdf_paper"], nc,
+                                     "src/model.py", "papers/vaswani.pdf")
+    score_same, _ = _surprise_score(G, "py_a", "py_b",
+                                    G.edges["py_a", "py_b"], nc,
+                                    "src/service.py", "src/utils.py")
+    assert score_cross > score_same
+
+
+# --- JSON key node filtering tests ---
+
+def test_is_json_key_node_noise_label():
+    G = nx.Graph()
+    G.add_node("j1", label="name", source_file="schema.json")
+    assert _is_json_key_node(G, "j1") is True
+
+
+def test_is_json_key_node_non_json_file():
+    G = nx.Graph()
+    G.add_node("n1", label="name", source_file="model.py")
+    assert _is_json_key_node(G, "n1") is False
+
+
+def test_is_json_key_node_real_label():
+    G = nx.Graph()
+    G.add_node("j2", label="UserProfile", source_file="schema.json")
+    assert _is_json_key_node(G, "j2") is False
+
+
+def test_god_nodes_excludes_json_noise():
+    """god_nodes must not return generic JSON key nodes like 'name' or 'id'."""
+    G = nx.Graph()
+    # Add many edges to a real node
+    G.add_node("real", label="AuthService", source_file="src/auth.py")
+    # Add a noisy JSON key node with high degree
+    G.add_node("json_name", label="name", source_file="schema.json")
+    for i in range(8):
+        n = f"peer{i}"
+        G.add_node(n, label=f"Peer{i}", source_file=f"src/peer{i}.py")
+        G.add_edge("json_name", n)
+        G.add_edge("real", n)
+    result = god_nodes(G, top_n=10)
+    labels = [r["label"] for r in result]
+    assert "name" not in labels
+    assert "AuthService" in labels
