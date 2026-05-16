@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.8 (2026-05-16)
+
+- Feat: `graphify prs` — graph-aware PR dashboard: CI state, review decision, worktree mapping, and graph blast radius per PR; `--triage` ranks your queue via any configured LLM backend (claude, kimi, openai, gemini, claude-cli, ollama — auto-detected); `--conflicts` shows PRs sharing graph communities with node labels; `--worktrees` maps worktree paths to branches to open PRs; MCP tools `list_prs`, `get_pr_impact`, `triage_prs` for agent access
+
 ## 0.8.7 (2026-05-16)
 
 - Fix: query seed selection now uses IDF weighting — common terms like `error` or `handle` that match dozens of nodes are down-weighted so a rare identifier like `FooBarService` ranks first and BFS expands from the right node (#897)

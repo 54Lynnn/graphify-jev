@@ -240,6 +240,11 @@ graphify export callflow-html      # Mermaid architecture/call-flow HTML (auto-r
 
 graphify hook install              # auto-rebuild on git commit
 graphify merge-graphs a.json b.json              # combine two graphs
+
+graphify prs                       # PR dashboard: CI state, review status, worktree mapping
+graphify prs 42                    # deep dive on PR #42 with graph impact
+graphify prs --triage              # AI ranks your review queue (uses whatever backend is configured)
+graphify prs --conflicts           # PRs sharing graph communities — merge-order risk
 ```
 
 See the [full command reference](#full-command-reference) below.
@@ -297,7 +302,7 @@ python -m graphify.serve graphify-out/graph.json
 kimi mcp add --transport stdio graphify -- python -m graphify.serve graphify-out/graph.json
 ```
 
-The MCP server gives your assistant structured access: `query_graph`, `get_node`, `get_neighbors`, `shortest_path`.
+The MCP server gives your assistant structured access: `query_graph`, `get_node`, `get_neighbors`, `shortest_path`, `list_prs`, `get_pr_impact`, `triage_prs`.
 
 > **WSL / Linux note:** Ubuntu ships `python3`, not `python`. Use a venv to avoid conflicts:
 > ```bash
@@ -326,6 +331,8 @@ These are only needed for **headless / CI extraction** (`graphify extract`). Whe
 | `GRAPHIFY_API_TIMEOUT` | HTTP timeout in seconds (default: 600) | optional — also `--api-timeout` flag |
 | `GRAPHIFY_FORCE` | Force graph rebuild even with fewer nodes | optional — also `--force` flag |
 | `GRAPHIFY_GOOGLE_WORKSPACE` | Auto-enable Google Workspace export | optional — set to `1` |
+| `GRAPHIFY_TRIAGE_BACKEND` | Backend for `graphify prs --triage` | optional — auto-detected from available keys |
+| `GRAPHIFY_TRIAGE_MODEL` | Model override for triage | optional — e.g. `claude-opus-4-7` |
 
 ---
 
@@ -470,6 +477,15 @@ graphify global add graphify-out/graph.json myrepo   # register a project graph 
 graphify global remove myrepo                         # remove a project from the global graph
 graphify global list                                  # show all registered repos + node/edge counts
 graphify global path                                  # print path to the global graph file
+
+graphify prs                              # PR dashboard: CI, review, worktree, graph impact
+graphify prs 42                           # deep dive on PR #42
+graphify prs --triage                     # AI triage ranking (auto-detects backend from env)
+graphify prs --worktrees                  # worktree → branch → PR mapping
+graphify prs --conflicts                  # PRs sharing graph communities (merge-order risk)
+graphify prs --base main                  # filter to PRs targeting a specific base branch
+graphify prs --repo owner/repo            # run against a different GitHub repo
+GRAPHIFY_TRIAGE_BACKEND=kimi graphify prs --triage   # use a specific backend for triage
 
 graphify clone https://github.com/karpathy/nanoGPT
 graphify merge-graphs a.json b.json --out merged.json
