@@ -62,7 +62,7 @@ _SETTINGS_HOOK = {
                 "case \"$CMD\" in "
                 r"*grep*|*rg\ *|*ripgrep*|*find\ *|*fd\ *|*ack\ *|*ag\ *) "
                 "  [ -f graphify-out/graph.json ] && "
-                r"""  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files."}}' """
+                r"""  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"graphify: knowledge graph at graphify-out/. For focused questions, run `graphify query \"<question>\"` (scoped subgraph, usually much smaller than GRAPH_REPORT.md) instead of grepping raw files. Read GRAPH_REPORT.md only for broad architecture context."}}' """
                 "  || true ;; "
                 "esac"
             ),
@@ -163,6 +163,51 @@ _PLATFORM_CONFIG: dict[str, dict] = {
 }
 
 
+def _replace_or_append_section(content: str, marker: str, new_section: str) -> str:
+    """Idempotently update or append a graphify-owned section in shared files.
+
+    If ``marker`` is not in ``content``, append ``new_section`` to the end
+    (with a blank-line separator if there's existing content).
+
+    If ``marker`` IS in ``content``, replace the existing section in place.
+    The section runs from the first line containing ``marker`` to the line
+    before the next H2 heading (``## `` at line start), or to EOF if no later
+    H2 exists. This lets older installs receive the updated copy without
+    users having to uninstall and reinstall — important for the issue #580
+    fix where existing report-first text would otherwise silently linger.
+    """
+    if marker not in content:
+        if content.strip():
+            return content.rstrip() + "\n\n" + new_section.lstrip()
+        return new_section.lstrip()
+
+    lines = content.split("\n")
+    start = next((i for i, line in enumerate(lines) if marker in line), None)
+    if start is None:
+        return content.rstrip() + "\n\n" + new_section.lstrip()
+
+    end = len(lines)
+    for j in range(start + 1, len(lines)):
+        if lines[j].startswith("## "):
+            end = j
+            break
+
+    head = "\n".join(lines[:start]).rstrip()
+    tail = "\n".join(lines[end:]).lstrip()
+    section = new_section.strip()
+
+    parts: list[str] = []
+    if head:
+        parts.append(head)
+    parts.append(section)
+    if tail:
+        parts.append(tail)
+    out = "\n\n".join(parts)
+    if not out.endswith("\n"):
+        out += "\n"
+    return out
+
+
 def install(platform: str = "claude") -> None:
     if platform == "gemini":
         gemini_install()
@@ -247,9 +292,9 @@ _CLAUDE_MD_SECTION = """\
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
 
 Rules:
-- ALWAYS read graphify-out/GRAPH_REPORT.md before reading any source files, running grep/glob searches, or answering codebase questions. The graph is your primary map of the codebase.
-- IF graphify-out/wiki/index.md EXISTS, navigate it instead of reading raw files
-- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 """
 
@@ -265,9 +310,9 @@ This project has a knowledge graph at graphify-out/ with god nodes, community st
 When the user types `/graphify`, invoke the `skill` tool with `skill: "graphify"` before doing anything else.
 
 Rules:
-- ALWAYS read graphify-out/GRAPH_REPORT.md before reading any source files, running grep/glob searches, or answering codebase questions. The graph is your primary map of the codebase.
-- IF graphify-out/wiki/index.md EXISTS, navigate it instead of reading raw files
-- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 """
 
@@ -279,9 +324,9 @@ _GEMINI_MD_SECTION = """\
 This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
 
 Rules:
-- ALWAYS read graphify-out/GRAPH_REPORT.md before reading any source files, running grep/glob searches, or answering codebase questions. The graph is your primary map of the codebase.
-- IF graphify-out/wiki/index.md EXISTS, navigate it instead of reading raw files
-- For cross-module "how does X relate to Y" questions, prefer `graphify query "<question>"`, `graphify path "<A>" "<B>"`, or `graphify explain "<concept>"` over grep — these traverse the graph's EXTRACTED + INFERRED edges instead of scanning files
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
 - After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
 """
 
@@ -297,7 +342,7 @@ _GEMINI_HOOK = {
                 "import sys,pathlib,json;"
                 "e=pathlib.Path('graphify-out/graph.json').exists();"
                 "d={'decision':'allow'};"
-                "e and d.update({'additionalContext':'graphify: Knowledge graph exists. Read graphify-out/GRAPH_REPORT.md for god nodes and community structure before searching raw files.'});"
+                "e and d.update({'additionalContext':'graphify: knowledge graph at graphify-out/. For focused questions, run `graphify query \"<question>\"` (scoped subgraph, usually much smaller than GRAPH_REPORT.md) instead of grepping raw files. Read GRAPH_REPORT.md only for broad architecture context.'});"
                 "sys.stdout.write(json.dumps(d))"
                 '"'
             ),
@@ -324,15 +369,20 @@ def gemini_install(project_dir: Path | None = None) -> None:
 
     if target.exists():
         content = target.read_text(encoding="utf-8")
-        if _GEMINI_MD_MARKER in content:
-            print("graphify already configured in GEMINI.md")
-        else:
-            target.write_text(content.rstrip() + "\n\n" + _GEMINI_MD_SECTION, encoding="utf-8")
-            print(f"graphify section written to {target.resolve()}")
+        new_content = _replace_or_append_section(
+            content, _GEMINI_MD_MARKER, _GEMINI_MD_SECTION
+        )
     else:
-        target.write_text(_GEMINI_MD_SECTION, encoding="utf-8")
+        new_content = _GEMINI_MD_SECTION
+
+    if target.exists() and new_content == target.read_text(encoding="utf-8"):
+        print(f"graphify already configured in {target.resolve()} (no change)")
+    else:
+        target.write_text(new_content, encoding="utf-8")
         print(f"graphify section written to {target.resolve()}")
 
+    # Always re-install the Gemini hook so an older payload (e.g. pre-issue-#580
+    # wording) is replaced on upgrade.
     _install_gemini_hook(project_dir or Path("."))
     print()
     print("Gemini CLI will now check the knowledge graph before answering")
@@ -412,14 +462,18 @@ _VSCODE_INSTRUCTIONS_SECTION = """\
 ## graphify
 
 For any question about this repo's architecture, structure, components, or how to add/modify/find
-code, your **first tool call must be** to read `graphify-out/GRAPH_REPORT.md` (if it exists).
+code, your first action should be `graphify query "<question>"` when `graphify-out/graph.json`
+exists. Use `graphify path "<A>" "<B>"` for relationship questions and `graphify explain "<concept>"`
+for focused-concept questions. These return a scoped subgraph, usually much smaller than the full
+report or raw grep output.
 
 Triggers: "how do I…", "where is…", "what does … do", "add/modify a <component>",
 "explain the architecture", or anything that depends on how files or classes relate.
 
-After reading the report (and `graphify-out/wiki/index.md` for deep questions), answer from the
-graph. Only read source files when (a) modifying/debugging specific code, (b) the graph lacks
-the needed detail, or (c) the graph is missing or stale.
+If `graphify-out/wiki/index.md` exists, use it for broad navigation. Read `graphify-out/GRAPH_REPORT.md`
+only for broad architecture review or when query/path/explain do not surface enough context. Only read
+source files when (a) modifying/debugging specific code, (b) the graph lacks the needed detail, or
+(c) the graph is missing or stale.
 
 Type `/graphify` in Copilot Chat to build or update the graph.
 """
@@ -440,11 +494,14 @@ def vscode_install(project_dir: Path | None = None) -> None:
     instructions.parent.mkdir(parents=True, exist_ok=True)
     if instructions.exists():
         content = instructions.read_text(encoding="utf-8")
-        if _VSCODE_INSTRUCTIONS_MARKER in content:
+        new_content = _replace_or_append_section(
+            content, _VSCODE_INSTRUCTIONS_MARKER, _VSCODE_INSTRUCTIONS_SECTION
+        )
+        if new_content == content:
             print(f"  {instructions}  ->  already configured (no change)")
         else:
-            instructions.write_text(content.rstrip() + "\n\n" + _VSCODE_INSTRUCTIONS_SECTION, encoding="utf-8")
-            print(f"  {instructions}  ->  graphify section added")
+            instructions.write_text(new_content, encoding="utf-8")
+            print(f"  {instructions}  ->  graphify section {'updated' if _VSCODE_INSTRUCTIONS_MARKER in content else 'added'}")
     else:
         instructions.write_text(_VSCODE_INSTRUCTIONS_SECTION, encoding="utf-8")
         print(f"  {instructions}  ->  created")
@@ -490,7 +547,7 @@ _ANTIGRAVITY_WORKFLOW_PATH = Path(".agents") / "workflows" / "graphify.md"
 _ANTIGRAVITY_RULES = """\
 ---
 trigger: always_on
-description: Always consult the graphify knowledge graph at graphify-out/ before answering codebase or architecture questions.
+description: Consult the graphify knowledge graph at graphify-out/ for codebase and architecture questions.
 ---
 
 ## graphify
@@ -498,10 +555,9 @@ description: Always consult the graphify knowledge graph at graphify-out/ before
 This project has a graphify knowledge graph at graphify-out/.
 
 Rules:
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- For codebase or architecture questions, when `graphify-out/graph.json` exists, first run `graphify query "<question>"` (CLI) or `query_graph` (MCP). Use `graphify path "<A>" "<B>"` / `shortest_path` for relationships and `graphify explain "<concept>"` / `get_node` for focused concepts. These return a scoped subgraph, usually much smaller than `GRAPH_REPORT.md` or raw grep output.
 - If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- If the graphify MCP server is active, utilize tools like `query_graph`, `get_node`, and `shortest_path` for precise architecture navigation instead of falling back to `grep`
-- If the MCP server is not active, the CLI equivalents are `graphify query "<question>"`, `graphify path "<A>" "<B>"`, and `graphify explain "<concept>"` - prefer these over grep for cross-module questions
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context
 - After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
 """
 
@@ -525,9 +581,10 @@ inclusion: always
 ---
 
 graphify: A knowledge graph of this project lives in `graphify-out/`. \
-If `graphify-out/GRAPH_REPORT.md` exists, read it before answering architecture questions, \
-tracing dependencies, or searching files — it contains god nodes, community structure, \
-and surprising connections the graph found. Navigate by graph structure instead of grepping raw files.
+For codebase, architecture, or dependency questions, when `graphify-out/graph.json` exists, \
+first run `graphify query "<question>"` (or `graphify path "<A>" "<B>"` / `graphify explain "<concept>"`). \
+These return a scoped subgraph, usually much smaller than `GRAPH_REPORT.md` or raw grep output. \
+Read `GRAPH_REPORT.md` only for broad architecture review or when those commands do not surface enough context.
 """
 
 _KIRO_STEERING_MARKER = "graphify: A knowledge graph of this project"
@@ -548,11 +605,14 @@ def _kiro_install(project_dir: Path) -> None:
     steering_dir = project_dir / ".kiro" / "steering"
     steering_dir.mkdir(parents=True, exist_ok=True)
     steering_dst = steering_dir / "graphify.md"
-    if steering_dst.exists() and _KIRO_STEERING_MARKER in steering_dst.read_text(encoding="utf-8"):
-        print(f"  .kiro/steering/graphify.md  ->  already configured")
+    if steering_dst.exists() and steering_dst.read_text(encoding="utf-8") == _KIRO_STEERING:
+        print(f"  .kiro/steering/graphify.md  ->  already configured (no change)")
     else:
+        # File is wholly graphify-owned. Overwrite on upgrade so older
+        # report-first wording does not silently linger (issue #580).
+        action = "updated" if steering_dst.exists() else "written"
         steering_dst.write_text(_KIRO_STEERING, encoding="utf-8")
-        print(f"  .kiro/steering/graphify.md  ->  always-on steering written")
+        print(f"  .kiro/steering/graphify.md  ->  always-on steering {action}")
 
     print()
     print("Kiro will now read the knowledge graph before every conversation.")
@@ -604,7 +664,7 @@ def _antigravity_install(project_dir: Path) -> None:
             rules_path.write_text(_ANTIGRAVITY_RULES, encoding="utf-8")
             print(f"graphify rule updated at {rules_path.resolve()}")
         else:
-            print(f"graphify rule already up to date at {rules_path.resolve()}")
+            print(f"graphify rule already configured at {rules_path.resolve()} (no change)")
     else:
         rules_path.write_text(_ANTIGRAVITY_RULES, encoding="utf-8")
         print(f"graphify rule written to {rules_path.resolve()}")
@@ -618,7 +678,7 @@ def _antigravity_install(project_dir: Path) -> None:
             wf_path.write_text(_ANTIGRAVITY_WORKFLOW, encoding="utf-8")
             print(f"graphify workflow updated at {wf_path.resolve()}")
         else:
-            print(f"graphify workflow already up to date at {wf_path.resolve()}")
+            print(f"graphify workflow already configured at {wf_path.resolve()} (no change)")
     else:
         wf_path.write_text(_ANTIGRAVITY_WORKFLOW, encoding="utf-8")
         print(f"graphify workflow written to {wf_path.resolve()}")
@@ -674,8 +734,9 @@ alwaysApply: true
 
 This project has a graphify knowledge graph at graphify-out/.
 
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
+- For codebase or architecture questions, when `graphify-out/graph.json` exists, first run `graphify query "<question>"` (or `graphify path "<A>" "<B>"` / `graphify explain "<concept>"`). These return a scoped subgraph, usually much smaller than `GRAPH_REPORT.md` or raw grep output.
 - If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context
 - After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
 """
 
@@ -684,11 +745,14 @@ def _cursor_install(project_dir: Path) -> None:
     """Write .cursor/rules/graphify.mdc with alwaysApply: true."""
     rule_path = (project_dir or Path(".")) / _CURSOR_RULE_PATH
     rule_path.parent.mkdir(parents=True, exist_ok=True)
-    if rule_path.exists():
-        print(f"graphify rule already exists at {rule_path} (no change)")
+    if rule_path.exists() and rule_path.read_text(encoding="utf-8") == _CURSOR_RULE:
+        print(f"graphify rule at {rule_path} already configured (no change)")
         return
+    # File is wholly graphify-owned. Overwrite on upgrade so older
+    # report-first wording does not silently linger (issue #580).
+    action = "updated" if rule_path.exists() else "written"
     rule_path.write_text(_CURSOR_RULE, encoding="utf-8")
-    print(f"graphify rule written to {rule_path.resolve()}")
+    print(f"graphify rule {action} at {rule_path.resolve()}")
     print()
     print("Cursor will now always include the knowledge graph context.")
     print("Run /graphify . first to build the graph if you haven't already.")
@@ -722,7 +786,7 @@ export const GraphifyPlugin = async ({ directory }) => {
 
       if (input.tool === "bash") {
         output.args.command =
-          'echo "[graphify] Knowledge graph available. Read graphify-out/GRAPH_REPORT.md for god nodes and architecture context before searching files." && ' +
+          'echo "[graphify] knowledge graph at graphify-out/. For focused questions, run \\`graphify query \\"<question>\\"\\` (scoped subgraph, usually much smaller than GRAPH_REPORT.md) instead of grepping raw files. Read GRAPH_REPORT.md only for broad architecture context." && ' +
           output.args.command;
         reminded = true;
       }
@@ -880,13 +944,16 @@ def _agents_install(project_dir: Path, platform: str) -> None:
 
     if target.exists():
         content = target.read_text(encoding="utf-8")
-        if _AGENTS_MD_MARKER in content:
-            print(f"graphify already configured in AGENTS.md")
-        else:
-            target.write_text(content.rstrip() + "\n\n" + _AGENTS_MD_SECTION, encoding="utf-8")
-            print(f"graphify section written to {target.resolve()}")
+        new_content = _replace_or_append_section(
+            content, _AGENTS_MD_MARKER, _AGENTS_MD_SECTION
+        )
     else:
-        target.write_text(_AGENTS_MD_SECTION, encoding="utf-8")
+        new_content = _AGENTS_MD_SECTION
+
+    if target.exists() and new_content == target.read_text(encoding="utf-8"):
+        print(f"graphify already configured in {target.resolve()} (no change)")
+    else:
+        target.write_text(new_content, encoding="utf-8")
         print(f"graphify section written to {target.resolve()}")
 
     if platform == "codex":
@@ -939,17 +1006,20 @@ def claude_install(project_dir: Path | None = None) -> None:
 
     if target.exists():
         content = target.read_text(encoding="utf-8")
-        if _CLAUDE_MD_MARKER in content:
-            print("graphify already configured in CLAUDE.md")
-            return
-        new_content = content.rstrip() + "\n\n" + _CLAUDE_MD_SECTION
+        new_content = _replace_or_append_section(
+            content, _CLAUDE_MD_MARKER, _CLAUDE_MD_SECTION
+        )
     else:
         new_content = _CLAUDE_MD_SECTION
 
-    target.write_text(new_content, encoding="utf-8")
-    print(f"graphify section written to {target.resolve()}")
+    if target.exists() and new_content == target.read_text(encoding="utf-8"):
+        print(f"graphify already configured in {target.resolve()} (no change)")
+    else:
+        target.write_text(new_content, encoding="utf-8")
+        print(f"graphify section written to {target.resolve()}")
 
-    # Also write Claude Code PreToolUse hook to .claude/settings.json
+    # Always re-install the Claude Code PreToolUse hook so an old hook
+    # payload (e.g. pre-issue-#580 wording) is replaced on upgrade.
     _install_claude_hook(project_dir or Path("."))
 
     print()
