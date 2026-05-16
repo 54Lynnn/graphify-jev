@@ -80,6 +80,14 @@ include-package-data = false
 [tool.setuptools.package-data]
 graphify = ["skill.md", "skill-codex.md", "skill-opencode.md", "skill-aider.md", "skill-copilot.md", "skill-claw.md", "skill-windows.md", "skill-droid.md", "skill-trae.md", "skill-kiro.md", "skill-vscode.md", "skill-pi.md"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+norecursedirs = [
+    "graphify-benchmark", "graphify_eval", "graphify_test",
+    "worked", "llm-stack-corpus", "llm-stack-demo", "product-site",
+    "scripts", "ebook", ".github", "dist", "build",
+]
+
 [tool.bandit]
 skips = ["B404"]
 
