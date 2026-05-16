@@ -72,10 +72,11 @@ _JSON_NOISE_LABELS: frozenset[str] = frozenset({
 
 
 def _is_json_key_node(G: nx.Graph, node_id: str) -> bool:
-    src = G.nodes[node_id].get("source_file", "")
+    attrs = G.nodes[node_id]
+    src = (attrs.get("source_file") or "").lower()
     if not src.endswith(".json"):
         return False
-    label = G.nodes[node_id].get("label", "").lower().strip()
+    label = (attrs.get("label") or "").strip().lower()
     return label in _JSON_NOISE_LABELS
 
 

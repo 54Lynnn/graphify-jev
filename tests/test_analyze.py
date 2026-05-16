@@ -381,6 +381,46 @@ def test_code_doc_extracted_calls_not_suppressed():
     assert score >= 1
 
 
+def test_code_doc_inferred_semantically_similar_not_suppressed():
+    """`semantically_similar_to` across code↔doc is explicit LLM insight — must not be suppressed."""
+    G = _make_code_doc_graph()
+    G.add_edge("py_fn", "md_doc", relation="semantically_similar_to",
+               confidence="INFERRED", weight=0.85, source_file="src/processor.py")
+    G.add_edge("py_a", "py_b", relation="calls", confidence="EXTRACTED",
+               weight=1.0, source_file="src/service.py")
+    nc = {"py_fn": 0, "md_doc": 1, "py_a": 0, "py_b": 0}
+    score_sem, _ = _surprise_score(G, "py_fn", "md_doc",
+                                   G.edges["py_fn", "md_doc"], nc,
+                                   "src/processor.py", "docs/readme.md")
+    score_same, _ = _surprise_score(G, "py_a", "py_b",
+                                    G.edges["py_a", "py_b"], nc,
+                                    "src/service.py", "src/utils.py")
+    assert score_sem > score_same
+
+
+def test_code_unknown_extension_inferred_calls_suppressed():
+    """_file_category falls back to 'doc' for unknown extensions, so INFERRED
+    calls/uses to unknown-extension files are suppressed the same as code↔doc."""
+    assert _file_category("vendor/random.xyz") == "doc"
+    G = nx.Graph()
+    G.add_node("py_fn", label="Handler", source_file="src/handler.py", file_type="code")
+    G.add_node("unk", label="Handler", source_file="vendor/unknown.xyz", file_type="document")
+    G.add_node("py_a", label="A", source_file="src/a.py", file_type="code")
+    G.add_node("py_b", label="B", source_file="src/b.py", file_type="code")
+    G.add_edge("py_fn", "unk", relation="calls", confidence="INFERRED",
+               weight=0.8, source_file="src/handler.py")
+    G.add_edge("py_a", "py_b", relation="calls", confidence="EXTRACTED",
+               weight=1.0, source_file="src/a.py")
+    nc = {"py_fn": 0, "unk": 1, "py_a": 0, "py_b": 0}
+    score_unk, _ = _surprise_score(G, "py_fn", "unk",
+                                   G.edges["py_fn", "unk"], nc,
+                                   "src/handler.py", "vendor/unknown.xyz")
+    score_same, _ = _surprise_score(G, "py_a", "py_b",
+                                    G.edges["py_a", "py_b"], nc,
+                                    "src/a.py", "src/b.py")
+    assert score_unk <= score_same
+
+
 def test_code_paper_inferred_calls_not_suppressed():
     """Code↔paper INFERRED calls should still surface — it is a meaningful link."""
     G = nx.Graph()
@@ -439,3 +479,23 @@ def test_god_nodes_excludes_json_noise():
     labels = [r["label"] for r in result]
     assert "name" not in labels
     assert "AuthService" in labels
+
+
+def test_god_nodes_filter_is_case_insensitive():
+    """JSON-key filter must match regardless of label casing."""
+    G = nx.Graph()
+    G.add_node("real", label="RealAbstraction", source_file="libs/real.py")
+    for i in range(3):
+        G.add_node(f"peer{i}", label=f"P{i}", source_file=f"src/p{i}.py")
+        G.add_edge("real", f"peer{i}")
+    for variant in ("Start", "START", "Name", "ID"):
+        nid = f"json_{variant.lower()}"
+        G.add_node(nid, label=variant, source_file="testhelpers/data.json")
+        for i in range(15):
+            t = f"{nid}_t{i}"
+            G.add_node(t, label=f"X{i}", source_file="testhelpers/data.json")
+            G.add_edge(t, nid)
+    result = god_nodes(G, top_n=10)
+    labels = [r["label"] for r in result]
+    for variant in ("Start", "START", "Name", "ID"):
+        assert variant not in labels, f"`{variant}` should be filtered as JSON-key noise"
