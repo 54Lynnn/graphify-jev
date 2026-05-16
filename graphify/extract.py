@@ -537,10 +537,41 @@ def _import_java(node, source: bytes, file_nid: str, stem: str, edges: list, str
             break
 
 
+def _resolve_c_include_path(raw: str, str_path: str) -> "Path | None":
+    """Resolve a quoted #include path to a real file on disk.
+
+    Searches relative to the including file's directory. Returns None for
+    system headers (<...>) or paths that don't exist on disk.
+    """
+    if not raw:
+        return None
+    candidate = (Path(str_path).parent / raw).resolve()
+    if candidate.is_file():
+        return candidate
+    return None
+
+
 def _import_c(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> None:
     for child in node.children:
         if child.type in ("string_literal", "system_lib_string", "string"):
             raw = _read_text(child, source).strip('"<> ')
+            # Quoted includes: try to resolve to a real file so the target ID
+            # matches the node ID _extract_generic creates for that file.
+            if child.type != "system_lib_string":
+                resolved = _resolve_c_include_path(raw, str_path)
+                if resolved is not None:
+                    tgt_nid = _make_id(_file_stem(resolved))
+                    edges.append({
+                        "source": file_nid,
+                        "target": tgt_nid,
+                        "relation": "imports",
+                        "context": "import",
+                        "confidence": "EXTRACTED",
+                        "source_file": str_path,
+                        "source_location": f"L{node.start_point[0] + 1}",
+                        "weight": 1.0,
+                    })
+                    break
             module_name = raw.split("/")[-1].split(".")[0]
             if module_name:
                 tgt_nid = _make_id(module_name)
@@ -671,6 +702,8 @@ def _get_c_func_name(node, source: bytes) -> str | None:
 def _get_cpp_func_name(node, source: bytes) -> str | None:
     """Recursively unwrap declarator to find the innermost identifier (C++)."""
     if node.type == "identifier":
+        return _read_text(node, source)
+    if node.type in ("field_identifier", "destructor_name", "operator_name"):
         return _read_text(node, source)
     if node.type == "qualified_identifier":
         name_node = node.child_by_field_name("name")
@@ -1457,6 +1490,22 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                 line = node.start_point[0] + 1
                 add_edge(parent_class_nid, ensure_named_node(type_name, line),
                          "references", line, context="field")
+            return
+
+        if (config.ts_module == "tree_sitter_cpp"
+                and t == "field_declaration"
+                and parent_class_nid):
+            # Emit a node for each field declarator so methods declared
+            # inside a class body are visible in the graph.
+            for child in node.children:
+                if child.type != "field_declarator":
+                    continue
+                name = _get_cpp_func_name(child, source)
+                if name:
+                    line = child.start_point[0] + 1
+                    field_nid = _make_id(parent_class_nid, name)
+                    ensure_node(field_nid, name, line)
+                    add_edge(parent_class_nid, field_nid, "defines", line, context="field")
             return
 
         # Function types
@@ -6032,7 +6081,7 @@ _DISPATCH: dict[str, Any] = {
     ".groovy": extract_groovy,
     ".gradle": extract_groovy,
     ".c": extract_c,
-    ".h": extract_c,
+    ".h": extract_cpp,
     ".cpp": extract_cpp,
     ".cc": extract_cpp,
     ".cxx": extract_cpp,

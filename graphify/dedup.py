@@ -175,10 +175,19 @@ def deduplicate_entities(
 
     uf = _UF()
     for key, group in norm_to_nodes.items():
-        if len(group) > 1:
-            winner = _pick_winner(group)
-            for node in group:
-                uf.union(winner["id"], node["id"])
+        if len(group) <= 1:
+            continue
+        # Partition by source_file — only merge within the same file in Pass 1.
+        # Cross-file matches fall through to Pass 2 fuzzy matching.
+        by_file: dict[str, list[dict]] = defaultdict(list)
+        for node in group:
+            sf = node.get("source_file") or ""
+            by_file[sf].append(node)
+        for file_group in by_file.values():
+            if len(file_group) > 1:
+                winner = _pick_winner(file_group)
+                for node in file_group:
+                    uf.union(winner["id"], node["id"])
 
     exact_merges = sum(len(g) - 1 for g in norm_to_nodes.values() if len(g) > 1)
 
