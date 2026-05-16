@@ -174,6 +174,7 @@ def deduplicate_entities(
             norm_to_nodes[key].append(node)
 
     uf = _UF()
+    exact_merges = 0
     for key, group in norm_to_nodes.items():
         if len(group) <= 1:
             continue
@@ -188,8 +189,7 @@ def deduplicate_entities(
                 winner = _pick_winner(file_group)
                 for node in file_group:
                     uf.union(winner["id"], node["id"])
-
-    exact_merges = sum(len(g) - 1 for g in norm_to_nodes.values() if len(g) > 1)
+                exact_merges += len(file_group) - 1
 
     # ── pass 2: MinHash/LSH + Jaro-Winkler (high-entropy nodes only) ─────────
     candidates: list[dict] = []

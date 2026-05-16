@@ -560,7 +560,7 @@ def _import_c(node, source: bytes, file_nid: str, stem: str, edges: list, str_pa
             if child.type != "system_lib_string":
                 resolved = _resolve_c_include_path(raw, str_path)
                 if resolved is not None:
-                    tgt_nid = _make_id(_file_stem(resolved))
+                    tgt_nid = _make_id(str(resolved))
                     edges.append({
                         "source": file_nid,
                         "target": tgt_nid,
@@ -1495,16 +1495,17 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
         if (config.ts_module == "tree_sitter_cpp"
                 and t == "field_declaration"
                 and parent_class_nid):
-            # Emit a node for each field declarator so methods declared
-            # inside a class body are visible in the graph.
-            for child in node.children:
-                if child.type != "field_declarator":
-                    continue
-                name = _get_cpp_func_name(child, source)
+            # Emit a node for each data member. Use children_by_field_name so we
+            # only visit declarator children, not the type node (which would give
+            # us the type name, not the field name). Handles int x, y; via
+            # multiple declarator fields and static const int MAX = 100; via the
+            # init_declarator → field_identifier recursion in _get_cpp_func_name.
+            for decl in node.children_by_field_name("declarator"):
+                name = _get_cpp_func_name(decl, source)
                 if name:
-                    line = child.start_point[0] + 1
+                    line = decl.start_point[0] + 1
                     field_nid = _make_id(parent_class_nid, name)
-                    ensure_node(field_nid, name, line)
+                    add_node(field_nid, name, line)
                     add_edge(parent_class_nid, field_nid, "defines", line, context="field")
             return
 
@@ -6081,7 +6082,7 @@ _DISPATCH: dict[str, Any] = {
     ".groovy": extract_groovy,
     ".gradle": extract_groovy,
     ".c": extract_c,
-    ".h": extract_cpp,
+    ".h": extract_c,
     ".cpp": extract_cpp,
     ".cc": extract_cpp,
     ".cxx": extract_cpp,
