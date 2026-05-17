@@ -68,6 +68,8 @@ def _is_file_node(G: nx.Graph, node_id: str) -> bool:
 _JSON_NOISE_LABELS: frozenset[str] = frozenset({
     "start", "end", "name", "id", "type", "properties",
     "value", "key", "data", "items", "title", "description", "version",
+    "dependencies", "devdependencies", "peerdependencies",
+    "optionaldependencies", "bundleddependencies", "bundledependencies",
 })
 
 
