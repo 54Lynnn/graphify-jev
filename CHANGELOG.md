@@ -2,6 +2,16 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.10 (2026-05-17)
+
+- Fix: git hooks phantom directory on git < 2.31 — drop `--path-format=absolute`, validate path contains no newlines, anchor relative paths on repo root (#907)
+- Fix: `save_manifest` incremental data loss — seed from existing manifest before loop so untouched files aren't erased on partial runs (#917)
+- Fix: C++ class/struct inheritance edges missing — extract `base_class_clause` for `class_specifier` and `struct_specifier` (#915)
+- Fix: cohesion split threshold unreachable due to rounding — `cohesion_score` now returns raw float, display rounds to 2dp (#919)
+- Fix: Rust cross-crate spurious INFERRED edges — skip `Type::method()` scoped calls and common trait-method names from cross-file resolver (#908)
+- Feat: `--resolution N` for `extract` and `cluster-only` — control Leiden/Louvain community granularity (>1 = more smaller, <1 = fewer larger) (#919)
+- Feat: `--exclude-hubs P` for `extract` and `cluster-only` — exclude degree-percentile super-hubs from partitioning, reattach by majority-vote neighbour community (#919)
+
 ## 0.8.9 (2026-05-17)
 
 - Feat: DeepSeek backend support — set `DEEPSEEK_API_KEY` and use `--backend deepseek`; default model `deepseek-v4-flash`
