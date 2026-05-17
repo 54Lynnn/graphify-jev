@@ -177,6 +177,27 @@ def test_rust_no_dangling_edges():
             assert e["source"] in node_ids
 
 
+def test_rust_no_cross_crate_spurious_edges():
+    """Scoped calls (Type::method) and blocklisted names must not produce
+    INFERRED cross-crate calls edges (#908)."""
+    from graphify.extract import extract
+    crate_a = FIXTURES / "crate_a" / "src" / "lib.rs"
+    crate_b = FIXTURES / "crate_b" / "src" / "lib.rs"
+    r = extract([crate_a, crate_b])
+    node_ids_a = {n["id"] for n in r["nodes"] if "crate_a" in (n.get("source_file") or "")}
+    node_ids_b = {n["id"] for n in r["nodes"] if "crate_b" in (n.get("source_file") or "")}
+    # No calls edge should cross from crate_b into crate_a
+    cross_crate_calls = [
+        e for e in r["edges"]
+        if e["relation"] == "calls"
+        and e["source"] in node_ids_b
+        and e["target"] in node_ids_a
+    ]
+    assert cross_crate_calls == [], (
+        f"Spurious cross-crate edges: {cross_crate_calls}"
+    )
+
+
 # ── extract() dispatch ────────────────────────────────────────────────────────
 
 def test_extract_dispatches_all_languages():

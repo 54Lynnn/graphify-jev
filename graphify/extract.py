@@ -3610,6 +3610,17 @@ def extract_go(path: Path) -> dict:
 
 # ── Rust extractor (custom walk) ──────────────────────────────────────────────
 
+# Common Rust trait/stdlib method names that appear in virtually every codebase.
+# Resolving these cross-file produces spurious INFERRED edges across crate
+# boundaries (issue #908) — skip them from the unresolved-call queue entirely.
+_RUST_TRAIT_METHOD_BLOCKLIST: frozenset[str] = frozenset({
+    "new", "default", "parse", "from_str", "now", "clone", "into", "from",
+    "to_string", "to_owned", "len", "is_empty", "iter", "next", "build",
+    "start", "run", "init", "app", "get", "set", "push", "pop", "insert",
+    "remove", "contains", "collect", "map", "filter", "unwrap", "expect",
+    "ok", "err", "some", "none", "send", "recv", "lock", "read", "write",
+})
+
 def extract_rust(path: Path) -> dict:
     """Extract functions, structs, enums, traits, impl methods, and use declarations from a .rs file."""
     try:
@@ -3740,6 +3751,7 @@ def extract_rust(path: Path) -> dict:
             func_node = node.child_by_field_name("function")
             callee_name: str | None = None
             is_member_call: bool = False
+            is_scoped_call: bool = False
             if func_node:
                 if func_node.type == "identifier":
                     callee_name = _read_text(func_node, source)
@@ -3749,6 +3761,10 @@ def extract_rust(path: Path) -> dict:
                     if field:
                         callee_name = _read_text(field, source)
                 elif func_node.type == "scoped_identifier":
+                    # Type::method() — still allow in-file EXTRACTED match, but
+                    # skip cross-file resolution: bare last-segment lookup ignores
+                    # crate boundaries and produces spurious INFERRED edges (#908).
+                    is_scoped_call = True
                     name = func_node.child_by_field_name("name")
                     if name:
                         callee_name = _read_text(name, source)
@@ -3769,7 +3785,7 @@ def extract_rust(path: Path) -> dict:
                             "source_location": f"L{line}",
                             "weight": 1.0,
                         })
-                else:
+                elif not is_scoped_call and callee_name.lower() not in _RUST_TRAIT_METHOD_BLOCKLIST:
                     raw_calls.append({
                         "caller_nid": caller_nid,
                         "callee": callee_name,
