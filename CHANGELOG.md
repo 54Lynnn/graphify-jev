@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.9 (2026-05-17)
+
+- Feat: DeepSeek backend support — set `DEEPSEEK_API_KEY` and use `--backend deepseek`; default model `deepseek-v4-flash`
+
 ## 0.8.8 (2026-05-16)
 
 - Feat: `graphify prs` — graph-aware PR dashboard: CI state, review decision, worktree mapping, and graph blast radius per PR; `--triage` ranks your queue via any configured LLM backend (claude, kimi, openai, gemini, claude-cli, ollama — auto-detected); `--conflicts` shows PRs sharing graph communities with node labels; `--worktrees` maps worktree paths to branches to open PRs; MCP tools `list_prs`, `get_pr_impact`, `triage_prs` for agent access
