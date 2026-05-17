@@ -87,6 +87,17 @@ BACKENDS: dict[str, dict] = {
         "pricing": {"input": 0.40, "output": 1.60},  # USD per 1M tokens
         "temperature": 0,
     },
+    "deepseek": {
+        "base_url": "https://api.deepseek.com",
+        "default_model": "deepseek-v4-flash",
+        "env_key": "DEEPSEEK_API_KEY",
+        "model_env_key": "GRAPHIFY_DEEPSEEK_MODEL",
+        "pricing": {"input": 0.14, "output": 0.28},  # USD per 1M tokens (v4-flash)
+        # deepseek-reasoner / thinking-mode models silently ignore temperature;
+        # deepseek-chat / v4-flash (non-thinking) accept 0-2. Safe to send 0.
+        "temperature": 0,
+        "max_tokens": 16384,
+    },
     "bedrock": {
         "default_model": "anthropic.claude-3-5-sonnet-20241022-v2:0",
         "model_env_key": "GRAPHIFY_BEDROCK_MODEL",
@@ -1084,7 +1095,7 @@ def detect_backend() -> str | None:
     key now keeps you on the paid backend; remove the paid key (or pass
     --backend ollama explicitly) to route to the local model.
     """
-    for backend in ("gemini", "kimi", "claude", "openai"):
+    for backend in ("gemini", "kimi", "claude", "openai", "deepseek"):
         if _get_backend_api_key(backend):
             return backend
     if os.environ.get("AWS_PROFILE") or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"):
