@@ -144,7 +144,7 @@ def generate(
         lines += [
             "",
             f"### Community {cid} - \"{label}\"",
-            f"Cohesion: {score}",
+            f"Cohesion: {score:.2f}",
             f"Nodes ({len(real_nodes)}): {', '.join(display)}{suffix}",
         ]
 

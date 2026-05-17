@@ -856,7 +856,31 @@ def save_manifest(
     kind="both"     — full pipeline: stamps both hashes (default).
     """
     existing = load_manifest(manifest_path)
+
+    def _normalise_entry(entry):
+        if isinstance(entry, (int, float)):
+            return {"mtime": entry, "ast_hash": "", "semantic_hash": ""}
+        if isinstance(entry, dict) and "hash" in entry and "ast_hash" not in entry:
+            return {"mtime": entry.get("mtime", 0), "ast_hash": entry["hash"], "semantic_hash": ""}
+        if isinstance(entry, dict):
+            return entry
+        return None
+
+    # Seed from the existing manifest so incremental callers passing a subset
+    # of files don't silently erase entries for untouched files (#917).
+    # Prune entries whose file no longer exists on disk — those are genuine
+    # deletions that detect_incremental() should treat as gone.
     manifest: dict[str, dict] = {}
+    for f, entry in existing.items():
+        normalised = _normalise_entry(entry)
+        if normalised is None:
+            continue
+        try:
+            if Path(f).exists():
+                manifest[f] = normalised
+        except OSError:
+            continue
+
     for file_list in files.values():
         for f in file_list:
             try:
@@ -865,12 +889,7 @@ def save_manifest(
                 h = _md5_file(p)
             except OSError:
                 continue  # file deleted between detect() and manifest write
-            prev = existing.get(f, {})
-            # Normalise legacy {mtime, hash} entries to new schema
-            if isinstance(prev, (int, float)):
-                prev = {"mtime": prev, "ast_hash": "", "semantic_hash": ""}
-            elif isinstance(prev, dict) and "hash" in prev and "ast_hash" not in prev:
-                prev = {"mtime": prev.get("mtime", 0), "ast_hash": prev["hash"], "semantic_hash": ""}
+            prev = _normalise_entry(existing.get(f, {})) or {}
             entry: dict = {"mtime": mtime}
             if kind in ("ast", "both"):
                 entry["ast_hash"] = h

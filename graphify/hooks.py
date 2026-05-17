@@ -199,14 +199,22 @@ def _hooks_dir(root: Path) -> Path:
         )
     # In a linked worktree .git is a file not a directory, so constructing
     # root/.git/hooks directly fails. Ask git for the real hooks path instead.
+    # NOTE: do NOT pass --path-format=absolute — added in git 2.31; older git
+    # echoes it back as a literal argument, contaminating stdout and causing a
+    # phantom directory to be created (#907). git -C <root> already returns an
+    # absolute path for worktree/external-gitdir cases, and a path relative to
+    # <root> for normal repos — anchoring on root covers both.
     import subprocess as _sp
     try:
         res = _sp.run(
-            ["git", "-C", str(root), "rev-parse", "--path-format=absolute", "--git-path", "hooks"],
+            ["git", "-C", str(root), "rev-parse", "--git-path", "hooks"],
             capture_output=True, text=True,
         )
-        if res.returncode == 0:
-            d = Path(res.stdout.strip())
+        raw = res.stdout.strip()
+        # A valid hooks path can never contain newlines or NUL. Their presence
+        # means git echoed an unrecognised flag back (old git behaviour).
+        if res.returncode == 0 and raw and not any(c in raw for c in ("\n", "\r", "\x00")):
+            d = (root / raw).resolve()
             d.mkdir(parents=True, exist_ok=True)
             return d
     except (OSError, FileNotFoundError):
