@@ -2882,6 +2882,13 @@ def main() -> None:
                 f"est. cost (~{backend}): ${cost:.4f}"
             )
 
+    elif Path(cmd).exists() or cmd in (".", "..") or cmd.startswith(("./", "../", "/", "~")):
+        # User ran `graphify <path>` directly — treat as `graphify extract <path>`.
+        # Common when following the PowerShell note in README (`graphify .`) or
+        # copy-pasting skill invocations without the leading slash.
+        sys.argv.insert(2, sys.argv[1])
+        sys.argv[1] = "extract"
+        main()
     else:
         print(f"error: unknown command '{cmd}'", file=sys.stderr)
         print("Run 'graphify --help' for usage.", file=sys.stderr)
