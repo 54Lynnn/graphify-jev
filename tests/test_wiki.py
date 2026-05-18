@@ -137,3 +137,31 @@ def test_community_article_truncation_notice(tmp_path):
     to_wiki(G, communities, tmp_path, community_labels={0: "Big Community"})
     article = (tmp_path / "Big_Community.md").read_text()
     assert "and 5 more nodes" in article
+
+
+# Regression tests for #925 - cross-community links always empty when node attrs lack community
+def test_cross_community_links_without_node_community_attrs(tmp_path):
+    """Cross-community links must work even when nodes have no 'community' attribute (#925)."""
+    G = nx.Graph()
+    G.add_node("n1", label="parse", file_type="code", source_file="parser.py")
+    G.add_node("n2", label="render", file_type="code", source_file="renderer.py")
+    G.add_edge("n1", "n2", relation="references", confidence="INFERRED", weight=1.0)
+    communities = {0: ["n1"], 1: ["n2"]}
+    labels = {0: "Parsing", 1: "Rendering"}
+    to_wiki(G, communities, tmp_path, community_labels=labels)
+    article = (tmp_path / "Parsing.md").read_text()
+    assert "[[Rendering]]" in article
+
+
+def test_god_node_article_community_without_node_attr(tmp_path):
+    """God node article must show community name even when node has no 'community' attr (#925)."""
+    G = nx.Graph()
+    G.add_node("n1", label="parse", file_type="code", source_file="parser.py")
+    G.add_node("n2", label="validate", file_type="code", source_file="parser.py")
+    G.add_edge("n1", "n2", relation="calls", confidence="EXTRACTED", weight=1.0)
+    communities = {0: ["n1", "n2"]}
+    labels = {0: "Core Logic"}
+    god_nodes = [{"id": "n1", "label": "parse", "degree": 1}]
+    to_wiki(G, communities, tmp_path, community_labels=labels, god_nodes_data=god_nodes)
+    article = (tmp_path / "parse.md").read_text()
+    assert "[[Core Logic]]" in article

@@ -208,3 +208,89 @@ def test_rebuild_code_skips_cluster_when_topology_unchanged(tmp_path, monkeypatc
     assert _rebuild_code(tmp_path)
     assert _rebuild_code(tmp_path)
     assert calls["n"] == 1
+
+
+# --- .graphifyignore honored in watch handler (gh-928) ---
+
+
+def _watchdog_available() -> bool:
+    try:
+        import watchdog  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+@pytest.mark.skipif(not _watchdog_available(), reason="watchdog not installed")
+def test_watch_handler_honors_graphifyignore(tmp_path, monkeypatch):
+    """gh-928: the watch Handler must short-circuit paths matching
+    .graphifyignore so busy volumes (node_modules churn, build artefacts,
+    Time Machine writes, …) don't wake the rebuild pipeline.
+    """
+    import threading
+    from graphify import watch as watch_mod
+
+    (tmp_path / ".graphifyignore").write_text("node_modules/\nbuild/\n", encoding="utf-8")
+    (tmp_path / "node_modules").mkdir()
+    (tmp_path / "build").mkdir()
+
+    rebuild_calls: list[Path] = []
+    notify_calls: list[Path] = []
+    monkeypatch.setattr(watch_mod, "_rebuild_code", lambda p, **kw: rebuild_calls.append(p) or True)
+    monkeypatch.setattr(watch_mod, "_notify_only", lambda p: notify_calls.append(p))
+
+    # Run watch() in a thread with a short debounce so we can verify the
+    # post-debounce dispatch path actually runs on real events.
+    t = threading.Thread(target=watch_mod.watch, args=(tmp_path,), kwargs={"debounce": 0.2}, daemon=True)
+    t.start()
+    time.sleep(0.5)  # let observer.start() settle
+
+    # Ignored writes — handler must drop these.
+    (tmp_path / "node_modules" / "junk.js").write_text("// noise\n", encoding="utf-8")
+    (tmp_path / "build" / "out.py").write_text("x = 1\n", encoding="utf-8")
+    time.sleep(1.0)
+    assert rebuild_calls == [], "ignored writes triggered a rebuild"
+    assert notify_calls == [], "ignored writes triggered a notify"
+
+    # Non-ignored write — handler must accept and (after debounce) dispatch.
+    (tmp_path / "app.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline and not rebuild_calls:
+        time.sleep(0.1)
+    assert rebuild_calls, "non-ignored .py write should have triggered _rebuild_code"
+
+
+@pytest.mark.skipif(not _watchdog_available(), reason="watchdog not installed")
+def test_watch_loads_graphifyignore_once(tmp_path, monkeypatch):
+    """gh-928: .graphifyignore must be parsed exactly once at watch() startup,
+    not per filesystem event. Otherwise busy volumes re-read the file
+    thousands of times per second.
+    """
+    import threading
+    from graphify import watch as watch_mod
+    from graphify import detect as detect_mod
+
+    (tmp_path / ".graphifyignore").write_text("ignored/\n", encoding="utf-8")
+    (tmp_path / "ignored").mkdir()
+
+    calls = {"n": 0}
+    real_loader = detect_mod._load_graphifyignore
+
+    def counting_loader(root):
+        calls["n"] += 1
+        return real_loader(root)
+
+    # Patch the symbol the watch module imported at module-load time.
+    monkeypatch.setattr(watch_mod, "_load_graphifyignore", counting_loader)
+    monkeypatch.setattr(watch_mod, "_rebuild_code", lambda p, **kw: True)
+    monkeypatch.setattr(watch_mod, "_notify_only", lambda p: None)
+
+    t = threading.Thread(target=watch_mod.watch, args=(tmp_path,), kwargs={"debounce": 0.2}, daemon=True)
+    t.start()
+    time.sleep(0.5)
+
+    # Generate many events; loader must not be called again.
+    for i in range(50):
+        (tmp_path / "ignored" / f"f{i}.py").write_text("x\n", encoding="utf-8")
+    time.sleep(0.7)
+    assert calls["n"] == 1, f"_load_graphifyignore called {calls['n']} times; expected 1"

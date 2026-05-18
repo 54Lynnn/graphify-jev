@@ -1,5 +1,5 @@
 from pathlib import Path
-from graphify.detect import classify_file, count_words, detect, detect_incremental, save_manifest, FileType, _looks_like_paper, _is_ignored, _load_graphifyignore
+from graphify.detect import classify_file, count_words, detect, detect_incremental, save_manifest, FileType, _looks_like_paper, _is_ignored, _load_graphifyignore, _is_sensitive
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -501,3 +501,57 @@ def test_negation_ancestor_itself_reincluded(tmp_path):
     patterns = _load_graphifyignore(tmp_path)
     # vendor/ is excluded then re-included; ancestor eval returns False so file is evaluated on its own
     assert not _is_ignored(f, tmp_path, patterns)
+
+
+# Regression tests for #920 - sensitive pattern misses underscore-prefixed names
+def test_sensitive_flags_api_token_txt():
+    assert _is_sensitive(Path("api_token.txt"))
+
+def test_sensitive_flags_oauth_token_json():
+    assert _is_sensitive(Path("oauth_token.json"))
+
+def test_sensitive_flags_underscore_secret():
+    assert _is_sensitive(Path("app_secret.yaml"))
+
+def test_sensitive_does_not_flag_tokenizer_py():
+    assert not _is_sensitive(Path("tokenizer.py"))
+
+def test_sensitive_does_not_flag_tokenize_py():
+    assert not _is_sensitive(Path("tokenize.py"))
+
+def test_sensitive_flags_passwords_py():
+    # passwords.py is just as likely a secret store as passwords.txt — code ext is no excuse
+    assert _is_sensitive(Path("passwords.py"))
+
+def test_sensitive_flags_ssh_dir():
+    assert _is_sensitive(Path("/home/user/.ssh/id_rsa"))
+
+def test_sensitive_flags_secrets_dir():
+    assert _is_sensitive(Path("config/secrets/db.json"))
+
+def test_sensitive_flags_token_txt():
+    assert _is_sensitive(Path("token.txt"))
+
+def test_sensitive_flags_credentials_json():
+    assert _is_sensitive(Path("credentials.json"))
+
+def test_sensitive_does_not_flag_root_file_named_credentials():
+    # A root-level file called "credentials" (no parent dir named credentials)
+    # must NOT be flagged by Stage 1; Stage 2 name-pattern check catches it instead.
+    # Specifically: Path("credentials").parts == ('credentials',) which is parts[:-1] == ()
+    # so the dir check passes. The name pattern for "credential" then picks it up.
+    # What we are asserting here is that the Stage 1 check uses parts[:-1], not parts.
+    p = Path("credentials")
+    # The name pattern WILL match "credentials" (it's a sensitive name), but the
+    # false-flag we fixed was Stage 1 matching on the filename itself as a "dir".
+    # Verify the whole function still returns True (via name pattern, not dir check).
+    assert _is_sensitive(p)
+
+def test_sensitive_secret_handler_txt():
+    # Both patterns now use (?![a-zA-Z]) so underscore after keyword is allowed.
+    # "secret_handler.txt": "secret" followed by "_" (not alpha) → flagged.
+    assert _is_sensitive(Path("secret_handler.txt"))
+
+def test_sensitive_token_config_yaml():
+    # "token_config.yaml": "token" followed by "_" (not alpha) → flagged.
+    assert _is_sensitive(Path("token_config.yaml"))

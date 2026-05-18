@@ -1012,7 +1012,7 @@ _C_CONFIG = LanguageConfig(
 
 _CPP_CONFIG = LanguageConfig(
     ts_module="tree_sitter_cpp",
-    class_types=frozenset({"class_specifier"}),
+    class_types=frozenset({"class_specifier", "struct_specifier"}),
     function_types=frozenset({"function_definition"}),
     import_types=frozenset({"preproc_include"}),
     call_types=frozenset({"call_expression"}),
@@ -1416,6 +1416,51 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                                     for tid in sub.children:
                                         if tid.type == "type_identifier":
                                             _emit_java_parent(_read_text(tid, source), "extends", line)
+
+            # C++-specific: inheritance via base_class_clause (class and struct).
+            # tree-sitter-cpp shape:
+            #   class_specifier / struct_specifier
+            #     base_class_clause
+            #       access_specifier? ("public"/"protected"/"private")  -- skip
+            #       "virtual"?                                          -- skip
+            #       type_identifier                                     -- "Base"
+            #       qualified_identifier                                -- "ns::Base"
+            #       template_type                                       -- "Vec<int>"
+            # Multiple bases are siblings separated by ',' tokens.
+            if config.ts_module == "tree_sitter_cpp":
+                for child in node.children:
+                    if child.type != "base_class_clause":
+                        continue
+                    for sub in child.children:
+                        base = ""
+                        if sub.type == "type_identifier":
+                            base = _read_text(sub, source)
+                        elif sub.type == "qualified_identifier":
+                            # Use the unqualified tail so "std::vector" matches
+                            # a "vector" node id if one exists in the graph;
+                            # fall back to the full qualified text otherwise.
+                            tail = sub.child_by_field_name("name")
+                            base = _read_text(tail, source) if tail else _read_text(sub, source)
+                        elif sub.type == "template_type":
+                            tname = sub.child_by_field_name("name")
+                            base = _read_text(tname, source) if tname else _read_text(sub, source)
+                        else:
+                            continue
+                        if not base:
+                            continue
+                        base_nid = _make_id(stem, base)
+                        if base_nid not in seen_ids:
+                            base_nid = _make_id(base)
+                            if base_nid not in seen_ids:
+                                nodes.append({
+                                    "id": base_nid,
+                                    "label": base,
+                                    "file_type": "code",
+                                    "source_file": "",
+                                    "source_location": "",
+                                })
+                                seen_ids.add(base_nid)
+                        add_edge(class_nid, base_nid, "inherits", line)
 
             # Find body and recurse
             body = _find_body(node, config)
