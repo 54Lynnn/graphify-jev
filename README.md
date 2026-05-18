@@ -227,6 +227,8 @@ You can also set `GRAPHIFY_GOOGLE_WORKSPACE=1`. Graphify exports shortcuts into
 /graphify .                        # build graph for current folder
 /graphify ./docs --update          # re-extract only changed files
 /graphify . --cluster-only         # rerun clustering without re-extracting
+/graphify . --cluster-only --resolution 1.5      # more granular communities
+/graphify . --cluster-only --exclude-hubs 99     # suppress utility super-hubs from god-node rankings
 /graphify . --no-viz               # skip the HTML, just the report + JSON
 /graphify . --wiki                 # build a markdown wiki from the graph
 graphify export callflow-html      # Mermaid architecture/call-flow HTML (auto-regenerates on every git commit if hook is installed)
@@ -498,6 +500,8 @@ graphify update ./src --no-cluster  # skip reclustering, write raw AST graph onl
 graphify update ./src --force       # overwrite even if new graph has fewer nodes
 graphify cluster-only ./my-project
 graphify cluster-only ./my-project --graph path/to/graph.json  # custom graph location
+graphify cluster-only ./my-project --resolution 1.5            # more, smaller communities
+graphify cluster-only ./my-project --exclude-hubs 99           # exclude p99 degree nodes from partitioning
 ```
 
 ---
