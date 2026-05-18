@@ -543,6 +543,8 @@ def _rebuild_code(
         else:
             if not _check_shrink(force, existing_graph_data, candidate_graph_data, tmp=graph_tmp):
                 return False
+            from graphify.export import backup_if_protected as _backup
+            _backup(out)
             graph_tmp.replace(existing_graph)
             report_path.write_text(report, encoding="utf-8")
             labels_file.write_text(labels_json, encoding="utf-8")

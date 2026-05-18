@@ -3,14 +3,88 @@ from __future__ import annotations
 import html as _html
 import json
 import math
+import os
 import re
+import shutil
 from collections import Counter
+from datetime import date
 from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph
 from graphify.security import sanitize_label
 from graphify.analyze import _node_community_map
 from graphify.build import edge_data
+
+
+# Artifacts worth preserving across rebuilds (non-regenerable without LLM or curation).
+_BACKUP_ARTIFACTS = [
+    "graph.json",
+    "GRAPH_REPORT.md",
+    ".graphify_labels.json",
+    ".graphify_analysis.json",
+    "manifest.json",
+    ".graphify_semantic_marker",
+    "cost.json",
+]
+
+
+def backup_if_protected(out_dir: Path) -> "Path | None":
+    """Snapshot graph artifacts to a dated subfolder before an overwrite.
+
+    Triggers when graph.json exists AND either:
+    - .graphify_semantic_marker is present (graph cost real LLM tokens), or
+    - .graphify_labels.json contains at least one non-default community label
+      (graph has been curated by a human or skill).
+
+    Returns the backup folder path, or None if no backup was taken.
+    Never raises — backup failure prints a warning but never blocks the write.
+    Set GRAPHIFY_NO_BACKUP=1 to disable.
+    """
+    if os.environ.get("GRAPHIFY_NO_BACKUP"):
+        return None
+    out = Path(out_dir)
+    if not (out / "graph.json").exists():
+        return None
+
+    is_semantic = (out / ".graphify_semantic_marker").exists()
+    is_curated = False
+    labels_file = out / ".graphify_labels.json"
+    if labels_file.exists():
+        try:
+            labels = json.loads(labels_file.read_text(encoding="utf-8"))
+            is_curated = any(v != f"Community {k}" for k, v in labels.items())
+        except Exception:
+            pass
+
+    if not is_semantic and not is_curated:
+        return None
+
+    reason = "+".join(filter(None, ["semantic" if is_semantic else "", "curated" if is_curated else ""]))
+    today = date.today().isoformat()
+    backup_dir = out / today
+    suffix = 2
+    while backup_dir.exists():
+        backup_dir = out / f"{today}_{suffix}"
+        suffix += 1
+
+    try:
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        copied = 0
+        for name in _BACKUP_ARTIFACTS:
+            src = out / name
+            if src.exists():
+                try:
+                    shutil.copy2(src, backup_dir / name)
+                    copied += 1
+                except Exception:
+                    pass
+        if copied:
+            print(f"[graphify] backed up {reason} graph ({copied} files) → {backup_dir.name}/")
+        return backup_dir
+    except Exception as exc:
+        import sys
+        print(f"[graphify] warning: backup failed ({exc}) — continuing with overwrite", file=sys.stderr)
+        return None
 
 def _obsidian_tag(name: str) -> str:
     """Sanitize a community name for use as an Obsidian tag.
