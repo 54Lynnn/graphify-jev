@@ -825,7 +825,7 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
         warning = (
             f"Large corpus: {total_files} files · ~{total_words:,} words. "
             f"Semantic extraction will be expensive (many Claude tokens). "
-            f"Consider running on a subfolder, or use --no-semantic to run AST-only."
+            f"Consider running on a subfolder."
         )
 
     return {
@@ -836,6 +836,7 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
         "warning": warning,
         "skipped_sensitive": skipped_sensitive,
         "graphifyignore_patterns": len(ignore_patterns),
+        "scan_root": str(root.resolve()),
     }
 
 
