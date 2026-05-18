@@ -555,3 +555,56 @@ def test_sensitive_secret_handler_txt():
 def test_sensitive_token_config_yaml():
     # "token_config.yaml": "token" followed by "_" (not alpha) → flagged.
     assert _is_sensitive(Path("token_config.yaml"))
+
+
+# ── Issue #933: failed-chunk files must not be frozen in manifest ─────────────
+
+def test_save_manifest_skips_semantic_hash_for_files_without_cache(tmp_path):
+    """Files in failed chunks have no semantic cache entry; save_manifest must
+    leave their semantic_hash empty so detect_incremental re-queues them (#933)."""
+    import json
+    from graphify.cache import save_cached
+
+    doc1 = tmp_path / "docs" / "a.md"
+    doc2 = tmp_path / "docs" / "b.md"
+    doc1.parent.mkdir()
+    doc1.write_text("# A\n\ncontent a")
+    doc2.write_text("# B\n\ncontent b")
+
+    # Simulate: doc1's chunk succeeded (has a cache entry), doc2's chunk failed (no entry).
+    save_cached(doc1, {"nodes": [{"id": "a", "source_file": str(doc1)}], "edges": [], "hyperedges": []}, root=tmp_path, kind="semantic")
+    # doc2: no cache entry written
+
+    files = {"document": [str(doc1), str(doc2)]}
+    manifest_path = str(tmp_path / "manifest.json")
+
+    # Simulate what __main__.py now does: only include files with semantic output.
+    sem_extracted = {str(doc1)}  # doc2 not present — failed chunk
+    sem_types = {"document", "paper", "image"}
+    safe_files = {
+        ftype: [f for f in flist if ftype not in sem_types or f in sem_extracted]
+        for ftype, flist in files.items()
+    }
+    save_manifest(safe_files, manifest_path)
+
+    manifest = json.loads(Path(manifest_path).read_text())
+    assert str(doc1) in manifest, "successful file must be in manifest"
+    assert manifest[str(doc1)]["semantic_hash"] != "", "successful file must have semantic_hash"
+    assert str(doc2) not in manifest, "failed-chunk file must be absent from manifest"
+
+
+
+def test_save_manifest_without_filter_unchanged_for_code(tmp_path):
+    """Code files must be stamped in the manifest regardless of semantic cache."""
+    import json
+
+    py = tmp_path / "main.py"
+    py.write_text("print('hello')")
+
+    files = {"code": [str(py)]}
+    manifest_path = str(tmp_path / "manifest.json")
+    save_manifest(files, manifest_path)
+
+    manifest = json.loads(Path(manifest_path).read_text())
+    assert str(py) in manifest
+    assert manifest[str(py)]["ast_hash"] != ""

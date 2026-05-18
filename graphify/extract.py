@@ -2755,7 +2755,7 @@ def extract_sql(path: Path) -> dict:
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
 
-    stem = re.sub(r"[^a-z0-9]", "_", path.stem.lower())
+    stem = _file_stem(path)
     str_path = str(path)
     file_nid = _make_id(str_path)
     nodes: list[dict] = [{"id": file_nid, "label": path.name, "file_type": "code",
@@ -4222,15 +4222,20 @@ def _resolve_cross_file_imports(
     language = Language(tspython.language())
     parser = Parser(language)
 
-    # Pass 1: name → node_id across all files
-    # Map: stem → {ClassName: node_id}
+    # Pass 1: _file_stem(path) → {ClassName: node_id}
+    # Keyed by directory-qualified stem (e.g. "auth_models") to avoid collisions
+    # when multiple files share the same filename in different directories.
+    # A secondary bare-stem index handles absolute imports where only the module
+    # name is known — first writer wins when names collide (inherently ambiguous).
     stem_to_entities: dict[str, dict[str, str]] = {}
+    bare_to_qualified: dict[str, str] = {}
     for file_result in per_file:
         for node in file_result.get("nodes", []):
             src = node.get("source_file", "")
             if not src:
                 continue
-            stem = Path(src).stem
+            src_path = Path(src)
+            fq_stem = _file_stem(src_path)
             label = node.get("label", "")
             nid = node.get("id", "")
             # Index class-level entities only. Function/method labels end in "()"
@@ -4244,11 +4249,13 @@ def _resolve_cross_file_imports(
                 and "_" not in label[:1]
                 and node.get("file_type") != "rationale"
             ):
-                stem_to_entities.setdefault(stem, {})[label] = nid
+                stem_to_entities.setdefault(fq_stem, {})[label] = nid
+                if src_path.stem not in bare_to_qualified:
+                    bare_to_qualified[src_path.stem] = fq_stem
 
     # Pass 2: for each file, find `from .X import A, B, C` and resolve
     new_edges: list[dict] = []
-    stem_to_path: dict[str, Path] = {p.stem: p for p in paths}
+    stem_to_path: dict[str, Path] = {_file_stem(p): p for p in paths}
 
     for file_result, path in zip(per_file, paths):
         stem = _file_stem(path)
@@ -4279,21 +4286,28 @@ def _resolve_cross_file_imports(
                 # Find the module name - handles both absolute and relative imports.
                 # Relative: `from .models import X` → relative_import → dotted_name
                 # Absolute: `from models import X`  → module_name field
-                target_stem: str | None = None
+                # target_fq is the directory-qualified stem used as the key in
+                # stem_to_entities. Relative imports are resolved exactly via the
+                # importing file's directory; absolute imports fall back to the
+                # bare-stem secondary index (first-writer-wins when names collide).
+                target_fq: str | None = None
                 for child in node.children:
                     if child.type == "relative_import":
-                        # Dig into relative_import → dotted_name → identifier
                         for sub in child.children:
                             if sub.type == "dotted_name":
                                 raw = source[sub.start_byte:sub.end_byte].decode("utf-8", errors="replace")
-                                target_stem = raw.split(".")[-1]
+                                bare = raw.split(".")[-1]
+                                # Resolve relative import to exact qualified stem.
+                                candidate = path.parent / f"{bare}.py"
+                                target_fq = _file_stem(candidate)
                                 break
                         break
-                    if child.type == "dotted_name" and target_stem is None:
+                    if child.type == "dotted_name" and target_fq is None:
                         raw = source[child.start_byte:child.end_byte].decode("utf-8", errors="replace")
-                        target_stem = raw.split(".")[-1]
+                        bare = raw.split(".")[-1]
+                        target_fq = bare_to_qualified.get(bare)
 
-                if not target_stem or target_stem not in stem_to_entities:
+                if not target_fq or target_fq not in stem_to_entities:
                     return
 
                 # Collect imported names: dotted_name children of import_from_statement
@@ -4320,7 +4334,7 @@ def _resolve_cross_file_imports(
 
                 line = node.start_point[0] + 1
                 for name in imported_names:
-                    tgt_nid = stem_to_entities[target_stem].get(name)
+                    tgt_nid = stem_to_entities[target_fq].get(name)
                     if tgt_nid:
                         for src_class_nid in local_classes:
                             new_edges.append({
