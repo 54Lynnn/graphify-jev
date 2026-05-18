@@ -120,3 +120,11 @@ def test_report_is_still_referenced_as_fallback():
 def test_agents_section_does_not_skip_dirty_graph_output():
     assert "Dirty graphify-out/ files are expected" in _AGENTS_MD_SECTION
     assert "not a reason to skip graphify" in _AGENTS_MD_SECTION
+
+
+def test_how_it_works_clarifies_code_only_semantic_extraction():
+    from pathlib import Path
+    doc = (Path(__file__).parent.parent / "docs" / "how-it-works.md").read_text(encoding="utf-8")
+    assert "Code files are not sent to the LLM semantic extractor" in doc
+    assert "code files, Pass 3 is skipped entirely" in doc
+    assert "docs, papers, images, and transcripts" in doc
