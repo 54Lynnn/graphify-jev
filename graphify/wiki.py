@@ -204,6 +204,29 @@ def to_wiki(
             "Run `graphify extract .` or `graphify cluster-only .` first."
         )
 
+    # Filter stale node IDs that exist in communities but not in G.
+    # Analysis JSON can drift from the graph after dedup / re-extract / update.
+    # NetworkX 3.x returns DegreeView({}) for missing nodes instead of raising,
+    # which crashes sorted() with TypeError; G.neighbors()/G.nodes[] also raise.
+    import sys as _sys
+    _g_nodes = set(G.nodes)
+    _orig_total = sum(len(ns) for ns in communities.values())
+    communities = {cid: [n for n in nodes if n in _g_nodes] for cid, nodes in communities.items()}
+    communities = {cid: nodes for cid, nodes in communities.items() if nodes}
+    _kept_total = sum(len(ns) for ns in communities.values())
+    if _kept_total < _orig_total:
+        print(
+            f"wiki: dropped {_orig_total - _kept_total} stale node ID(s) not in graph "
+            f"({len(communities)} communities remaining)",
+            file=_sys.stderr,
+        )
+
+    if not communities:
+        raise ValueError(
+            "all community node IDs are stale — none exist in the graph. "
+            "Re-run `graphify extract .` to regenerate .graphify_analysis.json."
+        )
+
     # Clear stale .md files from previous runs to prevent orphan accumulation.
     # Community labels are LLM-generated (per skill.md Step 5) and non-deterministic
     # across runs — the same conceptual community may be named differently each time

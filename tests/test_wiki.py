@@ -165,3 +165,35 @@ def test_god_node_article_community_without_node_attr(tmp_path):
     to_wiki(G, communities, tmp_path, community_labels=labels, god_nodes_data=god_nodes)
     article = (tmp_path / "parse.md").read_text()
     assert "[[Core Logic]]" in article
+
+
+# Regression tests for #936 - stale community node IDs crash to_wiki after dedup/re-extract
+
+def test_to_wiki_drops_stale_community_nodes(tmp_path):
+    """Stale node IDs in communities dict are silently dropped without crash (#936)."""
+    G = _make_graph()
+    # Add a stale ID that exists in communities but not in G
+    communities = {0: ["n1", "n2", "stale_ghost"], 1: ["n3", "n4"]}
+    n = to_wiki(G, communities, tmp_path, community_labels=LABELS)
+    assert n == 2  # both community articles still written
+    article = (tmp_path / "Parsing_Layer.md").read_text()
+    assert "parse" in article
+    assert "stale_ghost" not in article
+
+
+def test_to_wiki_all_stale_raises(tmp_path):
+    """If every community node is stale, raise ValueError with a helpful message (#936)."""
+    G = _make_graph()
+    all_stale = {0: ["ghost1", "ghost2"], 1: ["ghost3"]}
+    with pytest.raises(ValueError, match="stale"):
+        to_wiki(G, all_stale, tmp_path, community_labels=LABELS)
+
+
+def test_to_wiki_stale_nodes_prints_warning(tmp_path, capsys):
+    """Stale node IDs trigger a stderr warning showing the drop count (#936)."""
+    G = _make_graph()
+    communities = {0: ["n1", "stale1", "stale2"], 1: ["n3", "n4"]}
+    to_wiki(G, communities, tmp_path, community_labels=LABELS)
+    err = capsys.readouterr().err
+    assert "2" in err  # dropped count
+    assert "stale" in err.lower()

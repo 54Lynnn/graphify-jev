@@ -608,3 +608,67 @@ def test_save_manifest_without_filter_unchanged_for_code(tmp_path):
     manifest = json.loads(Path(manifest_path).read_text())
     assert str(py) in manifest
     assert manifest[str(py)]["ast_hash"] != ""
+
+
+# Regression tests for #945 - .gitignore fallback when no .graphifyignore exists
+
+def test_gitignore_fallback_when_no_graphifyignore(tmp_path):
+    """When no .graphifyignore exists, .gitignore patterns are honored (#945)."""
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".gitignore").write_text("vendor/\n*.generated.py\n")
+    vendor = tmp_path / "vendor"
+    vendor.mkdir()
+    (vendor / "lib.py").write_text("x = 1")
+    (tmp_path / "main.py").write_text("print('hi')")
+    (tmp_path / "schema.generated.py").write_text("x = 1")
+
+    result = detect(tmp_path)
+    code = result["files"]["code"]
+    assert any("main.py" in f for f in code)
+    assert not any("vendor" in f for f in code)
+    assert not any("generated" in f for f in code)
+
+
+def test_graphifyignore_takes_precedence_over_gitignore(tmp_path):
+    """When both exist, .graphifyignore is used and .gitignore is ignored (#945)."""
+    (tmp_path / ".git").mkdir()
+    # .gitignore would exclude main.py; .graphifyignore excludes only other.py
+    (tmp_path / ".gitignore").write_text("main.py\n")
+    (tmp_path / ".graphifyignore").write_text("other.py\n")
+    (tmp_path / "main.py").write_text("x = 1")
+    (tmp_path / "other.py").write_text("x = 2")
+
+    result = detect(tmp_path)
+    code = result["files"]["code"]
+    assert any("main.py" in f for f in code)       # gitignore NOT applied
+    assert not any("other.py" in f for f in code)  # graphifyignore IS applied
+
+
+# Regression tests for #947 - .worktrees/ skipped and --exclude flag
+
+def test_detect_skips_worktrees_dir(tmp_path):
+    """Files inside .worktrees/ are never indexed (#947)."""
+    wt = tmp_path / ".worktrees" / "feature-branch"
+    wt.mkdir(parents=True)
+    (wt / "main.py").write_text("x = 1")
+    (tmp_path / "app.py").write_text("y = 2")
+
+    result = detect(tmp_path)
+    code = result["files"]["code"]
+    assert any("app.py" in f for f in code)
+    assert not any(".worktrees" in f for f in code)
+
+
+def test_detect_extra_excludes_pattern(tmp_path):
+    """extra_excludes patterns exclude matching files from detect() (#947)."""
+    (tmp_path / "main.py").write_text("x = 1")
+    (tmp_path / "secret.py").write_text("API_KEY = 'abc'")
+    subdir = tmp_path / "legacy"
+    subdir.mkdir()
+    (subdir / "old.py").write_text("y = 2")
+
+    result = detect(tmp_path, extra_excludes=["secret.py", "legacy/"])
+    code = result["files"]["code"]
+    assert any("main.py" in f for f in code)
+    assert not any("secret.py" in f for f in code)
+    assert not any("legacy" in f for f in code)

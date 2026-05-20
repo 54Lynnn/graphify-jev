@@ -400,6 +400,7 @@ _SKIP_DIRS = {
     ".next", ".nuxt", ".turbo", ".angular",
     ".idea", ".cache", ".parcel-cache", ".svelte-kit", ".terraform", ".serverless",
     ".graphify",  # graphify's own extraction cache — never index self-generated data
+    ".worktrees",  # git worktree convention (#947) — sibling checkouts, always redundant
 }
 
 # Large generated files that are never useful to extract
@@ -486,7 +487,11 @@ def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
 
     patterns: list[tuple[Path, str]] = []
     for d in dirs:
+        # Prefer .graphifyignore; fall back to .gitignore so projects that already
+        # maintain a .gitignore get sensible defaults without duplicating it (#945).
         ignore_file = d / ".graphifyignore"
+        if not ignore_file.exists():
+            ignore_file = d / ".gitignore"
         if ignore_file.exists():
             for raw in ignore_file.read_text(encoding="utf-8", errors="ignore").splitlines():
                 line = _parse_gitignore_line(raw)
@@ -701,7 +706,7 @@ def _auto_follow_symlinks(root: Path) -> bool:
     return False
 
 
-def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace: bool | None = None) -> dict:
+def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace: bool | None = None, extra_excludes: list[str] | None = None) -> dict:
     root = root.resolve()
     if follow_symlinks is None:
         follow_symlinks = _auto_follow_symlinks(root)
@@ -717,6 +722,13 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
 
     skipped_sensitive: list[str] = []
     ignore_patterns = _load_graphifyignore(root)
+    # CLI --exclude patterns are anchored at the scan root and appended last
+    # so they win over any .graphifyignore/.gitignore rules (#947).
+    if extra_excludes:
+        for pat in extra_excludes:
+            line = _parse_gitignore_line(pat)
+            if line:
+                ignore_patterns.append((root, line))
     include_patterns = _load_graphifyinclude(root)
 
     # Always include graphify-out/memory/ - query results filed back into the graph
@@ -933,6 +945,7 @@ def detect_incremental(
     follow_symlinks: bool | None = None,
     google_workspace: bool | None = None,
     kind: str = "semantic",
+    extra_excludes: list[str] | None = None,
 ) -> dict:
     """Like detect(), but returns only new or modified files since the last run.
 
@@ -957,7 +970,7 @@ def detect_incremental(
     incremental runs. ``None`` (default) means auto-detect: ``True`` when ``root``
     contains at least one direct symlinked child, ``False`` otherwise.
     """
-    full = detect(root, follow_symlinks=follow_symlinks, google_workspace=google_workspace)
+    full = detect(root, follow_symlinks=follow_symlinks, google_workspace=google_workspace, extra_excludes=extra_excludes)
     manifest = load_manifest(manifest_path)
 
     if not manifest:

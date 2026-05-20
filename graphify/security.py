@@ -22,6 +22,10 @@ _BLOCKED_HOSTS = {"metadata.google.internal", "metadata.google.com"}
 # RFC 6598 Shared Address Space (CGN) -- is_private misses this on Python <3.11
 _CGN_NETWORK = ipaddress.ip_network("100.64.0.0/10")
 
+# RFC 6052 NAT64 Well-Known Prefix -- is_reserved=True in Python but these embed
+# public IPv4 addresses and are legitimate public internet traffic, not SSRF vectors.
+_NAT64_WKP = ipaddress.ip_network("64:ff9b::/96")
+
 
 # ---------------------------------------------------------------------------
 # URL validation
@@ -57,6 +61,10 @@ def validate_url(url: str) -> str:
             for info in infos:
                 addr = info[4][0]
                 ip = ipaddress.ip_address(addr)
+                # For NAT64 addresses, check the embedded IPv4 instead of the wrapper
+                if isinstance(ip, ipaddress.IPv6Address) and ip in _NAT64_WKP:
+                    embedded = ipaddress.ip_address(int(ip) & 0xFFFFFFFF)
+                    ip = embedded
                 if ip.is_private or ip.is_reserved or ip.is_loopback or ip.is_link_local or ip in _CGN_NETWORK:
                     raise ValueError(
                         f"Blocked private/internal IP {addr} (resolved from '{hostname}'). "

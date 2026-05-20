@@ -2431,6 +2431,7 @@ def main() -> None:
         # Clustering tuning knobs
         cli_resolution: float = 1.0
         cli_exclude_hubs: float | None = None
+        cli_excludes: list[str] = []
 
         def _parse_int(name: str, raw: str) -> int:
             try:
@@ -2504,6 +2505,10 @@ def main() -> None:
                 cli_exclude_hubs = float(args[i + 1]); i += 2
             elif a.startswith("--exclude-hubs="):
                 cli_exclude_hubs = float(a.split("=", 1)[1]); i += 1
+            elif a == "--exclude" and i + 1 < len(args):
+                cli_excludes.append(args[i + 1]); i += 2
+            elif a.startswith("--exclude="):
+                cli_excludes.append(a.split("=", 1)[1]); i += 1
             else:
                 i += 1
 
@@ -2610,10 +2615,11 @@ def main() -> None:
                 target,
                 manifest_path=str(manifest_path),
                 google_workspace=google_workspace or None,
+                extra_excludes=cli_excludes or None,
             )
         else:
             print(f"[graphify extract] scanning {target}")
-            detection = _detect(target, google_workspace=google_workspace or None)
+            detection = _detect(target, google_workspace=google_workspace or None, extra_excludes=cli_excludes or None)
 
         files_by_type = detection.get("files", {})
         if incremental_mode:
