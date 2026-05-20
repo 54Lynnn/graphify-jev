@@ -263,3 +263,26 @@ def test_update_no_cluster_writes_raw_graph(tmp_path):
     data = json.loads(graph_path.read_text(encoding="utf-8"))
     assert "nodes" in data and "links" in data
     assert all("community" not in node for node in data["nodes"])
+
+
+# Regression test for #934 - cluster-only crashes when graphify-out/ doesn't exist
+
+def test_cluster_only_creates_output_dir_when_missing(tmp_path):
+    """cluster-only must not crash with FileNotFoundError when graphify-out/ is absent (#934)."""
+    # Build graph.json somewhere other than the default graphify-out/ location
+    # so we can point --graph at it while graphify-out/ doesn't exist yet.
+    graph_src = tmp_path / "backup" / "graph.json"
+    graph_src.parent.mkdir()
+
+    out_dir = _make_graph(tmp_path)
+    graph_json = out_dir / "graph.json"
+    # Simulate user archiving the output dir before re-clustering
+    import shutil
+    shutil.copy(graph_json, graph_src)
+    shutil.rmtree(out_dir)
+
+    assert not (tmp_path / "graphify-out").exists()
+
+    r = _run(["cluster-only", ".", "--graph", str(graph_src), "--no-viz"], tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "graphify-out" / "GRAPH_REPORT.md").exists()
