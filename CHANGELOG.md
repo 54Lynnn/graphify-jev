@@ -2,6 +2,14 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.14 (2026-05-20)
+
+- Fix: `--wiki` crash when community node IDs are stale after dedup or re-extract — stale IDs are now silently dropped with a stderr warning; raises a clear error only if every ID is stale (#936)
+- Fix: `.gitignore` patterns now respected when no `.graphifyignore` exists — previous behaviour silently ignored the project's gitignore, causing expected exclusions to be skipped (#945)
+- Feat: `--exclude <pattern>` CLI flag to pass extra gitignore-style exclusion patterns at runtime without modifying `.graphifyignore` (#947)
+- Fix: `.worktrees/` directory now skipped during scan — git worktree sibling checkouts inside `.worktrees/` were previously indexed as duplicate source (#947)
+- Security: NAT64 IPv6 addresses (`64:ff9b::/96`) no longer false-positive as blocked reserved IPs — affects hosts like `arxiv.org` on IPv6-only networks where the ISP uses RFC 6052 NAT64
+
 ## 0.8.13 (2026-05-18)
 
 - Fix: node ID collisions across same-named files in different directories — SQL extractor and Python import resolver now use directory-qualified stems (`dir_file_entity`) instead of bare filename stems, preventing silent node merging on repos with duplicate filenames (#1A, #1B)
