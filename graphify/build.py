@@ -228,8 +228,9 @@ def build(
 
 
 def _norm_label(label: str) -> str:
-    """Canonical dedup key — lowercase, alphanumeric only."""
-    return re.sub(r"[^a-z0-9 ]", "", label.lower()).strip()
+    """Canonical dedup key — Unicode-aware, preserves CJK/word characters."""
+    label = unicodedata.normalize("NFKC", label)
+    return re.sub(r"[\W_ ]+", " ", label.casefold(), flags=re.UNICODE).strip()
 
 
 def deduplicate_by_label(nodes: list[dict], edges: list[dict]) -> tuple[list[dict], list[dict]]:
