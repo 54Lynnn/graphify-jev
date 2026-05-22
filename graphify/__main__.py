@@ -23,6 +23,25 @@ def _default_graph_path() -> str:
     return str(Path(_GRAPHIFY_OUT) / "graph.json")
 
 
+def _enforce_graph_size_cap_or_exit(gp: Path) -> None:
+    """Reject oversized graph files before parsing (CLI exit-on-fail flavor).
+
+    Delegates to ``graphify.security.check_graph_file_size_cap`` and turns the
+    raised ``ValueError`` into a CLI-style ``error: ...`` message + exit 1.
+    Use this from ``__main__.py`` subcommands that already use the ``print +
+    sys.exit(1)`` idiom. Library/MCP/loader callers (``serve._load_graph``,
+    ``build``, ``benchmark``, ``tree_html``, ``callflow_html``, ``prs``,
+    ``global_graph``, ``watch``, ``export``) call the security helper directly
+    and let the ``ValueError`` propagate.
+    """
+    from graphify.security import check_graph_file_size_cap
+    try:
+        check_graph_file_size_cap(gp)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
 def _check_skill_version(skill_dst: Path) -> None:
     """Warn if the installed skill is from an older graphify version."""
     version_file = skill_dst.parent / ".graphify_version"
@@ -1218,6 +1237,16 @@ def main() -> None:
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
         print("  explain \"X\"             plain-language explanation of a node and its neighbors")
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
+        print("  diagnose multigraph    report same-endpoint edge collapse risk in graph.json")
+        print("    --graph <path>          path to graph/extraction JSON")
+        print("                            (default graphify-out/graph.json)")
+        print("    --json                  emit machine-readable JSON")
+        print("    --max-examples N        max same-endpoint examples to print (default 5)")
+        print("    --directed              force directed post-build simulation")
+        print("    --undirected            force undirected post-build simulation")
+        print("                            (default follows JSON directed flag;")
+        print("                             raw extraction with no flag defaults directed)")
+        print("    --extract-path PATH     extractor source for suppression scan")
         print("  clone <github-url>      clone a GitHub repo locally and print its path for /graphify")
         print("  merge-driver <base> <current> <other>  git merge driver: union-merge two graph.json files (set up via hook install)")
         print("  merge-graphs <g1> <g2>  merge two or more graph.json files into one cross-repo graph")
@@ -1534,6 +1563,7 @@ def main() -> None:
         if not gp.suffix == ".json":
             print(f"error: graph file must be a .json file", file=sys.stderr)
             sys.exit(1)
+        _enforce_graph_size_cap_or_exit(gp)
         try:
             import json as _json
             import networkx as _nx
@@ -1594,6 +1624,7 @@ def main() -> None:
         if not gp.exists():
             print(f"error: graph file not found: {gp}", file=sys.stderr)
             sys.exit(1)
+        _enforce_graph_size_cap_or_exit(gp)
         _raw = json.loads(gp.read_text(encoding="utf-8"))
         if "links" not in _raw and "edges" in _raw:
             _raw = dict(_raw, links=_raw["edges"])
@@ -1675,6 +1706,7 @@ def main() -> None:
         if not gp.exists():
             print(f"error: graph file not found: {gp}", file=sys.stderr)
             sys.exit(1)
+        _enforce_graph_size_cap_or_exit(gp)
         _raw = json.loads(gp.read_text(encoding="utf-8"))
         if "links" not in _raw and "edges" in _raw:
             _raw = dict(_raw, links=_raw["edges"])
@@ -1712,6 +1744,100 @@ def main() -> None:
                 print(f"  {arrow} {G.nodes[nb].get('label', nb)} [{rel}] [{conf}]")
             if len(connections) > 20:
                 print(f"  ... and {len(connections) - 20} more")
+
+    elif cmd == "diagnose":
+        subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
+        if subcmd != "multigraph":
+            print(
+                "Usage: graphify diagnose multigraph "
+                "[--graph path] [--json] [--max-examples N] "
+                "[--directed] [--undirected] [--extract-path path]",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        graph_path = Path(_default_graph_path())
+        max_examples = 5
+        directed: bool | None = None
+        direction_flag: str | None = None
+        json_output = False
+        extract_path: Path | None = None
+
+        i = 3
+        while i < len(sys.argv):
+            arg = sys.argv[i]
+            if arg == "--graph":
+                i += 1
+                if i >= len(sys.argv):
+                    print("error: --graph requires a path", file=sys.stderr)
+                    sys.exit(1)
+                graph_path = Path(sys.argv[i])
+            elif arg == "--json":
+                json_output = True
+            elif arg == "--max-examples":
+                i += 1
+                if i >= len(sys.argv):
+                    print("error: --max-examples requires an integer", file=sys.stderr)
+                    sys.exit(1)
+                try:
+                    max_examples = int(sys.argv[i])
+                except ValueError:
+                    print("error: --max-examples requires an integer", file=sys.stderr)
+                    sys.exit(1)
+                if max_examples < 0:
+                    print("error: --max-examples must be >= 0", file=sys.stderr)
+                    sys.exit(1)
+            elif arg == "--directed":
+                if direction_flag == "undirected":
+                    print(
+                        "error: --directed and --undirected are mutually exclusive",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                direction_flag = "directed"
+                directed = True
+            elif arg == "--undirected":
+                if direction_flag == "directed":
+                    print(
+                        "error: --directed and --undirected are mutually exclusive",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+                direction_flag = "undirected"
+                directed = False
+            elif arg == "--extract-path":
+                i += 1
+                if i >= len(sys.argv):
+                    print("error: --extract-path requires a path", file=sys.stderr)
+                    sys.exit(1)
+                extract_path = Path(sys.argv[i])
+            else:
+                print(f"error: unknown diagnose option {arg}", file=sys.stderr)
+                sys.exit(1)
+            i += 1
+
+        from graphify.diagnostics import (
+            diagnose_file,
+            format_diagnostic_json,
+            format_diagnostic_report,
+        )
+
+        try:
+            summary = diagnose_file(
+                graph_path,
+                directed=directed,
+                root=Path(".").resolve(),
+                max_examples=max_examples,
+                extract_path=extract_path,
+            )
+        except Exception as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        if json_output:
+            print(json.dumps(format_diagnostic_json(summary), indent=2))
+        else:
+            print(format_diagnostic_report(summary))
 
     elif cmd == "add":
         if len(sys.argv) < 3:
@@ -1798,6 +1924,7 @@ def main() -> None:
         from graphify.report import generate
         from graphify.export import to_json, to_html
         print("Loading existing graph...")
+        _enforce_graph_size_cap_or_exit(graph_json)
         _raw = json.loads(graph_json.read_text(encoding="utf-8"))
         _directed = bool(_raw.get("directed", False))
         G = build_from_json(_raw, directed=_directed)
@@ -1958,6 +2085,7 @@ def main() -> None:
         if not graph_path.is_file():
             print(f"error: graph.json not found at {graph_path}", file=sys.stderr)
             sys.exit(1)
+        _enforce_graph_size_cap_or_exit(graph_path)
         if output_path is None:
             output_path = graph_path.parent / "GRAPH_TREE.html"
         out = write_tree_html(
@@ -2046,6 +2174,7 @@ def main() -> None:
             if not gp.exists():
                 print(f"error: not found: {gp}", file=sys.stderr)
                 sys.exit(1)
+            _enforce_graph_size_cap_or_exit(gp)
             data = json.loads(gp.read_text(encoding="utf-8"))
             # Normalize edges/links key before loading — graphify writes "links"
             # via node_link_data but older runs may have used "edges" (#738).
@@ -2232,6 +2361,7 @@ def main() -> None:
         from networkx.readwrite import json_graph as _jg
         from graphify.build import build_from_json as _bfj
 
+        _enforce_graph_size_cap_or_exit(graph_path)
         _raw = json.loads(graph_path.read_text(encoding="utf-8"))
         if "links" not in _raw and "edges" in _raw:
             _raw = dict(_raw, links=_raw["edges"])
@@ -2326,6 +2456,7 @@ def main() -> None:
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark
         graph_path = sys.argv[2] if len(sys.argv) > 2 else "graphify-out/graph.json"
+        _enforce_graph_size_cap_or_exit(Path(graph_path))
         # Try to load corpus_words from detect output
         corpus_words = None
         detect_path = Path(".graphify_detect.json")

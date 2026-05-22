@@ -521,6 +521,175 @@ def test_extract_bash_missing_grammar_returns_error():
     assert result["nodes"] == []
 
 
+def test_extract_bash_rejects_command_substitution_as_call(tmp_path):
+    """`$(build)` must not be recorded as a call edge to build()."""
+    script = tmp_path / "command_substitution.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "build() { echo build; }\n"
+        "$(build)\n"
+    )
+    result = extract_bash(script)
+    labels = {n["id"]: n["label"] for n in result["nodes"]}
+    call_pairs = [
+        (labels.get(e["source"], e["source"]), labels.get(e["target"], e["target"]))
+        for e in result["edges"]
+        if e["relation"] == "calls"
+    ]
+    assert call_pairs == [], f"Command substitution erroneously emitted call edges: {call_pairs}"
+
+
+def test_extract_bash_process_substitution_not_recorded(tmp_path):
+    """`<(helper)` (process substitution) must not be recorded as a call edge."""
+    script = tmp_path / "process_substitution.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "helper() { echo h; }\n"
+        "diff <(helper) <(helper)\n"
+    )
+    result = extract_bash(script)
+    labels = {n["id"]: n["label"] for n in result["nodes"]}
+    call_pairs = [
+        (labels.get(e["source"], e["source"]), labels.get(e["target"], e["target"]))
+        for e in result["edges"]
+        if e["relation"] == "calls"
+    ]
+    assert call_pairs == [], f"Process substitution erroneously emitted call edges: {call_pairs}"
+
+
+def test_extract_bash_shadowing_function_is_recorded(tmp_path):
+    """User-defined function shadowing an external command (install/find/etc.) must still produce a call edge."""
+    script = tmp_path / "shadowing.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "install() { echo install; }\n"
+        "deploy() { install; }\n"
+    )
+    result = extract_bash(script)
+    labels = {n["id"]: n["label"] for n in result["nodes"]}
+    call_pairs = [
+        (labels.get(e["source"], e["source"]), labels.get(e["target"], e["target"]))
+        for e in result["edges"]
+        if e["relation"] == "calls"
+    ]
+    assert ("deploy()", "install()") in call_pairs, (
+        f"Shadowing function call not recorded; got: {call_pairs}"
+    )
+
+
+def test_extract_bash_creates_entrypoint_node(tmp_path):
+    """Every bash file produces a `bash_entrypoint` node distinct from the file node, joined by a `contains` edge."""
+    script = tmp_path / "with_entrypoint.sh"
+    script.write_text("#!/usr/bin/env bash\nfoo() { :; }\n")
+    result = extract_bash(script)
+    kinds = [n.get("metadata", {}).get("kind") for n in result["nodes"]]
+    assert "bash_entrypoint" in kinds, f"No bash_entrypoint node; kinds={kinds}"
+    assert "file" in kinds, f"No file node; kinds={kinds}"
+    file_node = next(n for n in result["nodes"] if n.get("metadata", {}).get("kind") == "file")
+    entry_node = next(n for n in result["nodes"] if n.get("metadata", {}).get("kind") == "bash_entrypoint")
+    contains_edges = [
+        e for e in result["edges"]
+        if e["relation"] == "contains" and e["source"] == file_node["id"] and e["target"] == entry_node["id"]
+    ]
+    assert contains_edges, "Missing contains edge from file → bash_entrypoint"
+
+
+def test_extract_bash_top_level_call_attributes_to_entrypoint(tmp_path):
+    """Top-level function call attaches to the entrypoint node, not orphaned."""
+    script = tmp_path / "top_level_call.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "build() { echo build; }\n"
+        "build\n"
+    )
+    result = extract_bash(script)
+    entry_node = next(
+        (n for n in result["nodes"] if n.get("metadata", {}).get("kind") == "bash_entrypoint"),
+        None,
+    )
+    assert entry_node is not None, "No entrypoint node created"
+    call_pairs = [
+        (e["source"], e["target"])
+        for e in result["edges"]
+        if e["relation"] == "calls"
+    ]
+    target_ids = {tgt for _, tgt in call_pairs if any(n["id"] == tgt and n["label"] == "build()" for n in result["nodes"])}
+    source_ids_to_build = {src for src, tgt in call_pairs if tgt in target_ids}
+    assert entry_node["id"] in source_ids_to_build, (
+        f"Top-level call to build not attributed to entrypoint; calls={call_pairs}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# PR #893 regression tests — bash extractor Copilot review findings
+# ---------------------------------------------------------------------------
+
+
+def test_extract_bash_entrypoint_no_collision_with_function_named_script(tmp_path):
+    """Entrypoint node must have a distinct ID from a function also named 'script'.
+
+    _make_id strips leading/trailing '_.' from each part, so
+    _make_id(stem, "__script__") strips to _make_id(stem, "script"), which is
+    identical to _make_id(stem, "script") for a function named 'script'.
+    """
+    script = tmp_path / "deploy.sh"
+    script.write_text("#!/usr/bin/env bash\nfunction script() { echo hi; }\n")
+    result = extract_bash(script)
+    entry_nodes = [n for n in result["nodes"] if n.get("metadata", {}).get("kind") == "bash_entrypoint"]
+    func_nodes = [n for n in result["nodes"] if n.get("metadata", {}).get("kind") == "bash_function"]
+    assert entry_nodes, "Must have a bash_entrypoint node"
+    assert func_nodes, "Must have a bash_function node for 'script'"
+    entry_id = entry_nodes[0]["id"]
+    func_id = func_nodes[0]["id"]
+    assert entry_id != func_id, (
+        f"Entrypoint ID must not collide with function 'script' ID; both are '{entry_id}'"
+    )
+
+
+def test_extract_bash_nested_function_calls_recorded(tmp_path):
+    """Calls made inside a nested (inner) function body must be collected."""
+    script = tmp_path / "nested.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "function do_work() { :; }\n"
+        "function outer() {\n"
+        "    function inner() {\n"
+        "        do_work\n"
+        "    }\n"
+        "    inner\n"
+        "}\n"
+    )
+    result = extract_bash(script)
+    node_id_by_label = {n["label"].rstrip("()"): n["id"] for n in result["nodes"]}
+    assert "inner" in node_id_by_label, f"inner function must be discovered; labels={list(node_id_by_label)}"
+    assert "do_work" in node_id_by_label, f"do_work function must be discovered; labels={list(node_id_by_label)}"
+    calls = {(e["source"], e["target"]) for e in result["edges"] if e.get("relation") == "calls"}
+    inner_id = node_id_by_label["inner"]
+    do_work_id = node_id_by_label["do_work"]
+    assert (inner_id, do_work_id) in calls, (
+        f"inner→do_work call edge must be recorded; got calls={calls}"
+    )
+
+
+def test_extract_bash_source_user_defined_emits_calls_not_imports_from(tmp_path):
+    """When 'source' is a user-defined function, 'source ./file.sh' must emit a
+    calls edge, not an imports_from edge.  The user-defined function shadows the
+    built-in source command."""
+    helpers = tmp_path / "helpers.sh"
+    helpers.write_text("#!/bin/bash\n")
+    script = tmp_path / "run.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\n"
+        "function source() { echo 'custom source'; }\n"
+        "source ./helpers.sh\n"
+    )
+    result = extract_bash(script)
+    import_edges = [e for e in result["edges"] if e.get("relation") == "imports_from"]
+    assert not import_edges, (
+        f"'source' is a user-defined function; 'source ./helpers.sh' must not emit imports_from; got: {import_edges}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # JSON extractor tests (#866)
 # ---------------------------------------------------------------------------
@@ -592,3 +761,19 @@ def test_extract_bash_via_dispatch():
 def test_extract_json_via_dispatch():
     from graphify.extract import _get_extractor
     assert _get_extractor(Path("foo.json")) is extract_json
+
+
+def test_extract_bash_node_metadata_is_sanitized():
+    """Bash extractor must route node metadata through sanitize_metadata so
+    HTML-sensitive characters cannot reach downstream graph viewers raw."""
+    result = extract_bash(FIXTURES / "sample.sh")
+    assert "error" not in result
+    for node in result["nodes"]:
+        meta = node.get("metadata", {})
+        # Static bash metadata is currently {"language": "bash", "kind": "code"};
+        # both pass through sanitisation unchanged, but the values must be the
+        # post-sanitisation strings (not raw objects).
+        for value in meta.values():
+            if isinstance(value, str):
+                assert "<" not in value
+                assert "\x00" not in value

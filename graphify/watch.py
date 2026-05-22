@@ -331,6 +331,7 @@ def _rebuild_code(
         from graphify.analyze import god_nodes, surprising_connections, suggest_questions
         from graphify.report import generate
         from graphify.export import to_json, to_html
+        from graphify.security import check_graph_file_size_cap
 
         detected = detect(watch_path, follow_symlinks=follow_symlinks)
         code_files = [Path(f) for f in detected['files']['code']]
@@ -389,6 +390,7 @@ def _rebuild_code(
         existing_graph_data: dict = {}
         if existing_graph.exists():
             try:
+                check_graph_file_size_cap(existing_graph)
                 existing = json.loads(existing_graph.read_text(encoding="utf-8"))
                 existing_graph_data = existing
                 new_ast_ids = {n["id"] for n in result["nodes"]}
@@ -433,6 +435,7 @@ def _rebuild_code(
             same_graph = False
             if existing_graph.exists():
                 try:
+                    check_graph_file_size_cap(existing_graph)
                     existing_payload = json.loads(existing_graph.read_text(encoding="utf-8"))
                     same_graph = (
                         json.dumps(_canonical_graph_for_compare(existing_payload), sort_keys=True, ensure_ascii=False)
@@ -526,6 +529,7 @@ def _rebuild_code(
         same_report = False
         if existing_graph.exists():
             try:
+                check_graph_file_size_cap(existing_graph)
                 existing_payload = json.loads(existing_graph.read_text(encoding="utf-8"))
                 same_graph = (
                     json.dumps(_canonical_graph_for_compare(existing_payload), sort_keys=True, ensure_ascii=False)
