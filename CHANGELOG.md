@@ -2,6 +2,14 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.16 (2026-05-22)
+
+- Fix: CJK/Unicode labels no longer silently stripped during dedup — `_norm()` and `_norm_label()` now use Unicode-aware `[\W_]+` regex with `casefold()` and NFKC normalization; previously `道具処理クラス` and any non-ASCII label collapsed to empty string and got falsely merged (#937)
+- Fix: `.ets` (ArkTS/HarmonyOS) files now recognized as code and extracted via the TypeScript parser (#926)
+- Fix: `graphify` now exits non-zero when all semantic-extraction chunks fail — previously a silent empty graph was written with exit code 0, masking backend failures (#889)
+- Feat: `graphify install --project` installs the skill into the current repository (`.claude/skills/`, `.agents/skills/`, etc.) instead of the user home directory; per-platform subcommands support the same flag (#931)
+- Docs: Uzbek (uz-UZ) README translation (#982)
+
 ## 0.8.15 (2026-05-22)
 
 - Fix: `cluster-only` subcommand crashed with `FileNotFoundError` when `graphify-out/` did not yet exist — output directory is now created before any write (#934)
