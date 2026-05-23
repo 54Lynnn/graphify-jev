@@ -1745,11 +1745,13 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
     walk(root)
 
     # ── Call-graph pass ───────────────────────────────────────────────────────
-    label_to_nid: dict[str, str] = {}
+    label_to_nid: dict[str, str] = {}     # case-sensitive (Ruby, C#, Java, Kotlin, etc.)
+    label_to_nid_ci: dict[str, str] = {}  # case-insensitive (PHP functions/classes)
     for n in nodes:
         raw = n["label"]
         normalised = raw.strip("()").lstrip(".")
-        label_to_nid[normalised.lower()] = n["id"]
+        label_to_nid[normalised] = n["id"]
+        label_to_nid_ci[normalised.lower()] = n["id"]
 
     seen_call_pairs: set[tuple[str, str]] = set()
     seen_dyn_import_pairs: set[tuple[str, str]] = set()
@@ -1892,7 +1894,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                         callee_name = _read_text(func_node, source)
 
             if callee_name:
-                tgt_nid = label_to_nid.get(callee_name.lower())
+                tgt_nid = label_to_nid.get(callee_name)
                 if tgt_nid and tgt_nid != caller_nid:
                     pair = (caller_nid, tgt_nid)
                     if pair not in seen_call_pairs:
@@ -1937,8 +1939,8 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                             break
                 if first_key:
                     segment = first_key.split(".")[0]
-                    tgt_nid = (label_to_nid.get(segment.lower())
-                               or label_to_nid.get(f"{segment}.php".lower()))
+                    tgt_nid = (label_to_nid_ci.get(segment.lower())
+                               or label_to_nid_ci.get(f"{segment}.php".lower()))
                     if tgt_nid and tgt_nid != caller_nid:
                         relation = f"uses_{callee_name}"
                         pair3 = (caller_nid, tgt_nid, relation)
@@ -1976,8 +1978,8 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                             break
                 if len(class_args) == 2:
                     contract_name, impl_name = class_args
-                    contract_nid = label_to_nid.get(contract_name.lower())
-                    impl_nid = label_to_nid.get(impl_name.lower())
+                    contract_nid = label_to_nid_ci.get(contract_name.lower())
+                    impl_nid = label_to_nid_ci.get(impl_name.lower())
                     if contract_nid and impl_nid and contract_nid != impl_nid:
                         pair3 = (contract_nid, impl_nid, "bound_to")
                         if pair3 not in seen_bind_pairs:
@@ -2004,7 +2006,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                         break
             if scope_node is not None:
                 class_name = _read_text(scope_node, source)
-                tgt_nid = label_to_nid.get(class_name.lower())
+                tgt_nid = label_to_nid_ci.get(class_name.lower())
                 if tgt_nid and tgt_nid != caller_nid:
                     pair3 = (caller_nid, tgt_nid, "uses_static_prop")
                     if pair3 not in seen_static_ref_pairs:
@@ -2025,7 +2027,7 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
         if config.ts_module == "tree_sitter_php" and node.type == "class_constant_access_expression":
             class_name = _php_class_const_scope(node)
             if class_name:
-                tgt_nid = label_to_nid.get(class_name.lower())
+                tgt_nid = label_to_nid_ci.get(class_name.lower())
                 if tgt_nid and tgt_nid != caller_nid:
                     pair3 = (caller_nid, tgt_nid, "references_constant")
                     if pair3 not in seen_static_ref_pairs:
@@ -2051,8 +2053,8 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
     # ── Event listener pass ───────────────────────────────────────────────────
     seen_listen_pairs: set[tuple[str, str]] = set()
     for event_name, listener_name, line in pending_listen_edges:
-        event_nid = label_to_nid.get(event_name.lower())
-        listener_nid = label_to_nid.get(listener_name.lower())
+        event_nid = label_to_nid_ci.get(event_name.lower())
+        listener_nid = label_to_nid_ci.get(listener_name.lower())
         if not event_nid or not listener_nid or event_nid == listener_nid:
             continue
         pair2 = (event_nid, listener_nid)
@@ -3716,7 +3718,7 @@ def extract_go(path: Path) -> dict:
     for n in nodes:
         raw = n["label"]
         normalised = raw.strip("()").lstrip(".")
-        label_to_nid[normalised.lower()] = n["id"]
+        label_to_nid[normalised] = n["id"]
 
     seen_call_pairs: set[tuple[str, str]] = set()
     raw_calls: list[dict] = []
@@ -3741,7 +3743,7 @@ def extract_go(path: Path) -> dict:
                     if field:
                         callee_name = _read_text(field, source)
             if callee_name:
-                tgt_nid = label_to_nid.get(callee_name.lower())
+                tgt_nid = label_to_nid.get(callee_name)
                 if tgt_nid and tgt_nid != caller_nid:
                     pair = (caller_nid, tgt_nid)
                     if pair not in seen_call_pairs:
@@ -3912,7 +3914,7 @@ def extract_rust(path: Path) -> dict:
     for n in nodes:
         raw = n["label"]
         normalised = raw.strip("()").lstrip(".")
-        label_to_nid[normalised.lower()] = n["id"]
+        label_to_nid[normalised] = n["id"]
 
     seen_call_pairs: set[tuple[str, str]] = set()
     raw_calls: list[dict] = []
@@ -3942,7 +3944,7 @@ def extract_rust(path: Path) -> dict:
                     if name:
                         callee_name = _read_text(name, source)
             if callee_name:
-                tgt_nid = label_to_nid.get(callee_name.lower())
+                tgt_nid = label_to_nid.get(callee_name)
                 if tgt_nid and tgt_nid != caller_nid:
                     pair = (caller_nid, tgt_nid)
                     if pair not in seen_call_pairs:
@@ -5839,7 +5841,7 @@ def extract_elixir(path: Path) -> dict:
     label_to_nid: dict[str, str] = {}
     for n in nodes:
         normalised = n["label"].strip("()").lstrip(".")
-        label_to_nid[normalised.lower()] = n["id"]
+        label_to_nid[normalised] = n["id"]
 
     seen_call_pairs: set[tuple[str, str]] = set()
     raw_calls: list[dict] = []
@@ -5877,7 +5879,7 @@ def extract_elixir(path: Path) -> dict:
                 callee_name = source[child.start_byte:child.end_byte].decode("utf-8", errors="replace")
                 break
         if callee_name:
-            tgt_nid = label_to_nid.get(callee_name.lower())
+            tgt_nid = label_to_nid.get(callee_name)
             if tgt_nid and tgt_nid != caller_nid:
                 pair = (caller_nid, tgt_nid)
                 if pair not in seen_call_pairs:
