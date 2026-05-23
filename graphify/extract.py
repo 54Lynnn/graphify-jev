@@ -7434,8 +7434,15 @@ def _extract_parallel(
                 pool.submit(_extract_single_file, item): item[0] for item in work_items
             }
             for future in concurrent.futures.as_completed(futures):
-                idx, result = future.result()
-                per_file[idx] = result
+                try:
+                    idx, result = future.result()
+                    per_file[idx] = result
+                except Exception as exc:
+                    idx = futures[future]
+                    print(
+                        f"  warning: worker failed for {work_items[idx][1]}: {exc}",
+                        file=sys.stderr, flush=True,
+                    )
                 done_count += 1
                 if (
                     total_files >= _PROGRESS_INTERVAL
