@@ -979,8 +979,9 @@ from pathlib import Path
 data = json.loads(Path('graphify-out/graph.json').read_text())
 vocab = set()
 for n in data['nodes']:
-    for c in re.findall(r'[A-Za-z]+', n.get('label','') or ''):
-        for p in re.findall(r'[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+', c):
+    for c in re.findall(r'[^\W\d_]+', n.get('label','') or '', re.UNICODE):
+        parts = re.findall(r'[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+', c) or [c]
+        for p in parts:
             t = p.lower()
             if 3 <= len(t) <= 30:
                 vocab.add(t)

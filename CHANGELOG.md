@@ -2,6 +2,16 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.18 (2026-05-24)
+
+- Fix: post-commit hook now updates graph after delete-only commits — shrink-guard is bypassed when `changed_paths` contains explicit deletions, preventing stale nodes from accumulating indefinitely (#1000)
+- Fix: `graphify export` (html/obsidian/wiki/svg/graphml/neo4j) no longer collapses to "Single community" when `.graphify_analysis.json` is absent — falls back to per-node `community` attribute already present in `graph.json` (#1001)
+- Fix: Ukrainian README translation updated to v8 — all new sections, correct badges, 31 languages (#995)
+- Feat: semantic context tags on `references` edges for Python/JS/TS/C#/Java — `parameter_type`, `return_type`, `generic_arg`, `attribute`, `field`; C#/Java split `inherits`/`implements`; dedup key now includes context (#996)
+  - **Breaking:** Java `extends` edges are now emitted as `inherits` — queries filtering on `relation="extends"` for Java nodes must be updated to `relation="inherits"`
+- Feat: constrained query expansion in skill — Step 0 extracts actual graph vocab and forces LLM to pick expansion tokens only from that set, preventing hallucinated expansions; Unicode regex fix captures Cyrillic/CJK labels (#998)
+- Docs: Ukrainian README updated to v8 with all new sections, correct badges, YC badge, 31 language count (#995)
+
 ## 0.8.17 (2026-05-23)
 
 - Fix: Case-sensitive call resolution for Go, Rust, and Elixir — resolvers previously lowercased both the label index and the callee name, causing `Authorize` to match `authorize` and produce phantom edges; Ruby/C#/Java/Kotlin/Scala/PHP use the same generic resolver which now splits into case-sensitive (all languages) and case-insensitive (PHP only, where function/class names are genuinely case-insensitive) dicts (#993)

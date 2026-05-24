@@ -155,7 +155,7 @@ graphify install --project --platform codex
 | `openai` | OpenAI / OpenAI-сумісні API | `pip install "graphifyy[openai]"` |
 | `gemini` | Google Gemini API | `pip install "graphifyy[gemini]"` |
 | `bedrock` | AWS Bedrock (використовує IAM, без API-ключа) | `pip install "graphifyy[bedrock]"` |
-| `sql` | Вилучення SQL схеит | `pip install "graphifyy[sql]"` |
+| `sql` | Вилучення SQL схем | `pip install "graphifyy[sql]"` |
 | `all` | Все вищезазначене | `pip install "graphifyy[all]"` |
 
 ---
