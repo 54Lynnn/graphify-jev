@@ -1,5 +1,6 @@
 # write graph to HTML, JSON, SVG, GraphML, Obsidian vault, and Neo4j Cypher
 from __future__ import annotations
+import hashlib
 import html as _html
 import json
 import math
@@ -62,10 +63,16 @@ def backup_if_protected(out_dir: Path) -> "Path | None":
     reason = "+".join(filter(None, ["semantic" if is_semantic else "", "curated" if is_curated else ""]))
     today = date.today().isoformat()
     backup_dir = out / today
-    suffix = 2
-    while backup_dir.exists():
-        backup_dir = out / f"{today}_{suffix}"
-        suffix += 1
+    graph_src = out / "graph.json"
+
+    # Skip re-copying if today's backup already has identical graph.json content.
+    # If content differs (graph changed since the last backup today), overwrite
+    # the backup in place — one folder per day, always the latest pre-overwrite state.
+    if backup_dir.exists() and (backup_dir / "graph.json").exists():
+        src_hash = hashlib.sha256(graph_src.read_bytes()).hexdigest()
+        bak_hash = hashlib.sha256((backup_dir / "graph.json").read_bytes()).hexdigest()
+        if src_hash == bak_hash:
+            return backup_dir  # identical content, nothing to do
 
     try:
         backup_dir.mkdir(parents=True, exist_ok=True)
