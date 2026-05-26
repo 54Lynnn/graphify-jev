@@ -338,6 +338,17 @@ def build_merge(
     # Prune nodes and edges from deleted source files
     if prune_sources:
         prune_set = set(prune_sources)
+        # Manifest stores absolute paths; graph nodes store relative paths.
+        # Add relative variants so both formats match regardless of OS or
+        # whether paths were relativized at build time (#1007).
+        if root is not None:
+            import os as _os
+            _root = Path(root)
+            for p in list(prune_sources):
+                try:
+                    prune_set.add(str(Path(p).relative_to(_root)).replace(_os.sep, "/"))
+                except ValueError:
+                    pass
         to_remove = [
             n for n, d in G.nodes(data=True)
             if d.get("source_file") in prune_set

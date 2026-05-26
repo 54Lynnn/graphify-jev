@@ -346,6 +346,36 @@ def test_build_from_json_relative_source_file_unchanged(tmp_path):
     assert G.nodes["foo_bar"]["source_file"] == "src/foo.py"
 
 
+def test_build_merge_prune_absolute_paths_match_relative_nodes(tmp_path):
+    """#1007: manifest stores absolute paths, graph nodes store relative paths.
+    prune_sources with absolute paths must still remove the right nodes."""
+    import json
+    from graphify.export import to_json
+
+    root = tmp_path / "corpus"
+    root.mkdir()
+    graph_path = tmp_path / "graph.json"
+
+    # Simulate a graph with relative source_file paths (as built normally)
+    chunk = {"nodes": [
+        {"id": "n1", "label": "login", "file_type": "code", "source_file": "module_a/auth.py"},
+        {"id": "n2", "label": "format_date", "file_type": "code", "source_file": "module_b/utils.py"},
+    ], "edges": []}
+    G0 = build([chunk], dedup=False)
+    import networkx as nx
+    graph_path.write_text(
+        json.dumps(nx.node_link_data(G0, edges="edges")), encoding="utf-8"
+    )
+
+    # prune_sources from manifest — absolute paths
+    deleted_abs = [str(root / "module_b" / "utils.py")]
+    G1 = build_merge([], graph_path, prune_sources=deleted_abs, dedup=False, root=root)
+
+    node_labels = {d["label"] for _, d in G1.nodes(data=True)}
+    assert "format_date" not in node_labels, "stale node from deleted file should be pruned"
+    assert "login" in node_labels, "unrelated node must survive"
+
+
 def test_build_merge_rejects_oversized_existing_graph(monkeypatch, tmp_path):
     """#F4: build_merge must refuse to read an existing graph.json that
     exceeds the size cap, rather than json.loads-ing it into memory."""
