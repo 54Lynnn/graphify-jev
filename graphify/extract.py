@@ -8637,7 +8637,7 @@ def extract(
         if not sf_path.is_absolute():
             continue
         try:
-            item["source_file"] = str(sf_path.relative_to(root))
+            item["source_file"] = sf_path.relative_to(root).as_posix()
         except ValueError:
             pass
 
