@@ -869,7 +869,6 @@ def _cursor_uninstall(project_dir: Path) -> None:
 # Devin CLI — .windsurf/rules/graphify.md (always-on context)
 # Devin reads .windsurf/rules/*.md files the same way Windsurf IDE does.
 _DEVIN_RULES_PATH = Path(".windsurf") / "rules" / "graphify.md"
-_DEVIN_RULES_MARKER = "## graphify"
 _DEVIN_RULES = """\
 ## graphify
 
