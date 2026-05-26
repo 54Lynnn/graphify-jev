@@ -162,6 +162,7 @@ Install only what you need:
 | `gemini` | Google Gemini API | `pip install "graphifyy[gemini]"` |
 | `bedrock` | AWS Bedrock (uses IAM, no API key) | `pip install "graphifyy[bedrock]"` |
 | `sql` | SQL schema extraction | `pip install "graphifyy[sql]"` |
+| `chinese` | Chinese query segmentation (jieba) | `pip install "graphifyy[chinese]"` |
 | `all` | Everything above | `pip install "graphifyy[all]"` |
 
 ---
