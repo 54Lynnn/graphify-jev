@@ -2,6 +2,16 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.19 (2026-05-26)
+
+- Feat: .NET project file support — `.sln`, `.csproj`, `.fsproj`, `.vbproj`, `.razor`, `.cshtml` now extracted; captures NuGet package refs, project-to-project dependencies, target frameworks, SDK attributes, Blazor/Razor directives (`@using`, `@inject`, `@inherits`, `@model`, `@page`), component refs, and `@code` block methods (#1025)
+- Feat: Chinese query segmentation — compound Chinese tokens (e.g. `页面路由`) are split into meaningful words using jieba when installed, with character bigram fallback; original compound preserved alongside segments for exact-match; new `pip install "graphifyy[chinese]"` extra (#1026)
+- Fix: Wiki TypeError when `source_file` is `None` — `G.nodes[n].get("source_file") or ""` replaces `.get("source_file", "")`, which did not handle explicit `None` values (#1016)
+- Fix: Nested `.claude/worktrees/` no longer indexed — `_is_noise_dir` now accepts an optional `parent` param and skips `worktrees/` directories nested inside dotted dirs like `.claude/` (#1023)
+- Fix: `backup_if_protected` no longer accumulates one folder per run — uses content-hash comparison to skip identical backups and overwrite in-place when content changes; one folder per day maximum
+- Feat: Devin CLI support — `graphify devin install/uninstall` installs the skill into Devin's `.devin/rules/` directory (#1020)
+- Fix: TypeScript 5.0 array-form `extends` in `tsconfig.json` now handled — `_read_tsconfig_aliases` normalizes `extends` to a list before iteration (#1017)
+
 ## 0.8.18 (2026-05-24)
 
 - Fix: post-commit hook now updates graph after delete-only commits — shrink-guard is bypassed when `changed_paths` contains explicit deletions, preventing stale nodes from accumulating indefinitely (#1000)
