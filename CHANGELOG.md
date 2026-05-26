@@ -2,6 +2,15 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.20 (2026-05-26)
+
+- Fix: stale nodes persist after `graphify update` when files are deleted on Windows — `deleted_paths` and `evict_sources` in `_rebuild_code` now use `.as_posix()` for consistent forward-slash paths; `_relativize_source_files` called on the existing graph before eviction (not after); `_relativize_source_files` itself now produces forward slashes (#1007)
+- Fix: `graphify extract` stale-node pruning now also handles symlinked scan roots — `prune_set` expansion uses `Path(root).resolve()` before `relative_to()` so symlinked roots produce correct relative paths (#1007)
+- Feat: MCP config extractor — `.mcp.json`, `mcp.json`, `mcp_servers.json`, `claude_desktop_config.json` now extracted into the knowledge graph; captures server nodes, npm/pip package refs, env var requirements; env values discarded to prevent secret leakage (#1034)
+- Fix: `cluster-only` no longer drops community label alignment after re-clustering — `remap_communities_to_previous` now applied in the `cluster-only` path, matching the behaviour of `graphify update` (#1028)
+- Fix: Dart child node IDs no longer embed absolute paths — switched from `_make_id(str(path), name)` to `_make_id(_file_stem(path), name)`, consistent with all other extractors; existing Dart graphs should be rebuilt with `--force` (#999)
+- Security: XML parsing in `extract_csproj` and `extract_lazarus_package` now pre-screens for `<!DOCTYPE` / `<!ENTITY` declarations before calling `ET.fromstring`, blocking billion-laughs DoS on malicious project files; `extract_lpk` also gains the missing 2 MiB size cap
+
 ## 0.8.19 (2026-05-26)
 
 - Feat: .NET project file support — `.sln`, `.csproj`, `.fsproj`, `.vbproj`, `.razor`, `.cshtml` now extracted; captures NuGet package refs, project-to-project dependencies, target frameworks, SDK attributes, Blazor/Razor directives (`@using`, `@inject`, `@inherits`, `@model`, `@page`), component refs, and `@code` block methods (#1025)
