@@ -8503,7 +8503,7 @@ def _read_dmi_description(data: bytes) -> str:
             keyword = payload[:null]
             if keyword == b"Description":
                 if chunk_type == b"zTXt":
-                    return _zlib.decompress(payload[null + 2:]).decode("utf-8", errors="replace")
+                    return _zlib.decompressobj().decompress(payload[null + 2:], max_length=1024 * 1024).decode("utf-8", errors="replace")
                 return payload[null + 1:].decode("utf-8", errors="replace")
         i += 8 + length + 4
     return ""
@@ -8610,6 +8610,8 @@ def _dmm_type_path(entry: str) -> str:
 def extract_dmm(path: Path) -> dict:
     """Extract type-path references from a .dmm map file's tile dictionary."""
     try:
+        if path.stat().st_size > 50 * 1024 * 1024:
+            return {"nodes": [], "edges": [], "error": "file too large (>50 MB)"}
         text = path.read_text(encoding="utf-8", errors="replace")
     except Exception as e:
         return {"nodes": [], "edges": [], "error": str(e)}
