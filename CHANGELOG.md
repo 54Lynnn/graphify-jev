@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.8.22 (unreleased)
+## 0.8.22 (2026-05-28)
 
 - Feat: BYOND DreamMaker support — `.dm`/`.dme` files extracted via tree-sitter-dm (type definitions, proc declarations, `#include` edges, in-file call resolution, `new /type()` instantiation edges); `.dmi` PNG icon files parsed for icon-state nodes; `.dmm` map files parsed for type-path `uses` edges from the tile dictionary section; `.dmf` interface files parsed for window/elem/control-type hierarchy (#884)
 - Feat: `graphify extract --mode deep` flag enables richer semantic extraction using an extended system prompt; flag propagated through all four LLM backends (#1030)
