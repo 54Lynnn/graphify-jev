@@ -935,7 +935,7 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
             # Skip files inside our own converted/ dir (avoid re-processing sidecars)
             if str(p).startswith(str(converted_dir)):
                 continue
-        if _is_ignored(p, root, ignore_patterns):
+        if not in_memory and _is_ignored(p, root, ignore_patterns):
             continue
         if _is_sensitive(p):
             skipped_sensitive.append(str(p))

@@ -2156,6 +2156,20 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                                   parent_class_nid, add_node, add_edge):
                 return
 
+        # Python's `@property` / `@staticmethod` / `@classmethod` wrap the
+        # inner function_definition in a `decorated_definition` node. The
+        # default recurse below clears parent_class_nid, which would cause the
+        # inner method to be emitted with a class-unqualified node id (e.g.
+        # `file_baz` instead of `file_bar_baz`). That diverges from the
+        # class-qualified id the rationale walker uses for the same method's
+        # docstring, leaving the rationale edge dangling and the docstring
+        # node orphaned (#1050). Treat decorated_definition as a transparent
+        # wrapper so parent_class_nid propagates to the real function node.
+        if t == "decorated_definition":
+            for child in node.children:
+                walk(child, parent_class_nid=parent_class_nid)
+            return
+
         # Default: recurse
         for child in node.children:
             walk(child, parent_class_nid=None)
