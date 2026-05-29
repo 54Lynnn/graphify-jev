@@ -2,6 +2,14 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.24 (2026-05-29)
+
+- Feat: type-reference edges for ObjC, Julia, C, C++, Scala, Fortran, and PowerShell — extends cross-language semantic context work from #1015 to a second wave of languages; CI matrix now covers Python 3.10 with `faster-whisper` version guard (#1071)
+- Fix: claude-cli backend no longer loops on hollow streamed responses — handles all four documented failure modes (empty stream, no JSON, missing `result`, empty `result`) with tests (#1063)
+- Fix: `calls` edges no longer flip caller/callee when the same node pair appears in both directions in an undirected build — first-seen direction preserved on bidirectional collision (#1061)
+- Fix: `graphify-out/.graphify_python` path prefix was missing in 8 skill files (256 instances) causing `cat: .graphify_python: No such file or directory` on every non-Claude-Code platform
+- Chore: all skill files now use uv-aware interpreter detection — `uv tool run graphifyy python` preferred over shebang parsing when uv is available
+
 ## 0.8.23 (2026-05-28)
 
 - Feat: type-reference edges for Swift, Kotlin, PHP, Rust, and Go — `references` edges with `parameter_type`, `return_type`, `generic_arg`, `field`, and `attribute` contexts; inheritance split into `inherits` (superclass) vs `implements` (protocol/interface/trait) for all five languages (#1015)
