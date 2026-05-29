@@ -490,10 +490,27 @@ def _call_claude_cli(user_message: str, max_tokens: int = 8192, *, deep_mode: bo
     ANTHROPIC_API_KEY. Useful for Pro/Max subscribers who don't want to provision
     a pay-as-you-go API key just to run graphify's semantic pass.
     """
+    import platform
     import shutil
     import subprocess
 
-    if shutil.which("claude") is None:
+    # On Windows, npm installs `claude` as both `claude.ps1` and `claude.cmd`
+    # alongside each other. When PATHEXT lists `.PS1` before `.CMD`,
+    # `shutil.which("claude")` returns `claude.ps1`, which `CreateProcess`
+    # cannot execute directly — it raises `[WinError 2] The system cannot
+    # find the file specified`. `claude.cmd` IS executable by CreateProcess,
+    # so prefer it explicitly on Windows. See issue #1072.
+    claude_cmd = "claude"
+    if platform.system() == "Windows":
+        cmd_path = shutil.which("claude.cmd")
+        if cmd_path:
+            claude_cmd = cmd_path
+        elif shutil.which("claude") is None:
+            raise RuntimeError(
+                "Claude Code CLI not found on $PATH. Install from "
+                "https://claude.ai/code and run `claude` once to authenticate."
+            )
+    elif shutil.which("claude") is None:
         raise RuntimeError(
             "Claude Code CLI not found on $PATH. Install from "
             "https://claude.ai/code and run `claude` once to authenticate."
@@ -508,7 +525,7 @@ def _call_claude_cli(user_message: str, max_tokens: int = 8192, *, deep_mode: bo
     # Replacing the default prompt eliminates the conflict at the source.
     # Side benefit: cache-creation tokens per call drop ~19% in practice.
     cli_args = [
-        "claude", "-p",
+        claude_cmd, "-p",
         "--output-format", "json",
         "--no-session-persistence",
         "--system-prompt", _extraction_system(deep=deep_mode),
