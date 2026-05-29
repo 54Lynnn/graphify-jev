@@ -1977,25 +1977,65 @@ _PHP_CONFIG = LanguageConfig(
 )
 
 
+def _resolve_lua_import_target(raw_module: str, str_path: str) -> str:
+    """Resolve a Lua require() module name to a node id.
+
+    Lua module names use dots as path separators: `require("pkg.b")` looks for
+    `pkg/b.lua` (or `pkg/b/init.lua`) relative to a package root. We probe the
+    importing file's directory and walk upward looking for a matching file on
+    disk; if found, the returned id matches the file node id `_extract_generic`
+    assigns to that file (`_make_id(str(path))`), so the edge lands on a real
+    node. When nothing matches, fall back to `_make_id` of the full dotted
+    module name so cross-file resolution can still complete via the symbol
+    resolution pass instead of dropping the edge entirely (#1075).
+    """
+    if not raw_module:
+        return ""
+    rel = raw_module.replace(".", "/")
+    try:
+        start_dir = Path(str_path).parent
+    except Exception:
+        start_dir = None
+    if start_dir is not None:
+        probe = start_dir
+        # Walk up a few levels so requires from nested files still resolve when
+        # the package root is above the importing file.
+        for _ in range(6):
+            for suffix in (".lua", ".luau"):
+                cand = probe / f"{rel}{suffix}"
+                if cand.is_file():
+                    return _make_id(str(cand))
+            for suffix in (".lua", ".luau"):
+                cand = probe / rel / f"init{suffix}"
+                if cand.is_file():
+                    return _make_id(str(cand))
+            if probe.parent == probe:
+                break
+            probe = probe.parent
+    return _make_id(raw_module)
+
+
 def _import_lua(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> None:
     """Extract require('module') from Lua variable_declaration nodes."""
     text = _read_text(node, source)
     import re
     m = re.search(r"""require\s*[\('"]\s*['"]?([^'")\s]+)""", text)
     if m:
-        module_name = m.group(1).split(".")[-1]
-        if module_name:
-            edges.append({
-                "source": file_nid,
-                "target": module_name,
-                "relation": "imports",
-                "context": "import",
-                "confidence": "EXTRACTED",
-                "confidence_score": 1.0,
-                "source_file": str_path,
-                "source_location": str(node.start_point[0] + 1),
-                "weight": 1.0,
-            })
+        raw_module = m.group(1)
+        if raw_module:
+            tgt_nid = _resolve_lua_import_target(raw_module, str_path)
+            if tgt_nid:
+                edges.append({
+                    "source": file_nid,
+                    "target": tgt_nid,
+                    "relation": "imports",
+                    "context": "import",
+                    "confidence": "EXTRACTED",
+                    "confidence_score": 1.0,
+                    "source_file": str_path,
+                    "source_location": str(node.start_point[0] + 1),
+                    "weight": 1.0,
+                })
 
 
 _LUA_CONFIG = LanguageConfig(
