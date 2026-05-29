@@ -2,6 +2,16 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.25 (2026-05-29)
+
+- Fix: JS/TS `const`/`let` inside arrow-function callbacks no longer emit phantom god-nodes — scope guard restricts `_js_extra_walk` node emission to program-level declarations only; applies uniformly to JS, TS, and TSX (#1077)
+- Fix: fenced code blocks in Markdown no longer emit orphan `codeblock_N` nodes — they had only `contains` edges and no semantic meaning; fence-toggle still prevents inner content from being mis-parsed as headings (#1077)
+- Fix: Lua `require("pkg.sub")` now resolves to the correct file node ID — dots converted to path separators, probes filesystem for `.lua`/`.luau`/`init.lua` variants up the directory tree (#1075)
+- Fix: Windows `claude-cli` backend no longer raises `WinError 2` — prefers `claude.cmd` over bare `claude` to avoid PATHEXT `.ps1` resolution failure (#1072)
+- Fix: post-commit hook no longer silently drops `changed_paths` when another rebuild holds the lock — lock-losers queue paths to a pending file; the lock-holder drains and merges on acquire (#1059)
+- Fix: `graphify install antigravity` global install now writes to `~/.gemini/config/skills/` (per Antigravity docs) instead of the wrong `~/.agents/`; uninstall, version-stamp refresh, and project-scope install all updated to match (#1079)
+- Docs: README warns against `pip install` on Mac/Windows due to Python env mismatch causing `ModuleNotFoundError`; `uv tool install` recommended as primary method (#1074)
+
 ## 0.8.24 (2026-05-29)
 
 - Feat: type-reference edges for ObjC, Julia, C, C++, Scala, Fortran, and PowerShell — extends cross-language semantic context work from #1015 to a second wave of languages; CI matrix now covers Python 3.10 with `faster-whisper` version guard (#1071)
