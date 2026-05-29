@@ -1696,10 +1696,24 @@ def _js_extra_walk(node, source: bytes, file_nid: str, stem: str, str_path: str,
         # CJS require imports — emit edges, do not block other lexical_declaration handling
         require_found = _require_imports_js(node, source, file_nid, stem, edges, str_path)
 
+        # Scope guard (#1077): only emit nodes for module-level declarations.
+        # Without this, `const x = ...` inside an arrow callback (e.g. inside
+        # `describe(() => { const set = new Set(...) })`) emits a bare-named
+        # node, and the same name collides across unrelated files producing
+        # phantom god-nodes. Bodies of arrow functions are walked separately
+        # via function_bodies, so we never need to emit nodes for locals here.
+        parent = node.parent
+        is_module_level = parent is not None and (
+            parent.type == "program"
+            or (parent.type == "export_statement"
+                and parent.parent is not None
+                and parent.parent.type == "program")
+        )
+
         # Arrow function declarations and module-level const literals (lexical_declaration only)
         arrow_found = False
         const_found = False
-        if node.type == "lexical_declaration":
+        if node.type == "lexical_declaration" and is_module_level:
             for child in node.children:
                 if child.type == "variable_declarator":
                     value = child.child_by_field_name("value")
@@ -7819,13 +7833,16 @@ def extract_markdown(path: Path) -> dict:
     Produces nodes for:
     - The file itself
     - Each heading (# / ## / ### etc.)
-    - Each fenced code block (``` ... ```)
 
     Produces edges for:
     - file --contains--> heading
     - parent heading --contains--> child heading (nesting by level)
-    - heading --contains--> code block
     - heading --references--> other node (when backtick `Name` matches a known pattern)
+
+    Fenced code blocks (``` ... ```) are skipped during parsing so their
+    contents don't get treated as headings, but no node is emitted for
+    them — they were always orphans (only a single contains edge to the
+    parent doc) and inflated the disconnected-component count (#1077).
 
     No tree-sitter dependency — pure line-by-line parsing.
     """
@@ -7858,44 +7875,19 @@ def extract_markdown(path: Path) -> dict:
     # Track heading stack for nesting: [(level, nid), ...]
     heading_stack: list[tuple[int, str]] = []
     in_code_block = False
-    code_block_lang: str | None = None
-    code_block_start: int = 0
-    code_block_lines: list[str] = []
-    code_block_count = 0
 
     lines = source.splitlines()
     for line_num_0, line_text in enumerate(lines):
         line_num = line_num_0 + 1
 
-        # Toggle fenced code blocks
+        # Skip over fenced code blocks so their contents are not parsed as
+        # headings, but do not emit nodes/edges for them (#1077).
         stripped = line_text.strip()
         if stripped.startswith("```"):
-            if not in_code_block:
-                in_code_block = True
-                code_block_lang = stripped[3:].strip().split()[0] if len(stripped) > 3 else None
-                code_block_start = line_num
-                code_block_lines = []
-                continue
-            else:
-                # End of code block — create a node
-                in_code_block = False
-                code_block_count += 1
-                snippet = "\n".join(code_block_lines[:3])  # first 3 lines as preview
-                label = f"code:{code_block_lang}" if code_block_lang else f"code:block{code_block_count}"
-                if snippet:
-                    # Use first meaningful line as label hint
-                    first_line = code_block_lines[0].strip()[:60] if code_block_lines else ""
-                    if first_line:
-                        label = f"{label} ({first_line})"
-                cb_nid = _make_id(stem, f"codeblock_{code_block_count}")
-                add_node(cb_nid, label, code_block_start)
-                # Attach to nearest heading or file
-                parent = heading_stack[-1][1] if heading_stack else file_nid
-                add_edge(parent, cb_nid, "contains", code_block_start)
-                continue
+            in_code_block = not in_code_block
+            continue
 
         if in_code_block:
-            code_block_lines.append(line_text)
             continue
 
         # Detect headings: # Heading, ## Heading, etc.

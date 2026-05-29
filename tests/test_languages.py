@@ -1080,6 +1080,36 @@ def test_ts_static_template_literal_resolved():
         f"Static template literal import not resolved: {targets}"
 
 
+def test_js_local_const_does_not_emit_phantom_node(tmp_path):
+    """Local const/let/var inside an arrow callback must NOT emit a node (#1077).
+
+    Previously `_js_extra_walk` recursed into arrow_function bodies and
+    emitted a node for every `const x = ...` inside e.g. `describe(() => {})`,
+    so bare names like `set`, `sorted` collided across unrelated test files.
+    """
+    src = (
+        "describe('suite', () => {\n"
+        "  const inner = new Set([1, 2, 3]);\n"
+        "  let other = [1, 2];\n"
+        "});\n"
+        "\n"
+        "const moduleConst = new Set([4, 5]);\n"
+        "export const exportedConst = { a: 1 };\n"
+    )
+    f = tmp_path / "scope_guard.js"
+    f.write_text(src)
+    r = extract_js(f)
+    labels = _labels(r)
+
+    # Locals inside the arrow callback must not produce nodes.
+    assert "inner" not in labels, f"phantom node for arrow-body local 'inner': {labels}"
+    assert "other" not in labels, f"phantom node for arrow-body local 'other': {labels}"
+
+    # Module-level consts should still produce nodes.
+    assert "moduleConst" in labels, f"module-level const 'moduleConst' missing: {labels}"
+    assert "exportedConst" in labels, f"exported const 'exportedConst' missing: {labels}"
+
+
 # ── Markdown ─────────────────────────────────────────────────────────────────
 
 from graphify.extract import extract_markdown
@@ -1102,19 +1132,25 @@ def test_markdown_finds_nested_heading():
     labels = _labels(r)
     assert any("Database Migration" in l for l in labels)
 
-def test_markdown_finds_code_blocks():
+def test_markdown_skips_fenced_code_blocks():
+    """Fenced code blocks should NOT emit nodes (#1077).
+
+    They were always orphans (single contains edge to parent doc) and
+    inflated the disconnected-component count. We still skip over their
+    *contents* when parsing so the inside of a fence is not misread as a
+    heading.
+    """
     r = extract_markdown(FIXTURES / "deploy_guide.md")
     labels = _labels(r)
-    assert any("code:bash" in l for l in labels)
-    assert any("code:sql" in l for l in labels)
-    assert any("code:python" in l for l in labels)
+    assert not any(l.startswith("code:") for l in labels), \
+        f"Expected no code:* nodes after #1077 fix, got: {[l for l in labels if l.startswith('code:')]}"
 
 def test_markdown_contains_edges():
-    """Headings and code blocks should be connected via 'contains' edges."""
+    """Headings should be connected via 'contains' edges (file->h, h->h)."""
     r = extract_markdown(FIXTURES / "deploy_guide.md")
     assert "contains" in _relations(r)
     contains_edges = [e for e in r["edges"] if e["relation"] == "contains"]
-    assert len(contains_edges) >= 5  # file->h1, h1->h2s, h2->h3, h2->codeblocks
+    assert len(contains_edges) >= 4  # file->h1, h1->h2s, h2->h3
 
 def test_markdown_no_dangling_edges():
     r = extract_markdown(FIXTURES / "deploy_guide.md")
