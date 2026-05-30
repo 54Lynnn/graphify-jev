@@ -118,6 +118,32 @@ BACKENDS: dict[str, dict] = {
 }
 
 
+def _custom_providers_path(global_: bool = True) -> Path:
+    if global_:
+        return Path.home() / ".graphify" / "providers.json"
+    return Path(".graphify") / "providers.json"
+
+
+def _load_custom_providers() -> dict[str, dict]:
+    providers: dict[str, dict] = {}
+    for path in (_custom_providers_path(global_=False), _custom_providers_path(global_=True)):
+        if path.is_file():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    for name, cfg in data.items():
+                        if isinstance(name, str) and isinstance(cfg, dict) and name not in BACKENDS:
+                            if "pricing" not in cfg:
+                                cfg = dict(cfg, pricing={"input": 0.0, "output": 0.0})
+                            providers[name] = cfg
+            except Exception:
+                pass
+    return providers
+
+
+BACKENDS.update(_load_custom_providers())
+
+
 def _resolve_max_tokens(default: int) -> int:
     """Honour GRAPHIFY_MAX_OUTPUT_TOKENS env var override, else use backend default."""
     raw = os.environ.get("GRAPHIFY_MAX_OUTPUT_TOKENS", "").strip()
@@ -1221,4 +1247,8 @@ def detect_backend() -> str | None:
     if ollama_url:
         _validate_ollama_base_url(ollama_url)
         return "ollama"
+    for name in BACKENDS:
+        if name not in ("gemini", "kimi", "claude", "openai", "deepseek", "bedrock", "ollama", "claude-cli"):
+            if _get_backend_api_key(name):
+                return name
     return None

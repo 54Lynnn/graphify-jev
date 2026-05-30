@@ -1778,6 +1778,119 @@ def main() -> None:
         else:
             print("Usage: graphify antigravity [install|uninstall]", file=sys.stderr)
             sys.exit(1)
+    elif cmd == "provider":
+        from graphify.llm import _custom_providers_path, BACKENDS
+        import json as _json
+        subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
+        global_path = _custom_providers_path(global_=True)
+
+        if subcmd == "list":
+            global_path.parent.mkdir(parents=True, exist_ok=True)
+            existing: dict = {}
+            if global_path.is_file():
+                try:
+                    existing = _json.loads(global_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            if not existing:
+                print("No custom providers registered.")
+            else:
+                for name in existing:
+                    print(f"  {name}  ({existing[name].get('base_url', '')})")
+
+        elif subcmd == "show":
+            name = sys.argv[3] if len(sys.argv) > 3 else ""
+            if not name:
+                print("Usage: graphify provider show <name>", file=sys.stderr)
+                sys.exit(1)
+            existing = {}
+            if global_path.is_file():
+                try:
+                    existing = _json.loads(global_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            if name not in existing:
+                print(f"Provider '{name}' not found.", file=sys.stderr)
+                sys.exit(1)
+            print(_json.dumps({name: existing[name]}, indent=2))
+
+        elif subcmd == "add":
+            args = sys.argv[3:]
+            name = args[0] if args and not args[0].startswith("-") else ""
+            if not name:
+                print("Usage: graphify provider add <name> --base-url URL --default-model MODEL --env-key KEY", file=sys.stderr)
+                sys.exit(1)
+            if name in BACKENDS:
+                print(f"Error: '{name}' is a built-in provider and cannot be overridden.", file=sys.stderr)
+                sys.exit(1)
+            base_url = ""
+            default_model = ""
+            env_key = ""
+            pricing_input = 0.0
+            pricing_output = 0.0
+            i = 1
+            while i < len(args):
+                a = args[i]
+                if a == "--base-url" and i + 1 < len(args):
+                    base_url = args[i + 1]; i += 2
+                elif a.startswith("--base-url="):
+                    base_url = a.split("=", 1)[1]; i += 1
+                elif a == "--default-model" and i + 1 < len(args):
+                    default_model = args[i + 1]; i += 2
+                elif a.startswith("--default-model="):
+                    default_model = a.split("=", 1)[1]; i += 1
+                elif a == "--env-key" and i + 1 < len(args):
+                    env_key = args[i + 1]; i += 2
+                elif a.startswith("--env-key="):
+                    env_key = a.split("=", 1)[1]; i += 1
+                elif a == "--pricing-input" and i + 1 < len(args):
+                    pricing_input = float(args[i + 1]); i += 2
+                elif a == "--pricing-output" and i + 1 < len(args):
+                    pricing_output = float(args[i + 1]); i += 2
+                else:
+                    i += 1
+            if not base_url or not default_model or not env_key:
+                print("Error: --base-url, --default-model, and --env-key are required.", file=sys.stderr)
+                sys.exit(1)
+            global_path.parent.mkdir(parents=True, exist_ok=True)
+            existing = {}
+            if global_path.is_file():
+                try:
+                    existing = _json.loads(global_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            existing[name] = {
+                "base_url": base_url,
+                "default_model": default_model,
+                "env_key": env_key,
+                "pricing": {"input": pricing_input, "output": pricing_output},
+                "temperature": 0,
+            }
+            global_path.write_text(_json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+            print(f"Provider '{name}' added. Use with: graphify extract . --backend {name}")
+
+        elif subcmd == "remove":
+            name = sys.argv[3] if len(sys.argv) > 3 else ""
+            if not name:
+                print("Usage: graphify provider remove <name>", file=sys.stderr)
+                sys.exit(1)
+            existing = {}
+            if global_path.is_file():
+                try:
+                    existing = _json.loads(global_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            if name not in existing:
+                print(f"Provider '{name}' not found.", file=sys.stderr)
+                sys.exit(1)
+            del existing[name]
+            global_path.write_text(_json.dumps(existing, indent=2) + "\n", encoding="utf-8")
+            print(f"Provider '{name}' removed.")
+
+        else:
+            print("Usage: graphify provider [add|list|show|remove]", file=sys.stderr)
+            if subcmd:
+                sys.exit(1)
     elif cmd == "prs":
         from graphify.prs import cmd_prs
         cmd_prs(sys.argv[2:])
