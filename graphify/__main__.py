@@ -1118,7 +1118,7 @@ def _agents_install(project_dir: Path, platform: str) -> None:
     if platform not in ("codex", "opencode"):
         print()
         print("Note: unlike Claude Code, there is no PreToolUse hook equivalent for")
-        print(f"{platform.capitalize()} — the AGENTS.md rules are the always-on mechanism.")
+        print(f"{platform.capitalize()} - the AGENTS.md rules are the always-on mechanism.")
 
 
 def _project_install(platform_name: str, project_dir: Path | None = None) -> None:
@@ -1399,7 +1399,7 @@ def _clone_repo(url: str, branch: str | None = None, out_dir: Path | None = None
         sys.exit(1)
 
     if dest.exists():
-        print(f"Repo already cloned at {dest} — pulling latest...", flush=True)
+        print(f"Repo already cloned at {dest} - pulling latest...", flush=True)
         cmd = ["git", "-C", str(dest), "pull"]
         if branch:
             cmd += ["origin", "--", branch]
@@ -1423,6 +1423,12 @@ def _clone_repo(url: str, branch: str | None = None, out_dir: Path | None = None
 
 
 def main() -> None:
+    for _stream in (sys.stdout, sys.stderr):
+        if _stream is not None and hasattr(_stream, "reconfigure"):
+            try:
+                _stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
     # Check all known skill install locations for a stale version stamp.
     # Skip during install/uninstall (hook writes trigger a fresh check anyway).
     # Skip during hook-check — it runs on every editor tool use and must be silent.
@@ -2364,7 +2370,7 @@ def main() -> None:
             watch_path = Path(".")
         graph_json = graph_override if graph_override is not None else watch_path / "graphify-out" / "graph.json"
         if not graph_json.exists():
-            print(f"error: no graph found at {graph_json} — run /graphify first", file=sys.stderr)
+            print(f"error: no graph found at {graph_json} - run /graphify first", file=sys.stderr)
             sys.exit(1)
         from networkx.readwrite import json_graph as _jg
         from graphify.build import build_from_json
@@ -2427,16 +2433,16 @@ def main() -> None:
         if no_viz:
             if html_target.exists():
                 html_target.unlink()
-            print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated (--no-viz; graph.html removed).")
+            print(f"Done - {len(communities)} communities. GRAPH_REPORT.md and graph.json updated (--no-viz; graph.html removed).")
         else:
             try:
                 to_html(G, communities, str(html_target), community_labels=labels or None)
-                print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
+                print(f"Done - {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
             except ValueError as viz_err:
                 if html_target.exists():
                     html_target.unlink()
                 print(f"Skipped graph.html: {viz_err}")
-                print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated.")
+                print(f"Done - {len(communities)} communities. GRAPH_REPORT.md and graph.json updated.")
 
     elif cmd == "update":
         force = os.environ.get("GRAPHIFY_FORCE", "").lower() in ("1", "true", "yes")
@@ -2487,7 +2493,7 @@ def main() -> None:
             ):
                 print("Tip: set GEMINI_API_KEY or GOOGLE_API_KEY to use Gemini for semantic extraction.")
         else:
-            print("Nothing to update or rebuild failed — check output above.", file=sys.stderr)
+            print("Nothing to update or rebuild failed - check output above.", file=sys.stderr)
             sys.exit(1)
 
     elif cmd == "hook-check":
@@ -2981,7 +2987,7 @@ def main() -> None:
             try:
                 result = _global_add(source, tag)
                 if result["skipped"]:
-                    print(f"'{tag}' unchanged since last add — global graph not modified.")
+                    print(f"'{tag}' unchanged since last add - global graph not modified.")
                 else:
                     print(f"Added '{tag}' to global graph: +{result['nodes_added']} nodes, "
                           f"-{result['nodes_removed']} pruned. Global: {_global_path()}")
@@ -3458,7 +3464,7 @@ def main() -> None:
                 try:
                     result = _global_add(graphify_out / "graph.json", _tag)
                     if result["skipped"]:
-                        print(f"[graphify global] '{_tag}' unchanged since last add — skipped.")
+                        print(f"[graphify global] '{_tag}' unchanged since last add - skipped.")
                     else:
                         print(f"[graphify global] '{_tag}' merged into global graph "
                               f"(+{result['nodes_added']} nodes, -{result['nodes_removed']} pruned).")
@@ -3520,7 +3526,7 @@ def main() -> None:
             try:
                 result = _global_add(graphify_out / "graph.json", _tag)
                 if result["skipped"]:
-                    print(f"[graphify global] '{_tag}' unchanged since last add — skipped.")
+                    print(f"[graphify global] '{_tag}' unchanged since last add - skipped.")
                 else:
                     print(f"[graphify global] '{_tag}' merged into global graph "
                           f"(+{result['nodes_added']} nodes, -{result['nodes_removed']} pruned).")
