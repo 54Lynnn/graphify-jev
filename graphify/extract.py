@@ -53,6 +53,9 @@ def _safe_extract(extractor: Callable, path: Path) -> dict:
         print(f"  warning: skipped {path} (recursion limit exceeded)", file=sys.stderr, flush=True)
         return {"nodes": [], "edges": [], "error": "recursion_limit_exceeded"}
     except Exception as e:
+        if os.environ.get("GRAPHIFY_DEBUG"):
+            import traceback
+            traceback.print_exc(file=sys.stderr)
         print(f"  warning: skipped {path} ({type(e).__name__}: {e})", file=sys.stderr, flush=True)
         return {"nodes": [], "edges": [], "error": f"{type(e).__name__}: {e}"}
 
@@ -307,7 +310,8 @@ def _load_workspace_packages(start_dir: Path) -> dict[str, Path]:
 
     packages: dict[str, Path] = {}
     for pattern in _workspace_globs(root / "pnpm-workspace.yaml"):
-        for package_dir in root.glob(pattern):
+        package_dirs: list[Path] = [root] if pattern in (".", "./") else list(root.glob(pattern))
+        for package_dir in package_dirs:
             manifest = package_dir / "package.json"
             if not manifest.is_file():
                 continue

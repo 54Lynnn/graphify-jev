@@ -425,6 +425,30 @@ def test_workspace_package_cache_refreshes_between_extract_calls(tmp_path: Path)
     assert _has_edge(second, "apps/web/src/page.ts", "packages/types/src/index.ts")
 
 
+def test_pnpm_workspace_dot_package_does_not_crash(tmp_path: Path):
+    """packages: - '.' in pnpm-workspace.yaml must not raise IndexError on any Python version."""
+    _write(
+        tmp_path / "pnpm-workspace.yaml",
+        "packages:\n  - '.'\n  - 'examples/*'\n",
+    )
+    _write(
+        tmp_path / "package.json",
+        json.dumps({"name": "my-app"}),
+    )
+    src = _write(
+        tmp_path / "index.ts",
+        "import { foo } from 'my-app';\n",
+    )
+
+    result = _extract_for([src], tmp_path)
+
+    nodes = result.get("nodes", [])
+    assert isinstance(nodes, list)
+    for node in nodes:
+        error = node.get("error", "") if isinstance(node, dict) else ""
+        assert "IndexError" not in error
+
+
 def test_ts_type_relationships_and_contexts(tmp_path: Path):
     base = _write(
         tmp_path / "src/lib/base.ts",
