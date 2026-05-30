@@ -629,7 +629,7 @@ def _call_bedrock(model: str, user_message: str, max_tokens: int = 8192, *, deep
 
 def extract_files_direct(
     files: list[Path],
-    backend: str = "kimi",
+    backend: str | None = None,
     api_key: str | None = None,
     model: str | None = None,
     root: Path = Path("."),
@@ -639,8 +639,17 @@ def extract_files_direct(
     """Extract semantic nodes/edges from a list of files using the given backend.
 
     Returns dict with nodes, edges, hyperedges, input_tokens, output_tokens.
-    Raises ValueError for unknown backends. Raises ImportError if SDK missing.
+    Raises ValueError for unknown backends or when no API key is configured.
+    Raises ImportError if SDK missing.
     """
+    if backend is None:
+        backend = detect_backend()
+        if backend is None:
+            raise ValueError(
+                "No LLM backend configured. Set one of: GEMINI_API_KEY, ANTHROPIC_API_KEY, "
+                "OPENAI_API_KEY, DEEPSEEK_API_KEY, MOONSHOT_API_KEY, OLLAMA_BASE_URL, "
+                "or AWS credentials. Pass backend= explicitly to select a provider."
+            )
     if backend not in BACKENDS:
         raise ValueError(f"Unknown backend {backend!r}. Available: {sorted(BACKENDS)}")
 
