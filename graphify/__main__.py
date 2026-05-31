@@ -2428,14 +2428,11 @@ def main() -> None:
             # "Community N" (#1097). Degrades to placeholders if no backend/on error.
             from graphify.llm import generate_community_labels
             print("Labeling communities...")
-            labels, _label_src = generate_community_labels(
+            # The final labels (LLM or placeholder fallback) are persisted to
+            # .graphify_labels.json by the unconditional write below.
+            labels, _ = generate_community_labels(
                 G, communities, backend=label_backend, gods=gods
             )
-            if _label_src == "llm":
-                labels_path.write_text(
-                    json.dumps({str(k): v for k, v in labels.items()}, ensure_ascii=False),
-                    encoding="utf-8",
-                )
         questions = suggest_questions(G, communities, labels)
         tokens = {"input": 0, "output": 0}
         from graphify.export import _git_head as _gh
