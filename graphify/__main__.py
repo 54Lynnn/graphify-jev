@@ -2426,7 +2426,7 @@ def main() -> None:
             # standalone there is no orchestrating agent to do skill.md Step 5, so
             # auto-name communities with the configured backend rather than leave
             # "Community N" (#1097). Degrades to placeholders if no backend/on error.
-            from graphify.labeling import generate_community_labels
+            from graphify.llm import generate_community_labels
             print("Labeling communities...")
             labels, _label_src = generate_community_labels(
                 G, communities, backend=label_backend, gods=gods

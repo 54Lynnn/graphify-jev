@@ -6,8 +6,7 @@ malformed replies, and the no-backend fallback.
 import networkx as nx
 import pytest
 
-from graphify import labeling
-from graphify.labeling import label_communities, generate_community_labels
+from graphify.llm import label_communities, generate_community_labels
 
 
 def _graph():
