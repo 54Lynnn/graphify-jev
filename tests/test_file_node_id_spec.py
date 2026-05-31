@@ -54,6 +54,45 @@ def test_top_level_file_node_id_is_bare_stem(tmp_path):
     assert "setup_py" not in ids
 
 
+def test_top_level_file_SYMBOL_ids_use_bare_stem(tmp_path):
+    """A SYMBOL in a root-level file must use the bare-stem prefix (`setup_configure`),
+    not pick up the project-root directory name (`<rootdir>_setup_configure`). The
+    semantic subagent emits the bare-stem form per skill.md, so an absolute-parent
+    stem here splits the symbol into two ghost nodes (#1096). Pass ABSOLUTE paths,
+    as the CLI does, to exercise the root-relative remap."""
+    f = tmp_path / "main.py"
+    f.write_text("def run():\n    return 1\n")
+
+    extraction = extract([f.resolve()], cache_root=tmp_path)
+    ids = {n["id"] for n in extraction["nodes"]}
+
+    assert "main_run" in ids, f"expected bare-stem symbol 'main_run', got {sorted(ids)}"
+    # The root directory name must NOT appear in any symbol id.
+    rootname = tmp_path.name.lower().replace("-", "_")
+    assert not any(rootname in i for i in ids), (
+        f"root dir name leaked into ids: {sorted(ids)}"
+    )
+
+    # contains edge file -> symbol must connect with the canonical ids.
+    contains = [e for e in extraction["edges"]
+                if e["relation"] == "contains" and e["target"] == "main_run"]
+    assert contains and contains[0]["source"] == "main"
+
+
+def test_nested_file_symbol_ids_unchanged(tmp_path):
+    """Regression guard: nested files (immediate parent identical in abs/rel form)
+    must be completely unaffected by the symbol remap."""
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    f = sub / "mod.py"
+    f.write_text("def work():\n    return 2\n")
+
+    extraction = extract([f.resolve()], cache_root=tmp_path)
+    ids = {n["id"] for n in extraction["nodes"]}
+    assert "sub_mod" in ids
+    assert "sub_mod_work" in ids
+
+
 def test_symbol_and_file_ids_share_the_same_stem(tmp_path):
     """Symbol ids already use {parent}_{stem}_{name}; the file node must share
     that stem prefix so 'contains' edges connect file -> symbol."""

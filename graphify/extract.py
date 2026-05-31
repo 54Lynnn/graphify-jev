@@ -10404,6 +10404,14 @@ def extract(
     # subagents generate (#1033). Resolve before relativizing so paths passed in
     # relative form still anchor to the (resolved) root.
     id_remap: dict[str, str] = {}
+    # Symbol node IDs embed the file stem as a prefix (_file_node_id of the path
+    # the extractor saw). For a root-level file that stem picks up the absolute
+    # parent directory name, so a symbol becomes <rootdir>_main_run while the
+    # file node is correctly relativized to main and the skill.md spec wants
+    # main_run -- splitting the symbol into AST/semantic ghosts (#1096). Relativize
+    # the symbol prefix the same way, gated by source_file so two files sharing a
+    # prefix can't cross-contaminate. Keyed by resolved path -> (old_pref, new_pref).
+    prefix_remap: dict[Path, tuple[str, str]] = {}
     for path in paths:
         old_id = _make_id(str(path))
         try:
@@ -10416,6 +10424,9 @@ def extract(
         new_id = _file_node_id(rel)
         if old_id != new_id:
             id_remap[old_id] = new_id
+        old_pref = _file_node_id(path)
+        if old_pref != new_id:
+            prefix_remap[path.resolve()] = (old_pref, new_id)
     if id_remap:
         for n in all_nodes:
             if n.get("id") in id_remap:
@@ -10425,6 +10436,40 @@ def extract(
                 e["source"] = id_remap[e["source"]]
             if e.get("target") in id_remap:
                 e["target"] = id_remap[e["target"]]
+    if prefix_remap:
+        sym_remap: dict[str, str] = {}
+        for n in all_nodes:
+            sf = n.get("source_file")
+            if not sf:
+                continue
+            try:
+                entry = prefix_remap.get(Path(sf).resolve())
+            except Exception:
+                continue
+            if entry is None:
+                continue
+            old_pref, new_pref = entry
+            nid = n.get("id", "")
+            if nid.startswith(old_pref + "_"):
+                new_nid = new_pref + nid[len(old_pref):]
+                if new_nid != nid:
+                    sym_remap[nid] = new_nid
+        if sym_remap:
+            for n in all_nodes:
+                if n.get("id") in sym_remap:
+                    n["id"] = sym_remap[n["id"]]
+            for e in all_edges:
+                if e.get("source") in sym_remap:
+                    e["source"] = sym_remap[e["source"]]
+                if e.get("target") in sym_remap:
+                    e["target"] = sym_remap[e["target"]]
+            # raw_calls carry caller_nid (a symbol id) consumed by the cross-file
+            # call pass below, after this remap — rewrite it too or those edges
+            # would dangle on their (stale) source.
+            for rc in all_raw_calls:
+                cn = rc.get("caller_nid")
+                if cn in sym_remap:
+                    rc["caller_nid"] = sym_remap[cn]
 
     _merge_swift_extensions(per_file, all_nodes, all_edges)
     _disambiguate_colliding_node_ids(all_nodes, all_edges, all_raw_calls, root)
