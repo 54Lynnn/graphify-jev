@@ -2,6 +2,16 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.27 (2026-05-31)
+
+- Feat: standalone CLI now auto-names communities with the configured backend instead of leaving `Community N` placeholders — community labeling was previously an agent-only step (skill.md Step 5), so bare-CLI runs never got semantic names; `cluster-only` now auto-labels when no `.graphify_labels.json` exists, new `graphify label <path>` subcommand (re)generates names on demand, `--no-label` opts out, `--backend=<name>` overrides auto-detection; one batched LLM call with per-community placeholder fallback and graceful degradation on missing backend/API error; works with all built-in and custom OpenAI-compatible backends (#1097)
+- Fix: AST file-level node IDs now match the skill.md `{parent_dir}_{stem}` spec — they were derived from the full relative path plus extension (`match_script_pipeline_step_py`) while semantic subagents use `script_pipeline_step`, splitting every file into two disconnected ghost nodes; fixed at the single relative-path remap chokepoint so file nodes and all import/dependency edge endpoints (Python, TS, Lua, C, bash) convert together (#1033)
+- Fix: symbol-level node IDs for root-level files now match the spec too — the #1033 remap relativized file nodes but symbols still embedded the absolute parent-dir name (`<rootdir>_main_run` vs spec `main_run`), splitting every top-level file's symbols into AST/semantic ghost pairs; the remap now canonicalizes symbol stems and `raw_calls` caller IDs, gated by `source_file` (#1096)
+- Fix: TypeScript `interface A extends B` and same-file `class X extends Y` now produce `inherits`/`implements` edges — the walker only inspected `class_heritage` (missing the interface `extends_type_clause` node) and the resolver only consulted the import table (missing same-file bases); both gaps closed (#1095)
+- Fix: `graphify export obsidian` no longer crashes with `OSError ENAMETOOLONG` on long node labels — `to_obsidian`/`to_canvas` now cap filenames on UTF-8 bytes (not chars, so multibyte/CJK labels are handled) with an 8-char hash suffix on truncation to keep distinct long-prefix labels from colliding; also fixes the previously-uncapped `_COMMUNITY_` notes (#1094)
+- Fix: `graph.json` is now deterministic across runs — `detect()` sorts file traversal lexicographically (`os.walk` order is filesystem-dependent), which had made first-writer-wins node-ID decisions and Leiden community counts vary between identical runs (#1090)
+- Fix: Windows consoles no longer crash with `UnicodeEncodeError` on non-UTF-8 code pages — `main()` reconfigures stdout/stderr to UTF-8 at startup and `→`/`—` in print statements replaced with ASCII (#992)
+
 ## 0.8.26 (2026-05-30)
 
 - Feat: `find_import_cycles(G)` in `analyze.py` detects file-level circular import dependencies — collapses symbol graph to file-level directed import graph, finds simple cycles via Johnson's algorithm, deduplicates rotations, renders `## Import Cycles` section in `GRAPH_REPORT.md` (#961)

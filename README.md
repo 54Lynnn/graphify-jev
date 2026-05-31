@@ -530,7 +530,13 @@ graphify cluster-only ./my-project
 graphify cluster-only ./my-project --graph path/to/graph.json  # custom graph location
 graphify cluster-only ./my-project --resolution 1.5            # more, smaller communities
 graphify cluster-only ./my-project --exclude-hubs 99           # exclude p99 degree nodes from partitioning
+graphify cluster-only ./my-project --no-label                  # keep "Community N" placeholders
+graphify cluster-only ./my-project --backend=gemini            # backend for community naming
+graphify label ./my-project                                    # (re)name communities with the configured backend
+graphify label ./my-project --backend=openai                   # force a specific backend
 ```
+
+> **Community names:** inside an agent (Claude Code, Gemini CLI) the agent names communities itself. When you run the bare CLI, `cluster-only` auto-names them with the configured backend (built-in or custom OpenAI-compatible provider) — pass `--no-label` to keep `Community N`, or run `graphify label` to (re)generate names on demand.
 
 ---
 
