@@ -85,6 +85,16 @@ def _file_stem(path: Path) -> str:
     return path.stem
 
 
+def _file_node_id(rel_path: Path) -> str:
+    """File-level node ID matching the skill.md spec: ``{parent_dir}_{stem}`` —
+    one parent directory level, no extension. ``rel_path`` MUST be relative to
+    the project root so top-level files collapse to a bare stem (``setup.py`` ->
+    ``setup``) instead of picking up the root directory name. This must equal the
+    ID semantic subagents generate, or AST and semantic extraction split a file
+    into two disconnected ghost nodes (#1033)."""
+    return _make_id(_file_stem(rel_path))
+
+
 _TSCONFIG_ALIAS_CACHE: dict[str, dict[str, str]] = {}
 _WORKSPACE_PACKAGE_CACHE: dict[str, dict[str, Path]] = {}
 _JS_CACHE_BYPASS_SUFFIXES = {".js", ".jsx", ".mjs", ".ts", ".tsx", ".vue", ".svelte"}
@@ -10370,15 +10380,22 @@ def extract(
 
     _augment_symbol_resolution_edges(paths, all_nodes, all_edges, root)
 
-    # Remap file node IDs from absolute-path-derived to project-relative so
-    # graph.json edge endpoints are stable across machines (#502)
+    # Remap file node IDs from absolute-path-derived to the canonical
+    # {parent_dir}_{stem} spec form so (a) graph.json edge endpoints are stable
+    # across machines (#502) and (b) AST file nodes match the IDs semantic
+    # subagents generate (#1033). Resolve before relativizing so paths passed in
+    # relative form still anchor to the (resolved) root.
     id_remap: dict[str, str] = {}
     for path in paths:
         old_id = _make_id(str(path))
         try:
-            new_id = _make_id(str(path.relative_to(root)))
+            rel = path.relative_to(root)
         except ValueError:
-            continue
+            try:
+                rel = path.resolve().relative_to(root)
+            except ValueError:
+                continue
+        new_id = _file_node_id(rel)
         if old_id != new_id:
             id_remap[old_id] = new_id
     if id_remap:
@@ -10462,7 +10479,7 @@ def extract(
             sf_rel = sf_path.relative_to(root) if sf_path.is_absolute() else sf_path
         except ValueError:
             sf_rel = sf_path
-        nid_to_file_nid[n["id"]] = _make_id(str(sf_rel))
+        nid_to_file_nid[n["id"]] = _file_node_id(sf_rel)
 
     existing_pairs = {(e["source"], e["target"]) for e in all_edges}
     for rc in all_raw_calls:
