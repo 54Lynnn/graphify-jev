@@ -930,6 +930,8 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
                     seen.add(p)
                     all_files.append(p)
 
+    all_files.sort(key=lambda p: str(p))
+
     converted_dir = root / "graphify-out" / "converted"
 
     for p in all_files:
@@ -982,6 +984,9 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
             files[ftype].append(str(p))
             if ftype != FileType.VIDEO:
                 total_words += count_words(p)
+
+    for ftype in files:
+        files[ftype].sort()
 
     total_files = sum(len(v) for v in files.values())
     needs_graph = total_words >= CORPUS_WARN_THRESHOLD
