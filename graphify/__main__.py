@@ -1481,6 +1481,10 @@ def main() -> None:
         print("  cluster-only <path>     rerun clustering on an existing graph.json and regenerate report")
         print("    --no-viz                skip graph.html generation (useful for >5000 node graphs / CI)")
         print("    --graph <path>          path to graph.json (default <path>/graphify-out/graph.json)")
+        print("    --no-label              keep 'Community N' placeholders (skip LLM community naming)")
+        print("    --backend=<name>        backend to use for community naming (default: auto-detect)")
+        print("  label <path>            (re)name communities with the configured LLM backend, regenerate report")
+        print("    --backend=<name>        backend to use (default: auto-detect from API keys)")
         print("  query \"<question>\"       BFS traversal of graph.json for a question")
         print("    --dfs                   use depth-first instead of breadth-first")
         print("    --context C             explicit edge-context filter (repeatable)")
@@ -2334,10 +2338,16 @@ def main() -> None:
             print(f"error: {exc}", file=sys.stderr)
             sys.exit(1)
 
-    elif cmd == "cluster-only":
+    elif cmd in ("cluster-only", "label"):
+        # `label` is `cluster-only` that always (re)generates community names with
+        # the configured backend, even when a .graphify_labels.json already exists.
+        force_relabel = cmd == "label"
         # Mirror the tree/export arg-parsing pattern: walk argv so flags and
         # the optional positional path can appear in any order (#724).
         no_viz = "--no-viz" in sys.argv
+        no_label = "--no-label" in sys.argv
+        _backend_arg = next((a for a in sys.argv if a.startswith("--backend=")), None)
+        label_backend = _backend_arg.split("=", 1)[1] if _backend_arg else None
         _min_cs_arg = next((a for a in sys.argv if a.startswith("--min-community-size=")), None)
         min_community_size = int(_min_cs_arg.split("=")[1]) if _min_cs_arg else 3
         args = sys.argv[2:]
@@ -2404,13 +2414,28 @@ def main() -> None:
         out = watch_path / "graphify-out"
         out.mkdir(parents=True, exist_ok=True)
         labels_path = out / ".graphify_labels.json"
-        if labels_path.exists():
+        if labels_path.exists() and not force_relabel:
             try:
                 labels = {int(k): v for k, v in json.loads(labels_path.read_text(encoding="utf-8")).items()}
             except Exception:
                 labels = {cid: f"Community {cid}" for cid in communities}
-        else:
+        elif no_label and not force_relabel:
             labels = {cid: f"Community {cid}" for cid in communities}
+        else:
+            # No labels file yet (or `graphify label` forced a refresh). When run
+            # standalone there is no orchestrating agent to do skill.md Step 5, so
+            # auto-name communities with the configured backend rather than leave
+            # "Community N" (#1097). Degrades to placeholders if no backend/on error.
+            from graphify.labeling import generate_community_labels
+            print("Labeling communities...")
+            labels, _label_src = generate_community_labels(
+                G, communities, backend=label_backend, gods=gods
+            )
+            if _label_src == "llm":
+                labels_path.write_text(
+                    json.dumps({str(k): v for k, v in labels.items()}, ensure_ascii=False),
+                    encoding="utf-8",
+                )
         questions = suggest_questions(G, communities, labels)
         tokens = {"input": 0, "output": 0}
         from graphify.export import _git_head as _gh
@@ -3571,6 +3596,14 @@ def main() -> None:
                 f"{merged['output_tokens']:,} out, "
                 f"est. cost (~{backend}): ${cost:.4f}"
             )
+        # extract intentionally stops at graph.json + analysis; the report and
+        # community labels are produced by `cluster-only` (or an agent's Step 5).
+        # Point standalone users at it so communities get named (#1097).
+        print(
+            "[graphify extract] next: run "
+            f"`graphify cluster-only {graphify_out.parent}` "
+            "to generate GRAPH_REPORT.md and name communities"
+        )
 
     elif cmd == "cache-check":
         # graphify cache-check <files_from> [--root <dir>]
