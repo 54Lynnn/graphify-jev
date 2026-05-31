@@ -6445,11 +6445,19 @@ def _apply_symbol_resolution_facts(
 
     for use_fact in facts.uses:
         file_path = use_fact.file_path.resolve()
+        target_id = None
         unresolved_origin = local_aliases_by_file.get(file_path, {}).get(use_fact.local_name)
-        if unresolved_origin is None:
-            continue
-        origin_path, origin_symbol = resolve_exported_origin(*unresolved_origin)
-        target_id = symbol_nodes.get((origin_path, origin_symbol))
+        if unresolved_origin is not None:
+            origin_path, origin_symbol = resolve_exported_origin(*unresolved_origin)
+            target_id = symbol_nodes.get((origin_path, origin_symbol))
+        if target_id is None and use_fact.relation in ("inherits", "implements"):
+            # Same-file fallback for HERITAGE only: a base declared in the same
+            # file (`class X extends Y`, `interface A extends B`) has no import
+            # alias, so resolve it directly against the file's own symbol nodes.
+            # Scoped to heritage because same-file calls/uses already resolve via
+            # the dedicated call-graph pass; widening this would duplicate those
+            # edges. Import resolution still takes precedence (#1095).
+            target_id = symbol_nodes.get((file_path, use_fact.local_name))
         if target_id is None:
             continue
         add_edge(
@@ -6707,6 +6715,16 @@ def _ts_walk_class_members(class_node, source: bytes, path: Path, class_nid: str
                             _SymbolUseFact(path, class_nid, name, "implements", "type",
                                            clause.start_point[0] + 1)
                         )
+        elif child.type == "extends_type_clause":
+            # Interface heritage (`interface A extends B, C`) is an
+            # extends_type_clause node, NOT a class_heritage. Its base entries
+            # are the same node types extends_clause holds, so the helper is
+            # reusable. Without this branch interface inheritance is dropped (#1095).
+            for name in _ts_heritage_clause_entries(child, source):
+                facts.uses.append(
+                    _SymbolUseFact(path, class_nid, name, "inherits", "type",
+                                   child.start_point[0] + 1)
+                )
 
     body = class_node.child_by_field_name("body")
     if body is None:
