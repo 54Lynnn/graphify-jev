@@ -2368,6 +2368,10 @@ def main() -> None:
             if not base_url or not default_model or not env_key:
                 print("Error: --base-url, --default-model, and --env-key are required.", file=sys.stderr)
                 sys.exit(1)
+            from graphify.llm import provider_base_url_ok
+            if not provider_base_url_ok(base_url, name):
+                print(f"Error: refusing to add provider with unsafe base_url {base_url!r}.", file=sys.stderr)
+                sys.exit(1)
             global_path.parent.mkdir(parents=True, exist_ok=True)
             existing = {}
             if global_path.is_file():

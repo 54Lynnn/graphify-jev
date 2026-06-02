@@ -125,18 +125,75 @@ def _custom_providers_path(global_: bool = True) -> Path:
     return Path(".graphify") / "providers.json"
 
 
+def provider_base_url_ok(base_url: str, name: str, *, warn: bool = True) -> bool:
+    """Structural safety check for a custom-provider base_url.
+
+    A custom provider receives the full corpus plus the user's API key, so its
+    base_url is an exfiltration channel. We deliberately do NOT run the ingest
+    SSRF guard here: that blocks private/internal IPs, which would wrongly reject
+    legitimate on-prem corporate LLM gateways. Instead we reject non-http(s)
+    schemes outright and warn loudly when the corpus would leave over plaintext
+    http to a non-loopback host. The primary control against trusting injected
+    config is the GRAPHIFY_ALLOW_LOCAL_PROVIDERS gate on project-local files.
+    """
+    from urllib.parse import urlparse
+    try:
+        parsed = urlparse(base_url)
+    except Exception:
+        if warn:
+            print(f"[graphify] WARNING: provider {name!r} has an unparseable base_url; ignoring.", file=sys.stderr)
+        return False
+    if parsed.scheme not in ("http", "https"):
+        if warn:
+            print(
+                f"[graphify] WARNING: provider {name!r} base_url scheme {parsed.scheme!r} is not "
+                "http/https; ignoring.",
+                file=sys.stderr,
+            )
+        return False
+    host = (parsed.hostname or "").lower()
+    is_loopback = host in ("localhost", "127.0.0.1", "::1") or host.startswith("127.")
+    if warn and parsed.scheme == "http" and not is_loopback:
+        print(
+            f"[graphify] WARNING: provider {name!r} sends your corpus to {host!r} over plaintext "
+            "http. Use https unless this is a trusted local endpoint.",
+            file=sys.stderr,
+        )
+    return True
+
+
 def _load_custom_providers() -> dict[str, dict]:
+    # A project-local ./.graphify/providers.json travels with a cloned or shared
+    # repo and defines where the corpus + API key are sent, so loading it
+    # silently is a corpus/key exfiltration vector. Require an explicit opt-in;
+    # the user's own global ~/.graphify/providers.json stays trusted.
+    local_path = _custom_providers_path(global_=False)
+    global_path = _custom_providers_path(global_=True)
+    allow_local = os.environ.get("GRAPHIFY_ALLOW_LOCAL_PROVIDERS", "").strip().lower() in ("1", "true", "yes")
+    if local_path.is_file() and not allow_local:
+        print(
+            f"[graphify] WARNING: ignoring project-local {local_path} (custom providers control "
+            "where your corpus and API key are sent). Set GRAPHIFY_ALLOW_LOCAL_PROVIDERS=1 to load it.",
+            file=sys.stderr,
+        )
+
     providers: dict[str, dict] = {}
-    for path in (_custom_providers_path(global_=False), _custom_providers_path(global_=True)):
+    paths = [local_path, global_path] if allow_local else [global_path]
+    for path in paths:
         if path.is_file():
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
                 if isinstance(data, dict):
                     for name, cfg in data.items():
-                        if isinstance(name, str) and isinstance(cfg, dict) and name not in BACKENDS:
-                            if "pricing" not in cfg:
-                                cfg = dict(cfg, pricing={"input": 0.0, "output": 0.0})
-                            providers[name] = cfg
+                        if not (isinstance(name, str) and isinstance(cfg, dict)):
+                            continue
+                        if name in BACKENDS or name in providers:
+                            continue
+                        if not provider_base_url_ok(str(cfg.get("base_url", "")), name):
+                            continue
+                        if "pricing" not in cfg:
+                            cfg = dict(cfg, pricing={"input": 0.0, "output": 0.0})
+                        providers[name] = cfg
             except Exception:
                 pass
     return providers
