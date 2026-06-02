@@ -367,6 +367,35 @@ _SETTINGS_HOOK = {
     ],
 }
 
+_READ_SETTINGS_HOOK = {
+    # The Bash hook above never sees a file read through the native Read tool or a
+    # Glob, which is the most common way an agent skips the graph: answering a
+    # codebase question by Read-ing many source files one by one (issue #1114).
+    # Match Read|Glob, inspect the target path, and nudge (never block) only for a
+    # source/doc file outside graphify-out/ when a graph exists. The parser is
+    # python3 (already a graphify dependency), the shell is POSIX, and every branch
+    # fails open, so a legitimate read always goes through. Reading the graph's own
+    # report under graphify-out/ is suppressed so it never starts a feedback loop.
+    "matcher": "Read|Glob",
+    "hooks": [
+        {
+            "type": "command",
+            "command": (
+                "HIT=$(python3 -c \""
+                "import json,sys;"
+                "d=json.load(sys.stdin);"
+                "t=d.get('tool_input',d);"
+                "s=(str(t.get('file_path') or '')+' '+str(t.get('pattern') or '')+' '+str(t.get('path') or '')).lower().replace(chr(92),'/');"
+                "exts=('.py','.js','.ts','.tsx','.jsx','.go','.rs','.java','.rb','.c','.h','.cpp','.hpp','.cc','.cs','.kt','.swift','.php','.scala','.lua','.sh','.md','.rst','.txt','.mdx');"
+                "sys.stdout.write('1' if 'graphify-out/' not in s and any(e in s for e in exts) else '')\" 2>/dev/null || true); "
+                "if [ \"$HIT\" = 1 ] && [ -f graphify-out/graph.json ]; then "
+                r"""echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"graphify: knowledge graph at graphify-out/. For codebase questions, run `graphify query \"<question>\"` (scoped subgraph, usually much smaller than reading files one by one), `graphify explain \"<concept>\"`, or `graphify path \"<A>\" \"<B>\"`, instead of reading source files to answer. Read raw files to modify or debug specific code, or when the graph lacks the detail."}}'; """
+                "fi || true"
+            ),
+        }
+    ],
+}
+
 def _skill_registration(skill_path: str = "~/.claude/skills/graphify/SKILL.md") -> str:
     return (
         "\n# graphify\n"
@@ -1724,10 +1753,11 @@ def _install_claude_hook(project_dir: Path) -> None:
     hooks = settings.setdefault("hooks", {})
     pre_tool = hooks.setdefault("PreToolUse", [])
 
-    hooks["PreToolUse"] = [h for h in pre_tool if not (h.get("matcher") in ("Glob|Grep", "Bash") and "graphify" in str(h))]
+    hooks["PreToolUse"] = [h for h in pre_tool if not (h.get("matcher") in ("Glob|Grep", "Bash", "Read|Glob") and "graphify" in str(h))]
     hooks["PreToolUse"].append(_SETTINGS_HOOK)
+    hooks["PreToolUse"].append(_READ_SETTINGS_HOOK)
     settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-    print(f"  .claude/settings.json  ->  PreToolUse hook registered")
+    print(f"  .claude/settings.json  ->  PreToolUse hooks registered (Bash search + Read/Glob)")
 
 
 def _uninstall_claude_hook(project_dir: Path) -> None:
@@ -1740,7 +1770,7 @@ def _uninstall_claude_hook(project_dir: Path) -> None:
     except json.JSONDecodeError:
         return
     pre_tool = settings.get("hooks", {}).get("PreToolUse", [])
-    filtered = [h for h in pre_tool if not (h.get("matcher") in ("Glob|Grep", "Bash") and "graphify" in str(h))]
+    filtered = [h for h in pre_tool if not (h.get("matcher") in ("Glob|Grep", "Bash", "Read|Glob") and "graphify" in str(h))]
     if len(filtered) == len(pre_tool):
         return
     settings["hooks"]["PreToolUse"] = filtered
