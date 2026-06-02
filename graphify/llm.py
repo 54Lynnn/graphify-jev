@@ -1251,11 +1251,13 @@ def estimate_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
 
 
 def _validate_ollama_base_url(url: str) -> None:
-    """Warn (do not raise) if OLLAMA_BASE_URL looks unsafe.
+    """Warn if OLLAMA_BASE_URL looks unsafe; hard-block link-local/metadata (F3).
 
     Sending an entire corpus to a non-loopback http:// endpoint silently leaks
-    proprietary code; we surface a visible stderr warning instead of failing
-    closed (some users genuinely run Ollama on a LAN host they trust).
+    proprietary code, but some users genuinely run Ollama on a LAN host they
+    trust, so a general non-loopback target only warns. A link-local or cloud
+    metadata address (169.254.x, metadata.google.*) is never a legitimate Ollama
+    host and is a classic SSRF target, so we fail closed with a ValueError there.
     """
     try:
         from urllib.parse import urlparse
@@ -1274,6 +1276,14 @@ def _validate_ollama_base_url(url: str) -> None:
         )
         return
     host = (parsed.hostname or "").lower()
+    if (
+        host.startswith("169.254.")  # link-local, includes the 169.254.169.254 metadata IP
+        or host in ("metadata.google.internal", "metadata.google.com", "0.0.0.0", "::", "[::]")  # nosec B104 - blocklist, not a bind
+    ):
+        raise ValueError(
+            f"OLLAMA_BASE_URL points at a link-local/metadata address ({host!r}); refusing to "
+            "send the corpus there. Set it to a real Ollama host."
+        )
     is_loopback = host in ("localhost", "127.0.0.1", "::1") or host.startswith("127.")
     if not is_loopback:
         scheme_note = " (UNENCRYPTED)" if parsed.scheme == "http" else ""

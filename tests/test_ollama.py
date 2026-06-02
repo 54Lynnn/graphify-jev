@@ -1,7 +1,29 @@
 """Tests for the Ollama backend additions in graphify/llm.py."""
 from __future__ import annotations
 
-from graphify.llm import detect_backend, BACKENDS
+import pytest
+
+from graphify.llm import detect_backend, BACKENDS, _validate_ollama_base_url
+
+
+@pytest.mark.parametrize("url", [
+    "http://169.254.169.254/v1",
+    "http://169.254.1.5:11434/v1",
+    "http://metadata.google.internal/v1",
+    "http://0.0.0.0:11434/v1",
+])
+def test_ollama_blocks_link_local_and_metadata(url):
+    """Link-local / cloud-metadata Ollama targets fail closed (F3)."""
+    with pytest.raises(ValueError):
+        _validate_ollama_base_url(url)
+
+
+def test_ollama_loopback_and_lan_do_not_raise(capsys):
+    """Loopback is silent; a general LAN host warns but is allowed (F3)."""
+    _validate_ollama_base_url("http://localhost:11434/v1")
+    assert capsys.readouterr().err == ""
+    _validate_ollama_base_url("http://192.168.1.50:11434/v1")  # LAN: warn, not raise
+    assert "non-loopback" in capsys.readouterr().err
 
 
 def test_ollama_in_backends():
