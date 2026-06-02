@@ -395,6 +395,21 @@ def _default_model_for_backend(backend: str) -> str:
     return cfg["default_model"]
 
 
+def _backend_pkg_hint(pkg: str, extra: str) -> str:
+    """Package-missing message that works for the recommended `uv tool` install.
+
+    `uv tool install graphifyy` puts graphify in an isolated venv, so a plain
+    `pip install <pkg>` never reaches it - the friction a user hits when a
+    backend needs anthropic/openai/boto3 and the only advice was "pip install".
+    Point at the extra and the uv path first, then the pip/venv fallback.
+    """
+    return (
+        f"the '{pkg}' package is required for this backend but is not installed. "
+        f"Install it with:  uv tool install \"graphifyy[{extra}]\" --force  "
+        f"(uv tool), or  pip install {pkg}  (pip/venv install)."
+    )
+
+
 def _call_openai_compat(
     base_url: str,
     api_key: str,
@@ -411,11 +426,8 @@ def _call_openai_compat(
     try:
         from openai import OpenAI
     except ImportError as exc:
-        pkg_hint = "graphifyy[kimi]" if backend == "kimi" else "openai"
-        raise ImportError(
-            "Gemini/Kimi/Ollama/OpenAI-compatible extraction requires the openai package. "
-            f"Run: pip install {pkg_hint}"
-        ) from exc
+        extra = backend if backend in ("kimi", "gemini", "openai", "ollama") else "openai"
+        raise ImportError(_backend_pkg_hint("openai", extra)) from exc
 
     # Local backends (ollama, llama.cpp, vLLM) routinely take >60s for a
     # single chunk on a large model — far longer than the openai SDK's
@@ -536,10 +548,7 @@ def _call_claude(api_key: str, model: str, user_message: str, max_tokens: int = 
     try:
         import anthropic
     except ImportError as exc:
-        raise ImportError(
-            "Claude direct extraction requires the anthropic package. "
-            "Run: pip install anthropic"
-        ) from exc
+        raise ImportError(_backend_pkg_hint("anthropic", "anthropic")) from exc
 
     client = anthropic.Anthropic(api_key=api_key)
     resp = client.messages.create(
@@ -1172,7 +1181,7 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
         try:
             import anthropic
         except ImportError as exc:
-            raise ImportError("anthropic package required for claude backend") from exc
+            raise ImportError(_backend_pkg_hint("anthropic", "anthropic")) from exc
         client = anthropic.Anthropic(api_key=key)
         resp = client.messages.create(
             model=mdl,
@@ -1206,7 +1215,7 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
         try:
             import boto3
         except ImportError as exc:
-            raise ImportError("boto3 required for bedrock backend") from exc
+            raise ImportError(_backend_pkg_hint("boto3", "bedrock")) from exc
         region = os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
         profile = os.environ.get("AWS_PROFILE")
         session = boto3.Session(profile_name=profile, region_name=region)
@@ -1222,7 +1231,7 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
     try:
         from openai import OpenAI
     except ImportError as exc:
-        raise ImportError("openai package required for this backend") from exc
+        raise ImportError(_backend_pkg_hint("openai", "openai")) from exc
     client = OpenAI(api_key=key, base_url=cfg["base_url"])
     kwargs: dict = {
         "model": mdl,
