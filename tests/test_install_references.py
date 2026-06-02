@@ -268,6 +268,25 @@ def test_claude_install_ships_lean_core_and_references(tmp_path):
     ]
 
 
+def test_gemini_install_references_all_resolve(tmp_path):
+    """End-to-end: every references/ pointer in gemini's installed SKILL.md resolves.
+
+    gemini ships claude's lean skill.md body but resolves its references through a
+    separate path, so this locks the body<->refs coupling: a real install with the
+    real claude bundle must leave no dead pointer on disk.
+    """
+    import re
+    _install(tmp_path, "gemini")
+    skill = tmp_path / ".gemini" / "skills" / "graphify" / "SKILL.md"
+    assert skill.exists()
+    refdir = skill.parent / "references"
+    assert refdir.is_dir()
+    pointers = set(re.findall(r"references/([a-z-]+\.md)", skill.read_text(encoding="utf-8")))
+    assert pointers, "the lean core should link to references/"
+    missing = [p for p in pointers if not (refdir / p).is_file()]
+    assert not missing, f"dead reference pointers in gemini install: {missing}"
+
+
 def test_claude_twins_ride_the_claude_bundle(tmp_path):
     """antigravity and kimi reuse claude's split bundle, so they go progressive too.
 
