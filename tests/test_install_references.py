@@ -285,7 +285,10 @@ def test_pyproject_declares_references_globs():
     exists; the skill bodies are graphify/skill*.md, listed explicitly), so it was
     removed. This test guards the real shipped layout.
     """
-    import tomllib
+    try:
+        import tomllib  # Python 3.11+ stdlib
+    except ModuleNotFoundError:  # Python 3.10
+        import tomli as tomllib  # type: ignore[no-redef]
 
     pyproject = PKG_DIR.parent / "pyproject.toml"
     if not pyproject.exists():
