@@ -193,10 +193,10 @@ extraction = "verbose"
 bucket = "monolith"
 skill_dst = "graphify/skill-aider.md"
 monolith = "aider"
-roundtrip_ref = "origin/v8:graphify/skill-aider.md"
+roundtrip_ref = "47042beb05d1f6dd2186c0c499ae2840ce604ead:graphify/skill-aider.md"
 
 [platform.devin]
 bucket = "monolith"
 skill_dst = "graphify/skill-devin.md"
 monolith = "devin"
-roundtrip_ref = "origin/v8:graphify/skill-devin.md"
+roundtrip_ref = "47042beb05d1f6dd2186c0c499ae2840ce604ead:graphify/skill-devin.md"

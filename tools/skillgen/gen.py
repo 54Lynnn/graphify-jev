@@ -45,11 +45,19 @@ PLATFORMS_TOML = SKILLGEN_DIR / "platforms.toml"
 # against ITS OWN v8 body is the per-host guard: a drop that only hits one host
 # (e.g. trae losing its AGENTS.md integration section) is invisible when every
 # host is checked against claude's monolith, so the audit must be per-host.
+#
+# Baselines are pinned to the immutable pre-split commit SHA, NOT the moving
+# `origin/v8` ref: once the split lands on v8, `origin/v8` no longer holds the
+# original monolith bodies / inline constants, so a symbolic ref would compare
+# the split against itself (vacuous) or fail to find the old constants. The SHA
+# is an ancestor of origin/v8 and is fetched under the CI `fetch-depth: 0`.
+_V8_BASELINE_SHA = "47042beb05d1f6dd2186c0c499ae2840ce604ead"
+
 def _v8_baseline_ref(platform_key: str) -> str:
-    """The git ref for a split host's own v8 skill body."""
+    """The git ref for a split host's own pre-split skill body."""
     if platform_key == "claude":
-        return "origin/v8:graphify/skill.md"
-    return f"origin/v8:graphify/skill-{platform_key}.md"
+        return f"{_V8_BASELINE_SHA}:graphify/skill.md"
+    return f"{_V8_BASELINE_SHA}:graphify/skill-{platform_key}.md"
 
 # Immutable baseline for --always-on-roundtrip. The six always-on instruction
 # blocks used to be triple-quoted constants in graphify/__main__.py; they are now
@@ -59,7 +67,7 @@ def _v8_baseline_ref(platform_key: str) -> str:
 # constant byte for byte. It deliberately does NOT track HEAD: once the extraction
 # lands, HEAD's constants are _always_on(...) calls, not the literals the
 # validator needs to compare against.
-ALWAYS_ON_BASELINE_REF = "origin/v8:graphify/__main__.py"
+ALWAYS_ON_BASELINE_REF = f"{_V8_BASELINE_SHA}:graphify/__main__.py"
 
 # The always-on instruction blocks: rendered-file basename -> the __main__.py
 # constant it must reproduce. Rendered to graphify/always_on/<basename>.md from
