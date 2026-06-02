@@ -27,7 +27,10 @@ import argparse
 import re
 import subprocess
 import sys
-import tomllib
+try:
+    import tomllib  # Python 3.11+ stdlib
+except ModuleNotFoundError:  # Python 3.10 - graphify supports >=3.10
+    import tomli as tomllib  # type: ignore[no-redef]
 from dataclasses import dataclass, field
 from pathlib import Path
 
