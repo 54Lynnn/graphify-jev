@@ -55,10 +55,15 @@ def _file_within_size_cap(path: Path, cap: int = _OFFICE_MAX_RAW_BYTES) -> bool:
 
 
 def _zip_within_caps(path: Path) -> bool:
-    """Reject a zip-based office file that looks like a zip/XML bomb.
+    """Reject a zip-based office file that is a likely zip/XML bomb.
 
-    Checks on-disk size, the summed uncompressed size of every member, and the
-    overall compression ratio before openpyxl/python-docx decompress and parse.
+    Two layers, because the zip central-directory sizes are attacker-controlled:
+    1. A cheap pre-filter on the declared sizes (on-disk cap, summed-uncompressed
+       cap, compression ratio) that rejects an honest bomb without decompressing.
+    2. An authoritative pass that stream-decompresses every member with a hard
+       byte ceiling, so a member that under-declares its size in the central
+       directory cannot expand past the cap undetected. Decompression is chunked
+       and bounded, so checking a bomb never materializes more than the ceiling.
     """
     import zipfile
     if not _file_within_size_cap(path):
@@ -67,12 +72,22 @@ def _zip_within_caps(path: Path) -> bool:
         with zipfile.ZipFile(path) as zf:
             infos = zf.infolist()
             compressed = sum(i.compress_size for i in infos) or 1
-            uncompressed = sum(i.file_size for i in infos)
-    except (zipfile.BadZipFile, OSError):
-        return False
-    if uncompressed > _OFFICE_MAX_DECOMPRESSED_BYTES:
-        return False
-    if uncompressed / compressed > _OFFICE_MAX_COMPRESSION_RATIO:
+            declared = sum(i.file_size for i in infos)
+            if declared > _OFFICE_MAX_DECOMPRESSED_BYTES:
+                return False
+            if declared / compressed > _OFFICE_MAX_COMPRESSION_RATIO:
+                return False
+            total = 0
+            for info in infos:
+                with zf.open(info) as member:
+                    while True:
+                        chunk = member.read(1024 * 1024)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > _OFFICE_MAX_DECOMPRESSED_BYTES:
+                            return False
+    except (zipfile.BadZipFile, OSError, EOFError):
         return False
     return True
 

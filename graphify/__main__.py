@@ -3769,6 +3769,17 @@ def main() -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+        if backend == "ollama":
+            # Fail closed with a clean message (not a deep traceback) if
+            # OLLAMA_BASE_URL points at a link-local/metadata address. warn=False:
+            # the later in-flow call owns the user-facing warning for LAN hosts.
+            from graphify.llm import _validate_ollama_base_url
+            _oll_url = os.environ.get("OLLAMA_BASE_URL", _BACKENDS["ollama"].get("base_url", ""))
+            try:
+                _validate_ollama_base_url(_oll_url, warn=False)
+            except ValueError as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                sys.exit(2)
         if not _get_backend_api_key(backend):
             # Ollama on a loopback URL ignores auth entirely; don't block
             # the run just because OLLAMA_API_KEY is unset (issue #792).

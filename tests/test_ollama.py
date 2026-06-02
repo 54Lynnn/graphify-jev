@@ -26,6 +26,28 @@ def test_ollama_loopback_and_lan_do_not_raise(capsys):
     assert "non-loopback" in capsys.readouterr().err
 
 
+def test_ollama_alias_resolving_to_link_local_blocked(monkeypatch):
+    """A hostname that RESOLVES to a link-local IP is blocked, not just literals (F3)."""
+    from graphify import llm
+
+    def fake_getaddrinfo(host, *a, **k):
+        return [(2, 1, 6, "", ("169.254.169.254", 0))]  # alias -> metadata IP
+
+    monkeypatch.setattr("socket.getaddrinfo", fake_getaddrinfo)
+    with pytest.raises(ValueError):
+        llm._validate_ollama_base_url("http://innocent-looking-host/v1")
+
+
+def test_ollama_warn_false_still_hard_blocks_but_stays_quiet(capsys):
+    """warn=False suppresses the LAN warning but never the metadata hard-block (F3)."""
+    # LAN host with warn=False: allowed, and no warning emitted (early-gate use).
+    _validate_ollama_base_url("http://192.168.1.50:11434/v1", warn=False)
+    assert capsys.readouterr().err == ""
+    # metadata host with warn=False: still raises.
+    with pytest.raises(ValueError):
+        _validate_ollama_base_url("http://169.254.169.254/v1", warn=False)
+
+
 def test_ollama_in_backends():
     assert "ollama" in BACKENDS
     assert BACKENDS["ollama"]["pricing"]["input"] == 0.0

@@ -1250,42 +1250,71 @@ def estimate_cost(backend: str, input_tokens: int, output_tokens: int) -> float:
     return (input_tokens * p["input"] + output_tokens * p["output"]) / 1_000_000
 
 
-def _validate_ollama_base_url(url: str) -> None:
+def _ollama_host_is_link_local_or_metadata(host: str) -> bool:
+    """True if *host* is, or resolves to, a link-local / cloud-metadata address.
+
+    Resolves the name so an alias pointing at 169.254.169.254 is caught too, not
+    just a literal IP. General private/LAN addresses are deliberately NOT treated
+    as metadata: people do run Ollama on trusted LAN boxes, so those only warn.
+    """
+    import ipaddress
+    import socket
+    if host in ("metadata.google.internal", "metadata.google.com", "0.0.0.0", "::", "[::]"):  # nosec B104 - blocklist, not a bind
+        return True
+    if host.startswith("169.254."):  # link-local literal, includes the metadata IP
+        return True
+    try:
+        infos = socket.getaddrinfo(host, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+    except (socket.gaierror, UnicodeError, OSError):
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if ip.is_link_local:  # 169.254.0.0/16 and fe80::/10 (includes the metadata IP)
+            return True
+    return False
+
+
+def _validate_ollama_base_url(url: str, *, warn: bool = True) -> None:
     """Warn if OLLAMA_BASE_URL looks unsafe; hard-block link-local/metadata (F3).
 
     Sending an entire corpus to a non-loopback http:// endpoint silently leaks
     proprietary code, but some users genuinely run Ollama on a LAN host they
     trust, so a general non-loopback target only warns. A link-local or cloud
-    metadata address (169.254.x, metadata.google.*) is never a legitimate Ollama
-    host and is a classic SSRF target, so we fail closed with a ValueError there.
+    metadata address (169.254.x, metadata.google.*, or any host that resolves to
+    one) is never a legitimate Ollama host and is a classic SSRF target, so we
+    fail closed with a ValueError there regardless of *warn*. Pass warn=False for
+    an early gate that should hard-block but leave the user-facing warning to the
+    later in-flow call.
     """
     try:
         from urllib.parse import urlparse
         parsed = urlparse(url)
     except Exception:
-        print(
-            f"[graphify] WARNING: OLLAMA_BASE_URL={url!r} is not a parseable URL.",
-            file=sys.stderr,
-        )
+        if warn:
+            print(
+                f"[graphify] WARNING: OLLAMA_BASE_URL={url!r} is not a parseable URL.",
+                file=sys.stderr,
+            )
         return
     if parsed.scheme not in ("http", "https"):
-        print(
-            f"[graphify] WARNING: OLLAMA_BASE_URL has unexpected scheme {parsed.scheme!r}; "
-            "expected http or https.",
-            file=sys.stderr,
-        )
+        if warn:
+            print(
+                f"[graphify] WARNING: OLLAMA_BASE_URL has unexpected scheme {parsed.scheme!r}; "
+                "expected http or https.",
+                file=sys.stderr,
+            )
         return
     host = (parsed.hostname or "").lower()
-    if (
-        host.startswith("169.254.")  # link-local, includes the 169.254.169.254 metadata IP
-        or host in ("metadata.google.internal", "metadata.google.com", "0.0.0.0", "::", "[::]")  # nosec B104 - blocklist, not a bind
-    ):
+    if _ollama_host_is_link_local_or_metadata(host):
         raise ValueError(
             f"OLLAMA_BASE_URL points at a link-local/metadata address ({host!r}); refusing to "
             "send the corpus there. Set it to a real Ollama host."
         )
     is_loopback = host in ("localhost", "127.0.0.1", "::1") or host.startswith("127.")
-    if not is_loopback:
+    if warn and not is_loopback:
         scheme_note = " (UNENCRYPTED)" if parsed.scheme == "http" else ""
         print(
             f"[graphify] WARNING: OLLAMA_BASE_URL points to non-loopback host {host!r}{scheme_note}. "

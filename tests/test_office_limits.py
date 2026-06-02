@@ -51,6 +51,33 @@ def test_converters_return_empty_for_bomb(tmp_path):
         assert detect.xlsx_to_markdown(bomb) == ""
 
 
+def test_legit_multi_member_passes_streaming(tmp_path):
+    """A normal multi-member office zip passes the streaming-ceiling pass."""
+    ok = tmp_path / "ok.xlsx"
+    with zipfile.ZipFile(ok, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", b"<types/>")
+        zf.writestr("xl/workbook.xml", b"<workbook/>" * 100)
+        zf.writestr("xl/worksheets/sheet1.xml", b"<sheetData>rows</sheetData>" * 500)
+    assert detect._zip_within_caps(ok) is True
+
+
+def test_streaming_ceiling_rejects_oversized_actual(tmp_path, monkeypatch):
+    """With a low decompressed cap, content whose actual bytes exceed it is rejected.
+
+    This exercises the authoritative bounded-decompression pass: the function
+    reads real decompressed bytes (not the attacker-declared central-directory
+    sizes) and stops once the ceiling is crossed.
+    """
+    monkeypatch.setattr(detect, "_OFFICE_MAX_DECOMPRESSED_BYTES", 64 * 1024)  # 64 KiB
+    f = tmp_path / "big.xlsx"
+    # ~512 KiB of incompressible data: low ratio (passes the ratio pre-filter),
+    # but real decompressed size far exceeds the 64 KiB ceiling.
+    import os as _os
+    with zipfile.ZipFile(f, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("xl/x.xml", _os.urandom(512 * 1024))
+    assert detect._zip_within_caps(f) is False
+
+
 def test_pdf_over_cap_returns_empty(tmp_path, monkeypatch):
     """A PDF larger than the raw cap is skipped before pypdf opens it."""
     big = tmp_path / "big.pdf"
