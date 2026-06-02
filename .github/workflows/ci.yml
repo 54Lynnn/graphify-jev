@@ -54,6 +54,11 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          # test_skillgen.py reads pre-split skill bodies from the immutable
+          # baseline commit via `git show`; a shallow checkout omits that history
+          # and the baseline tests fail. Full history mirrors the skillgen-check job.
+          fetch-depth: 0
 
       - name: Install uv
         uses: astral-sh/setup-uv@v8.1.0

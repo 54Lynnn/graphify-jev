@@ -1109,7 +1109,7 @@ wheels = [
 
 [[package]]
 name = "graphifyy"
-version = "0.8.24"
+version = "0.8.28"
 source = { editable = "." }
 dependencies = [
     { name = "datasketch" },
@@ -1121,7 +1121,6 @@ dependencies = [
     { name = "tree-sitter-c" },
     { name = "tree-sitter-c-sharp" },
     { name = "tree-sitter-cpp" },
-    { name = "tree-sitter-dm" },
     { name = "tree-sitter-elixir" },
     { name = "tree-sitter-fortran" },
     { name = "tree-sitter-go" },
@@ -1160,6 +1159,7 @@ all = [
     { name = "pypdf" },
     { name = "python-docx" },
     { name = "tiktoken" },
+    { name = "tree-sitter-dm" },
     { name = "tree-sitter-sql" },
     { name = "watchdog" },
     { name = "yt-dlp" },
@@ -1169,6 +1169,9 @@ bedrock = [
 ]
 chinese = [
     { name = "jieba" },
+]
+dm = [
+    { name = "tree-sitter-dm" },
 ]
 gemini = [
     { name = "openai" },
@@ -1234,6 +1237,7 @@ dev = [
     { name = "ruff" },
     { name = "safety" },
     { name = "setuptools" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "wheel" },
 ]
 
@@ -1279,7 +1283,8 @@ requires-dist = [
     { name = "tree-sitter-c" },
     { name = "tree-sitter-c-sharp" },
     { name = "tree-sitter-cpp" },
-    { name = "tree-sitter-dm" },
+    { name = "tree-sitter-dm", marker = "extra == 'all'" },
+    { name = "tree-sitter-dm", marker = "extra == 'dm'" },
     { name = "tree-sitter-elixir" },
     { name = "tree-sitter-fortran" },
     { name = "tree-sitter-go" },
@@ -1308,7 +1313,7 @@ requires-dist = [
     { name = "yt-dlp", marker = "extra == 'all'" },
     { name = "yt-dlp", marker = "extra == 'video'" },
 ]
-provides-extras = ["mcp", "neo4j", "pdf", "watch", "svg", "leiden", "office", "google", "video", "kimi", "ollama", "bedrock", "gemini", "openai", "chinese", "sql", "all"]
+provides-extras = ["mcp", "neo4j", "pdf", "watch", "svg", "leiden", "office", "google", "video", "kimi", "ollama", "bedrock", "gemini", "openai", "chinese", "sql", "dm", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1325,6 +1330,7 @@ dev = [
     { name = "ruff", specifier = ">=0.15.13" },
     { name = "safety", specifier = ">=3.7.0" },
     { name = "setuptools", specifier = ">=82.0.1" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "wheel", specifier = ">=0.47.0" },
 ]
 
