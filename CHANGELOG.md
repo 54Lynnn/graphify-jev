@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## Unreleased
+## 0.8.30 (2026-06-03)
 
 - Fix: `graphify install --project --platform antigravity` now writes Antigravity's always-on layer (`.agents/rules/graphify.md` + `.agents/workflows/graphify.md`), not just the skill. The project-scoped path went through the skill-only branch and skipped them, even though the project uninstall removes them.
 - Feat: close the Read-tool graph bypass. The `PreToolUse` nudge previously only fired on Bash search (`grep`/`rg`/`find`); an agent answering a question by reading many source files through the native `Read` tool (or `Glob`) slipped past it. A new `Read|Glob` hook nudges toward `graphify query` when `graphify-out/graph.json` exists, only for a source/doc file outside `graphify-out/`, and never blocks (#1114).
