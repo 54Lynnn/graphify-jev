@@ -107,7 +107,8 @@ graphify install --project --platform codex
 ```
 
 Project-scoped installs write under the current directory, for example
-`.claude/skills/graphify/SKILL.md` or `.agents/skills/graphify/SKILL.md`, and
+`.claude/skills/graphify/SKILL.md` or `.agents/skills/graphify/SKILL.md` (plus a
+`references/` sidecar the skill loads on demand), and
 print a `git add` hint for files that can be committed.
 Per-platform commands that support project-scoped installs accept the same flag,
 for example `graphify claude install --project` or `graphify codex install --project`.

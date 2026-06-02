@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## Unreleased
+## 0.8.29 (2026-06-02)
 
 - Feat: progressive-disclosure skill files. The per-host `SKILL.md` is now a lean core (~615 lines, down from the ~1156-line monolith, about 47% less always-loaded context) that carries the full default code-build pipeline inline and links to an on-demand `references/` sidecar (extraction-spec, query, update, exports, transcribe, github-and-merge, add-watch, hooks); an agent reads a reference only when that path is actually taken, so a normal build needs none. 18 hosts go progressive (claude, codex, opencode, kilo, copilot, claw, droid, trae, trae-cn, hermes, kiro, pi, antigravity, antigravity-windows, windows, kimi, amp, gemini); aider and devin stay monolithic by design. All 15 skill bodies + sidecars are generated from one source under `tools/skillgen/`, with CI guards (`--check`, `--audit-coverage`, `--monolith-roundtrip`, `--always-on-roundtrip`) proving the references are byte-identical slices of the old monolith so nothing is lost (#1121).
 - Fix: `graphify install --platform gemini` shipped a `SKILL.md` with 8 dead `references/` pointers. gemini installs claude's lean progressive core but the installer never copied claude's references sidecar; it now does, so every on-demand reference resolves (regression from the progressive-disclosure split).
