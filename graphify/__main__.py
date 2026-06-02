@@ -171,7 +171,13 @@ def _packaged_skill_refs_dir(platform_name: str) -> Path | None:
     A platform opts into progressive disclosure by setting ``skill_refs`` in its
     ``_PLATFORM_CONFIG`` entry. The value names a bundle under
     ``graphify/skills/<bundle>/references/``. Reuse keys (e.g. trae-cn) point at
-    their twin's bundle. ``gemini`` has no config entry and is never progressive.
+    their twin's bundle.
+
+    ``gemini`` has no ``_PLATFORM_CONFIG`` entry: it installs claude's
+    ``skill.md`` body verbatim (see ``_copy_skill_file``). Since that body is the
+    lean progressive core that links to ``references/``, gemini needs claude's
+    references/ sidecar too, or its SKILL.md ships with dead pointers. So gemini
+    resolves to the claude bundle rather than opting out.
 
     Bundles ship one platform-group at a time. A host whose bundle directory
     ``graphify/skills/<bundle>/`` is not in this build has not gone progressive
@@ -182,8 +188,9 @@ def _packaged_skill_refs_dir(platform_name: str) -> Path | None:
     the empty-sidecar regression the wheel-content test also guards).
     """
     if platform_name == "gemini":
-        return None
-    bundle = _PLATFORM_CONFIG[platform_name].get("skill_refs")
+        bundle = "claude"
+    else:
+        bundle = _PLATFORM_CONFIG[platform_name].get("skill_refs")
     if not bundle:
         return None
     bundle_dir = Path(__file__).parent / "skills" / bundle
