@@ -1534,7 +1534,7 @@ def _project_uninstall(platform_name: str, project_dir: Path | None = None) -> N
     if platform_name in ("claude", "windows"):
         _remove_skill_file(platform_name, project=True, project_dir=project_dir)
         _remove_claude_skill_registration(project_dir)
-        claude_uninstall(project_dir)
+        claude_uninstall(project_dir, project=True)
     elif platform_name == "gemini":
         gemini_uninstall(project_dir, project=True)
     elif platform_name == "cursor":
@@ -1764,9 +1764,16 @@ def uninstall_all(project_dir: Path | None = None, purge: bool = False) -> None:
     print("\nDone. Run 'pip uninstall graphifyy' to remove the package itself.")
 
 
-def claude_uninstall(project_dir: Path | None = None) -> None:
-    """Remove the graphify section from the local CLAUDE.md."""
-    target = (project_dir or Path(".")) / "CLAUDE.md"
+def claude_uninstall(project_dir: Path | None = None, *, project: bool = False) -> None:
+    """Remove the graphify skill tree (SKILL.md + references/) and the CLAUDE.md section.
+
+    Mirrors gemini_uninstall: the bare `graphify uninstall` and `graphify claude
+    uninstall` must remove the installed skill, not just strip CLAUDE.md, or the
+    progressive-disclosure tree (SKILL.md + references/) is orphaned (#1121).
+    """
+    project_dir = project_dir or Path(".")
+    _remove_skill_file("claude", project=project, project_dir=project_dir)
+    target = project_dir / "CLAUDE.md"
 
     if not target.exists():
         print("No CLAUDE.md found in current directory - nothing to do")
