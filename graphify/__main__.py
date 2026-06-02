@@ -920,20 +920,23 @@ def _kiro_uninstall(project_dir: Path) -> None:
     print("Removed: " + (", ".join(removed) if removed else "nothing to remove"))
 
 
-def _antigravity_install(project_dir: Path) -> None:
-    """Install graphify for Google Antigravity: skill + .agents/rules + .agents/workflows."""
-    # 1. Copy skill file to ~/.gemini/config/skills/graphify/SKILL.md (global)
-    install(platform="antigravity")
+def _antigravity_finalize(skill_dst: Path, project_dir: Path) -> None:
+    """Write Antigravity's always-on layer next to an installed skill.
 
-    # 1.5. Inject YAML frontmatter for native Antigravity tool discovery
-    skill_dst = _platform_skill_destination("antigravity")
+    Injects the native tool-discovery YAML frontmatter into *skill_dst*, then
+    writes ``.agents/rules/graphify.md`` and ``.agents/workflows/graphify.md``
+    under *project_dir*. Shared by the global ``antigravity install`` and the
+    project-scoped ``install --project --platform antigravity`` paths, so both lay
+    down the rules/workflows that the uninstall path already expects to remove.
+    """
+    # Inject YAML frontmatter for native Antigravity tool discovery.
     if skill_dst.exists():
         content = skill_dst.read_text(encoding="utf-8")
         if not content.startswith("---\n"):
             frontmatter = "---\nname: graphify-manager\ndescription: Rebuild the code graph or perform manual CLI queries when MCP server is offline.\n---\n\n"
             skill_dst.write_text(frontmatter + content, encoding="utf-8")
 
-    # 2. Write .agents/rules/graphify.md
+    # .agents/rules/graphify.md
     rules_path = project_dir / _ANTIGRAVITY_RULES_PATH
     rules_path.parent.mkdir(parents=True, exist_ok=True)
     if rules_path.exists():
@@ -947,7 +950,7 @@ def _antigravity_install(project_dir: Path) -> None:
         rules_path.write_text(_always_on("antigravity-rules"), encoding="utf-8")
         print(f"graphify rule written to {rules_path.resolve()}")
 
-    # 3. Write .agents/workflows/graphify.md
+    # .agents/workflows/graphify.md
     wf_path = project_dir / _ANTIGRAVITY_WORKFLOW_PATH
     wf_path.parent.mkdir(parents=True, exist_ok=True)
     if wf_path.exists():
@@ -960,6 +963,14 @@ def _antigravity_install(project_dir: Path) -> None:
     else:
         wf_path.write_text(_ANTIGRAVITY_WORKFLOW, encoding="utf-8")
         print(f"graphify workflow written to {wf_path.resolve()}")
+
+
+def _antigravity_install(project_dir: Path) -> None:
+    """Install graphify for Google Antigravity (global skill + .agents/rules + .agents/workflows)."""
+    # Copy the skill to ~/.gemini/config/skills/graphify/SKILL.md (global), then
+    # lay down the always-on rules/workflows under the project dir.
+    install(platform="antigravity")
+    _antigravity_finalize(_platform_skill_destination("antigravity"), project_dir)
 
     print()
     print("Antigravity will now check the knowledge graph before answering")
@@ -1528,7 +1539,14 @@ def _project_install(platform_name: str, project_dir: Path | None = None) -> Non
         skill_dst = _copy_skill_file("devin", project=True, project_dir=project_dir)
         _devin_rules_install(project_dir)
         _print_project_git_add_hint([_project_scope_root(skill_dst, project_dir), project_dir / ".windsurf"])
-    elif platform_name in ("copilot", "pi", "antigravity", "kimi"):
+    elif platform_name == "antigravity":
+        # Project-scoped: skill in .agents/skills/ PLUS the .agents/rules +
+        # .agents/workflows always-on layer (previously this path wrote only the
+        # skill, leaving the rules/workflows the uninstall path removes unset).
+        skill_dst = _copy_skill_file("antigravity", project=True, project_dir=project_dir)
+        _antigravity_finalize(skill_dst, project_dir)
+        _print_project_git_add_hint([_project_scope_root(skill_dst, project_dir), project_dir / ".agents"])
+    elif platform_name in ("copilot", "pi", "kimi"):
         skill_dst = _copy_skill_file(platform_name, project=True, project_dir=project_dir)
         _print_project_git_add_hint([_project_scope_root(skill_dst, project_dir)])
     else:
