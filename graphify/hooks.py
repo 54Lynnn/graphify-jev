@@ -10,34 +10,51 @@ _HOOK_MARKER_END = "# graphify-hook-end"
 _CHECKOUT_MARKER = "# graphify-checkout-hook-start"
 _CHECKOUT_MARKER_END = "# graphify-checkout-hook-end"
 
+# __PINNED_PYTHON__ is replaced at install time with the absolute path of the
+# Python interpreter that ran `graphify hook install`.  For uv-tool and pipx
+# installs the interpreter lives inside an isolated venv, so the launcher on
+# PATH is the only entry point — and GUI git clients / CI runners often have a
+# minimal PATH that omits ~/.local/bin.  Pinning sys.executable at install time
+# makes the hook work regardless of PATH at git-trigger time.
 _PYTHON_DETECT = """\
-# Detect the correct Python interpreter (handles pipx, venv, system installs)
-GRAPHIFY_BIN=$(command -v graphify 2>/dev/null)
-if [ -n "$GRAPHIFY_BIN" ]; then
-    case "$GRAPHIFY_BIN" in
-        *.exe) _SHEBANG="" ;;
-        *)     _SHEBANG=$(head -1 "$GRAPHIFY_BIN" | sed 's/^#![[:space:]]*//') ;;
-    esac
-    case "$_SHEBANG" in
-        */env\\ *) GRAPHIFY_PYTHON="${_SHEBANG#*/env }" ;;
-        *)         GRAPHIFY_PYTHON="$_SHEBANG" ;;
-    esac
-    # Allowlist: only keep characters valid in a filesystem path to prevent
-    # injection if the shebang contains shell metacharacters
-    case "$GRAPHIFY_PYTHON" in
-        *[!a-zA-Z0-9/_.@-]*) GRAPHIFY_PYTHON="" ;;
-    esac
-    if [ -n "$GRAPHIFY_PYTHON" ] && ! "$GRAPHIFY_PYTHON" -c "import graphify" 2>/dev/null; then
-        GRAPHIFY_PYTHON=""
+# Detect the correct Python interpreter (handles uv tool, pipx, venv, system installs).
+# _PINNED was recorded at hook-install time; tried first so the hook works even
+# when the graphify launcher is not on PATH (common in GUI clients and CI).
+GRAPHIFY_PYTHON=""
+_PINNED="__PINNED_PYTHON__"
+if [ -n "$_PINNED" ] && [ -x "$_PINNED" ] && "$_PINNED" -c "import graphify" 2>/dev/null; then
+    GRAPHIFY_PYTHON="$_PINNED"
+fi
+# Dynamic fallback: resolve via the graphify launcher on PATH (shebang probe).
+if [ -z "$GRAPHIFY_PYTHON" ]; then
+    GRAPHIFY_BIN=$(command -v graphify 2>/dev/null)
+    if [ -n "$GRAPHIFY_BIN" ]; then
+        case "$GRAPHIFY_BIN" in
+            *.exe) _SHEBANG="" ;;
+            *)     _SHEBANG=$(head -1 "$GRAPHIFY_BIN" | sed 's/^#![[:space:]]*//') ;;
+        esac
+        case "$_SHEBANG" in
+            */env\\ *) GRAPHIFY_PYTHON="${_SHEBANG#*/env }" ;;
+            *)         GRAPHIFY_PYTHON="$_SHEBANG" ;;
+        esac
+        # Allowlist: only keep characters valid in a filesystem path to prevent
+        # injection if the shebang contains shell metacharacters.
+        case "$GRAPHIFY_PYTHON" in
+            *[!a-zA-Z0-9/_.@-]*) GRAPHIFY_PYTHON="" ;;
+        esac
+        if [ -n "$GRAPHIFY_PYTHON" ] && ! "$GRAPHIFY_PYTHON" -c "import graphify" 2>/dev/null; then
+            GRAPHIFY_PYTHON=""
+        fi
     fi
 fi
-# Fall back: try python3, then python (Windows has no python3 shim)
+# Last resort: try python3 / python (works for system/venv installs on PATH).
 if [ -z "$GRAPHIFY_PYTHON" ]; then
     if command -v python3 >/dev/null 2>&1 && python3 -c "import graphify" 2>/dev/null; then
         GRAPHIFY_PYTHON="python3"
     elif command -v python >/dev/null 2>&1 && python -c "import graphify" 2>/dev/null; then
         GRAPHIFY_PYTHON="python"
     else
+        echo "[graphify hook] could not locate a Python with graphify installed. Add the graphify bin dir to PATH or re-run 'graphify hook install' from the env where graphify lives." >&2
         exit 0
     fi
 fi
@@ -298,8 +315,19 @@ def install(path: Path = Path(".")) -> str:
 
     hooks_dir = _user_hooks_dir(_hooks_dir(root))
 
-    commit_msg = _install_hook(hooks_dir, "post-commit", _HOOK_SCRIPT, _HOOK_MARKER)
-    checkout_msg = _install_hook(hooks_dir, "post-checkout", _CHECKOUT_SCRIPT, _CHECKOUT_MARKER)
+    # Pin the current interpreter so the hook works even when the graphify
+    # launcher is not on PATH at git-trigger time (uv tool / pipx isolation).
+    # sys.executable is the Python running this very install command, so it is
+    # always the correct isolated-venv interpreter.  The placeholder is replaced
+    # in both scripts before writing; the allowlist in _PYTHON_DETECT strips any
+    # characters unsafe in a shell path, and import-verification catches a stale
+    # pinned path so it safely falls through to the dynamic detection.
+    pinned = sys.executable.replace("'", "")  # strip single quotes (path injection guard)
+    hook = _HOOK_SCRIPT.replace("__PINNED_PYTHON__", pinned)
+    checkout = _CHECKOUT_SCRIPT.replace("__PINNED_PYTHON__", pinned)
+
+    commit_msg = _install_hook(hooks_dir, "post-commit", hook, _HOOK_MARKER)
+    checkout_msg = _install_hook(hooks_dir, "post-checkout", checkout, _CHECKOUT_MARKER)
 
     return f"post-commit: {commit_msg}\npost-checkout: {checkout_msg}"
 
