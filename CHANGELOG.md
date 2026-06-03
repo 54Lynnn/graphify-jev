@@ -2,6 +2,13 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.31 (2026-06-03)
+
+- Fix: `graphify hook install` now embeds the current interpreter (`sys.executable`) directly into the generated hook scripts. Previously, uv tool and pipx installs silently no-oped on git commit in GUI clients and CI runners where `~/.local/bin` is not on PATH — the hook could not find the graphify launcher, fell through all detection probes, and exited 0 without rebuilding. The embedded path is sanitized through a filesystem-safe allowlist before substitution. If you already have hooks installed, re-run `graphify hook install` to pick up the fix (#1127).
+- Fix: hook scripts now also probe `graphify-out/.graphify_python` as a fallback interpreter source, covering Windows/Git Bash installs where the launcher is a binary with no parseable shebang, and the case where the pinned path goes stale after a reinstall.
+- Security: hook script hardening — the `_PINNED=` assignment uses single quotes to prevent shell injection from a path containing metacharacters; `nohup "$GRAPHIFY_PYTHON" -c` is properly quoted to handle spaces; the fallback emits a loud stderr diagnostic instead of a bare silent `exit 0`.
+- Feat: query logging. Every `graphify query`, `graphify path`, `graphify explain`, and MCP `query_graph` call is now appended to `~/.cache/graphify-queries.log` in JSON Lines format (timestamp, kind, question, corpus path, nodes returned, result size, duration). Full subgraph responses are not stored by default. Control with `GRAPHIFY_QUERY_LOG` (path override), `GRAPHIFY_QUERY_LOG_DISABLE=1` (opt out), `GRAPHIFY_QUERY_LOG_RESPONSES=1` (store full response text) (#1128).
+
 ## 0.8.30 (2026-06-03)
 
 - Fix: `graphify install --project --platform antigravity` now writes Antigravity's always-on layer (`.agents/rules/graphify.md` + `.agents/workflows/graphify.md`), not just the skill. The project-scoped path went through the skill-only branch and skipped them, even though the project uninstall removes them.
