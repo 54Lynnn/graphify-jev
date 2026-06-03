@@ -21,7 +21,7 @@ _PYTHON_DETECT = """\
 # _PINNED was recorded at hook-install time; tried first so the hook works even
 # when the graphify launcher is not on PATH (common in GUI clients and CI).
 GRAPHIFY_PYTHON=""
-_PINNED="__PINNED_PYTHON__"
+_PINNED='__PINNED_PYTHON__'
 if [ -n "$_PINNED" ] && [ -x "$_PINNED" ] && "$_PINNED" -c "import graphify" 2>/dev/null; then
     GRAPHIFY_PYTHON="$_PINNED"
 fi
@@ -112,7 +112,7 @@ export GRAPHIFY_CHANGED="$CHANGED"
 _GRAPHIFY_LOG="${HOME}/.cache/graphify-rebuild.log"
 mkdir -p "$(dirname "$_GRAPHIFY_LOG")"
 echo "[graphify hook] launching background rebuild (log: $_GRAPHIFY_LOG)"
-nohup $GRAPHIFY_PYTHON -c "
+nohup "$GRAPHIFY_PYTHON" -c "
 import os, signal, sys
 from pathlib import Path
 
@@ -180,7 +180,7 @@ GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
 _GRAPHIFY_LOG="${HOME}/.cache/graphify-rebuild.log"
 mkdir -p "$(dirname "$_GRAPHIFY_LOG")"
 echo "[graphify] Branch switched - launching background rebuild (log: $_GRAPHIFY_LOG)"
-nohup $GRAPHIFY_PYTHON -c "
+nohup "$GRAPHIFY_PYTHON" -c "
 from graphify.watch import _rebuild_code, _apply_resource_limits
 from pathlib import Path
 import os, signal, sys
@@ -336,7 +336,19 @@ def install(path: Path = Path(".")) -> str:
     # in both scripts before writing; the allowlist in _PYTHON_DETECT strips any
     # characters unsafe in a shell path, and import-verification catches a stale
     # pinned path so it safely falls through to the dynamic detection.
-    pinned = sys.executable.replace("'", "")  # strip single quotes (path injection guard)
+    # Apply the same allowlist used in _PYTHON_DETECT for all other probes.
+    # This rejects any character that is not a valid plain filesystem path
+    # character, preventing $(...), backtick, double-quote, semicolon, etc.
+    # from being injected into the generated shell scripts.  The allowlist
+    # includes ':' and '\' so Windows paths (C:\...) are accepted.
+    import re as _re
+    _safe = sys.executable
+    if _re.search(r"[^a-zA-Z0-9/_.@:\\-]", _safe):
+        # Path contains characters outside the allowlist (spaces, quotes, etc.).
+        # Embed an empty string so the pinned probe is skipped and the hook
+        # falls through to the dynamic detection — safe degradation.
+        _safe = ""
+    pinned = _safe
     hook = _HOOK_SCRIPT.replace("__PINNED_PYTHON__", pinned)
     checkout = _CHECKOUT_SCRIPT.replace("__PINNED_PYTHON__", pinned)
 

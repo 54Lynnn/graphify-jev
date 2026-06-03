@@ -172,14 +172,16 @@ def test_install_embeds_pinned_interpreter(tmp_path):
     fallbacks cannot import graphify (wrong venv), and the hook silently exits 0.
     Pinning sys.executable at install time makes the hook work regardless of PATH.
     """
-    import sys
+    import re, sys
     repo = _make_git_repo(tmp_path)
     install(repo)
     commit_hook = (repo / ".git" / "hooks" / "post-commit").read_text()
     checkout_hook = (repo / ".git" / "hooks" / "post-checkout").read_text()
-    # The pinned interpreter path must appear in both generated scripts.
-    assert sys.executable in commit_hook, "pinned sys.executable missing from post-commit"
-    assert sys.executable in checkout_hook, "pinned sys.executable missing from post-checkout"
+    # Compute the sanitized value the same way install() does.
+    expected = sys.executable if not re.search(r"[^a-zA-Z0-9/_.@:\\-]", sys.executable) else ""
+    if expected:
+        assert expected in commit_hook, "sanitized sys.executable missing from post-commit"
+        assert expected in checkout_hook, "sanitized sys.executable missing from post-checkout"
     # The placeholder must be fully substituted -- no __PINNED_PYTHON__ left.
     assert "__PINNED_PYTHON__" not in commit_hook, "placeholder not substituted in post-commit"
     assert "__PINNED_PYTHON__" not in checkout_hook, "placeholder not substituted in post-checkout"
