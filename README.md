@@ -311,10 +311,11 @@ dist/
 
 **Recommended `.gitignore` additions:**
 ```
-graphify-out/manifest.json    # mtime-based, breaks after git clone
 graphify-out/cost.json        # local only
 # graphify-out/cache/         # optional: commit for speed, skip to keep repo small
 ```
+
+> `manifest.json` is now portable — keys are stored as relative paths and re-anchored on load, so committing it is safe and avoids a full rebuild on first checkout.
 
 **Workflow:**
 1. One person runs `/graphify .` and commits `graphify-out/`.
