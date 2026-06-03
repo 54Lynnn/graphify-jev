@@ -2486,6 +2486,7 @@ def main() -> None:
         from graphify.serve import _query_graph_text
         from graphify.security import sanitize_label
         from networkx.readwrite import json_graph
+        from graphify import querylog
 
         question = sys.argv[2]
         use_dfs = "--dfs" in sys.argv
@@ -2542,16 +2543,28 @@ def main() -> None:
         except Exception as exc:
             print(f"error: could not load graph: {exc}", file=sys.stderr)
             sys.exit(1)
-        print(
-            _query_graph_text(
-                G,
-                question,
-                mode="dfs" if use_dfs else "bfs",
-                depth=2,
-                token_budget=budget,
-                context_filters=context_filters,
-            )
+        import time as _time
+        _t0 = _time.perf_counter()
+        _mode = "dfs" if use_dfs else "bfs"
+        _result = _query_graph_text(
+            G,
+            question,
+            mode=_mode,
+            depth=2,
+            token_budget=budget,
+            context_filters=context_filters,
         )
+        querylog.log_query(
+            kind="query",
+            question=question,
+            corpus=str(gp),
+            result=_result,
+            mode=_mode,
+            depth=2,
+            token_budget=budget,
+            duration_ms=(_time.perf_counter() - _t0) * 1000,
+        )
+        print(_result)
     elif cmd == "affected":
         if len(sys.argv) < 3:
             print("Usage: graphify affected \"<node-or-label>\" [--relation R] [--depth N] [--graph path]", file=sys.stderr)
@@ -2720,6 +2733,13 @@ def main() -> None:
             else:
                 segments.append(f"<--{rel}{conf_str}-- {G.nodes[v].get('label', v)}")
         print(f"Shortest path ({hops} hops):\n  " + " ".join(segments))
+        from graphify import querylog
+        querylog.log_query(
+            kind="path",
+            question=f"{sys.argv[2]} -> {sys.argv[3]}",
+            corpus=str(gp),
+            nodes_returned=hops,
+        )
 
     elif cmd == "explain":
         if len(sys.argv) < 3:
@@ -2778,6 +2798,13 @@ def main() -> None:
                 print(f"  {arrow} {G.nodes[nb].get('label', nb)} [{rel}] [{conf}]")
             if len(connections) > 20:
                 print(f"  ... and {len(connections) - 20} more")
+        from graphify import querylog
+        querylog.log_query(
+            kind="explain",
+            question=sys.argv[2],
+            corpus=str(gp),
+            nodes_returned=len(connections),
+        )
 
     elif cmd == "diagnose":
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
