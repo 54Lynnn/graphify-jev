@@ -25,7 +25,21 @@ _PINNED="__PINNED_PYTHON__"
 if [ -n "$_PINNED" ] && [ -x "$_PINNED" ] && "$_PINNED" -c "import graphify" 2>/dev/null; then
     GRAPHIFY_PYTHON="$_PINNED"
 fi
-# Dynamic fallback: resolve via the graphify launcher on PATH (shebang probe).
+# Second probe: read graphify-out/.graphify_python (written by the skill and
+# CLI; survives uv-tool reinstalls and is the same source the README documents).
+if [ -z "$GRAPHIFY_PYTHON" ]; then
+    _GFY_PYTHON_FILE="graphify-out/.graphify_python"
+    if [ -f "$_GFY_PYTHON_FILE" ]; then
+        _FROM_FILE=$(cat "$_GFY_PYTHON_FILE" 2>/dev/null | tr -d '[:space:]')
+        case "$_FROM_FILE" in
+            *[!a-zA-Z0-9/_.@:\\-]*) _FROM_FILE="" ;;  # allowlist (covers Windows paths)
+        esac
+        if [ -n "$_FROM_FILE" ] && [ -x "$_FROM_FILE" ] && "$_FROM_FILE" -c "import graphify" 2>/dev/null; then
+            GRAPHIFY_PYTHON="$_FROM_FILE"
+        fi
+    fi
+fi
+# Third probe: resolve via the graphify launcher on PATH (shebang probe).
 if [ -z "$GRAPHIFY_PYTHON" ]; then
     GRAPHIFY_BIN=$(command -v graphify 2>/dev/null)
     if [ -n "$GRAPHIFY_BIN" ]; then
