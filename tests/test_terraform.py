@@ -1,6 +1,10 @@
 """Tests for the Terraform/HCL extractor (graphify/extract.py, issue #187)."""
 from __future__ import annotations
 
+import pytest
+
+pytest.importorskip("tree_sitter_hcl", reason="tree-sitter-hcl not installed; install with: uv tool install graphifyy[terraform]")
+
 from pathlib import Path
 
 from graphify.build import build_from_json
