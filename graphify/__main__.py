@@ -578,7 +578,38 @@ def _replace_or_append_section(content: str, marker: str, new_section: str) -> s
     return out
 
 
+def _print_banner() -> None:
+    """Amber brain banner on graphify install. TTY-only, never raises."""
+    if not sys.stdout.isatty():
+        return
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.kernel32.SetConsoleMode(
+                ctypes.windll.kernel32.GetStdHandle(-11), 7
+            )
+        A = "\033[38;5;214m"
+        D = "\033[38;5;130m"
+        R = "\033[0m"
+        print(f"""{A}
+  ╭──◉──╮     ╭──◉──╮
+ ╱  ◉   ◉ ╲ ╱ ◉   ◉  ╲
+│   ◉─◉─◉  ◉  ◉─◉─◉   │
+│    ◉   ◉ │ ◉   ◉    │
+│   ◉─◉─◉  ◉  ◉─◉─◉   │
+ ╲  ◉   ◉ ╱ ╲ ◉   ◉  ╱
+  ╰──◉──╯     ╰──◉──╯
+           ◉
+
+  █▀▀ █▀█ ▄▀█ █▀█ █ █ █ █▀▀ █▄█
+  █▄█ █▀▄ █▀█ █▀▀ █▀█ █ █▀   █{D}  {__version__}{R}
+""")
+    except Exception:
+        pass
+
+
 def install(platform: str = "claude", *, project: bool = False, project_dir: Path | None = None) -> None:
+    _print_banner()
     if platform == "gemini":
         gemini_install(project_dir=project_dir, project=project)
         return
