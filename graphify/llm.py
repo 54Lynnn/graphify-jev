@@ -214,6 +214,19 @@ def _resolve_max_tokens(default: int) -> int:
             pass
     return default
 
+
+def _resolve_api_timeout(default: float = 600.0) -> float:
+    """Honour GRAPHIFY_API_TIMEOUT env var override, else use default (seconds)."""
+    raw = os.environ.get("GRAPHIFY_API_TIMEOUT", "").strip()
+    if raw:
+        try:
+            v = float(raw)
+            if v > 0:
+                return v
+        except ValueError:
+            pass
+    return default
+
 _EXTRACTION_SYSTEM = """\
 You are a graphify semantic extraction agent. Extract a knowledge graph fragment from the files provided.
 Output ONLY valid JSON — no explanation, no markdown fences, no preamble.
@@ -434,16 +447,7 @@ def _call_openai_compat(
     # default. Honour GRAPHIFY_API_TIMEOUT (seconds) for explicit override;
     # default to 600s, which is long enough for a 31B model on a 16k chunk
     # but still bounds runaway connections (issue #792 addendum).
-    timeout_raw = os.environ.get("GRAPHIFY_API_TIMEOUT", "").strip()
-    timeout_s: float = 600.0
-    if timeout_raw:
-        try:
-            v = float(timeout_raw)
-            if v > 0:
-                timeout_s = v
-        except ValueError:
-            pass
-    client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_s)
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=_resolve_api_timeout())
     kwargs: dict = {
         "model": model,
         "messages": [
@@ -550,7 +554,7 @@ def _call_claude(api_key: str, model: str, user_message: str, max_tokens: int = 
     except ImportError as exc:
         raise ImportError(_backend_pkg_hint("anthropic", "anthropic")) from exc
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = anthropic.Anthropic(api_key=api_key, timeout=_resolve_api_timeout())
     resp = client.messages.create(
         model=model,
         max_tokens=max_tokens,
@@ -637,7 +641,7 @@ def _call_claude_cli(user_message: str, max_tokens: int = 8192, *, deep_mode: bo
         capture_output=True,
         text=True,
         encoding="utf-8",  # Force UTF-8 — prevents UnicodeEncodeError on Windows cp1252
-        timeout=600,
+        timeout=_resolve_api_timeout(),
         check=False,
     )
     if proc.returncode != 0:
@@ -1200,7 +1204,7 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
             capture_output=True,
             text=True,
             encoding="utf-8",  # Force UTF-8 — prevents UnicodeEncodeError on Windows cp1252
-            timeout=600,
+            timeout=_resolve_api_timeout(),
             check=False,
         )
         if proc.returncode != 0:
