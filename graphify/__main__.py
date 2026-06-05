@@ -901,12 +901,11 @@ def _kiro_install(project_dir: Path) -> None:
     """Write graphify skill + steering file for Kiro IDE/CLI."""
     project_dir = project_dir or Path(".")
 
-    # Skill file → .kiro/skills/graphify/SKILL.md
-    skill_src = Path(__file__).parent / "skill-kiro.md"
-    skill_dst = project_dir / ".kiro" / "skills" / "graphify" / "SKILL.md"
-    skill_dst.parent.mkdir(parents=True, exist_ok=True)
-    skill_dst.write_text(skill_src.read_text(encoding="utf-8"), encoding="utf-8")
-    print(f"  {skill_dst.relative_to(project_dir)}  ->  /graphify skill")
+    # Skill file + references/ sidecar + .graphify_version stamp via the shared
+    # progressive-disclosure helper.  Previously this used a bare write_text that
+    # bypassed _copy_skill_file, so the references/ dir and version stamp were
+    # never written even though kiro declares skill_refs: "kiro" (#1142).
+    _copy_skill_file("kiro", project=True, project_dir=project_dir)
 
     # Steering file → .kiro/steering/graphify.md (always-on)
     steering_dir = project_dir / ".kiro" / "steering"
@@ -931,15 +930,10 @@ def _kiro_uninstall(project_dir: Path) -> None:
     project_dir = project_dir or Path(".")
     removed = []
 
-    skill_dst = project_dir / ".kiro" / "skills" / "graphify" / "SKILL.md"
-    if skill_dst.exists():
-        skill_dst.unlink()
+    # Skill + .graphify_version + references/ sidecar + empty-dir walk.
+    skill_dst = _platform_skill_destination("kiro", project=True, project_dir=project_dir)
+    if _remove_skill_file("kiro", project=True, project_dir=project_dir):
         removed.append(str(skill_dst.relative_to(project_dir)))
-        # Remove parent dir if empty
-        try:
-            skill_dst.parent.rmdir()
-        except OSError:
-            pass
 
     steering_dst = project_dir / ".kiro" / "steering" / "graphify.md"
     if steering_dst.exists():
