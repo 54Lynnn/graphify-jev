@@ -289,7 +289,9 @@ See the [full command reference](#full-command-reference) below.
 
 ## Ignoring files
 
-Create a `.graphifyignore` in your project root — same syntax as `.gitignore`, including `!` negation:
+Create a `.graphifyignore` in your project root — same syntax as `.gitignore`, including `!` negation.
+
+**`.gitignore` is respected automatically.** If no `.graphifyignore` is present in a directory, graphify falls back to the `.gitignore` in that directory. If both exist, `.graphifyignore` takes priority. Subdirectory scoping works the same way as git — an ignore file only affects its own subtree.
 
 ```
 # .graphifyignore
