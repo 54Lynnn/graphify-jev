@@ -410,7 +410,7 @@ PowerShell treats a leading `/` as a path separator. Use `graphify .` (no slash)
 If a refactor deleted files, the old nodes linger. Pass `--force` (or set `GRAPHIFY_FORCE=1`) to overwrite even when the rebuild has fewer nodes.
 
 **Graph has duplicate nodes for the same entity (ghost duplicates)**
-This happens when semantic and AST extraction disagreed on the node ID format. Run a full re-extract to clean up:
+Ghost duplicates (same symbol appearing twice — once from AST extraction with a source location, once from semantic extraction without) are now automatically merged at build time. If you see this in a graph built before v0.8.33, run a full re-extract to clean up:
 ```bash
 graphify extract . --force
 ```

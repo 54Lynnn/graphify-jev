@@ -2,6 +2,13 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.33 (2026-06-06)
+
+- Feat: install banner — `graphify install` now prints an amber knowledge-graph brain in the terminal (TTY-only, silent in CI/pipes, never raises).
+- Fix: Python `from pkg import submod` package-form imports now resolve to a file-level `imports_from` edge to the submodule file when it exists on disk. Previously these imports produced zero edges, leaving test files as disconnected islands in the graph (up to 66% of test nodes in some corpora). The fix lives in the symbol-resolution post-pass which has filesystem access (#1146).
+- Fix: builtin type-annotation nodes (`str`, `int`, `bool`, `float`, `bytes`, `MagicMock`, `Mock`, `AsyncMock`, etc.) no longer appear as graph nodes or accumulate edges. They were being created via the annotation walker whenever used as parameter or return types, inflating degree counts ~25% and displacing real abstractions from god-node rankings. A new `_PYTHON_ANNOTATION_NOISE` filter suppresses them at extraction time; `god_nodes` also filters them as a defense for pre-existing graphs (#1147).
+- Fix: AST/semantic ghost-duplicate nodes are now auto-merged at build time. When AST and semantic extraction produce different IDs for the same symbol (one with `source_location=L<n>`, one without), `build_from_json` detects the pair by `(source_file basename, label)` and collapses the semantic ghost into the AST node, re-pointing all edges. Graphs built before this release can be cleaned up with `graphify extract . --force` (#1145).
+
 ## 0.8.32 (2026-06-05)
 
 - Feat: Terraform/HCL support. `.tf`, `.tfvars`, and `.hcl` files are now AST-extracted via `tree-sitter-hcl` into a structured infrastructure dependency graph. Nodes: resources, data sources, modules, variables, outputs, providers, and locals. Edges: `contains`, `references` (interpolation), and `depends_on`. Node IDs are directory-scoped for cross-file resolution. Requires `uv tool install "graphifyy[terraform]"` (#1129).
