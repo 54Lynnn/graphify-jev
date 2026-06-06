@@ -473,6 +473,18 @@ _PYTHON_TYPE_CONTAINERS = frozenset({
     "None", "Ellipsis",
 })
 
+# Scalar builtins and test-mock names that appear as type annotations but carry
+# no useful semantic meaning as graph nodes (#1147). Suppressed at the annotation
+# walker level so they are never created as nodes or emitted as edges.
+_PYTHON_ANNOTATION_NOISE = frozenset({
+    # scalar builtins
+    "str", "int", "float", "bool", "bytes", "bytearray", "complex", "object",
+    "True", "False",
+    # unittest.mock
+    "MagicMock", "Mock", "AsyncMock", "NonCallableMock",
+    "NonCallableMagicMock", "PropertyMock", "patch", "sentinel",
+})
+
 
 def _python_collect_type_refs(node, source: bytes, generic: bool, out: list[tuple[str, str]]) -> None:
     """Walk a Python type annotation; append (name, role) where role is 'type' or 'generic_arg'.
@@ -490,19 +502,19 @@ def _python_collect_type_refs(node, source: bytes, generic: bool, out: list[tupl
         return
     if t == "identifier":
         name = _read_text(node, source)
-        if name and name not in _PYTHON_TYPE_CONTAINERS:
+        if name and name not in _PYTHON_TYPE_CONTAINERS and name not in _PYTHON_ANNOTATION_NOISE:
             out.append((name, "generic_arg" if generic else "type"))
         return
     if t == "attribute":
         tail = _read_text(node, source).rsplit(".", 1)[-1]
-        if tail and tail not in _PYTHON_TYPE_CONTAINERS:
+        if tail and tail not in _PYTHON_TYPE_CONTAINERS and tail not in _PYTHON_ANNOTATION_NOISE:
             out.append((tail, "generic_arg" if generic else "type"))
         return
     if t == "generic_type":
         for c in node.children:
             if c.type == "identifier":
                 container = _read_text(c, source)
-                if container and container not in _PYTHON_TYPE_CONTAINERS:
+                if container and container not in _PYTHON_TYPE_CONTAINERS and container not in _PYTHON_ANNOTATION_NOISE:
                     out.append((container, "generic_arg" if generic else "type"))
             elif c.type == "type_parameter":
                 for sub in c.children:
@@ -6731,6 +6743,9 @@ class _SymbolResolutionFacts:
     exports: list[_SymbolExportFact] = field(default_factory=list)
     star_exports: list[_StarExportFact] = field(default_factory=list)
     uses: list[_SymbolUseFact] = field(default_factory=list)
+    # File-to-file submodule imports from `from pkg import submod` (#1146).
+    # Each entry is (importing_file, submodule_file, line).
+    module_imports: list[tuple[Path, Path, int]] = field(default_factory=list)
 
 
 def _apply_symbol_resolution_facts(
@@ -6748,6 +6763,7 @@ def _apply_symbol_resolution_facts(
         or facts.exports
         or facts.star_exports
         or facts.uses
+        or facts.module_imports
     ):
         return
 
@@ -6913,6 +6929,17 @@ def _apply_symbol_resolution_facts(
             import_fact.line,
             import_fact.file_path,
         )
+
+    # #1146: emit file-to-file imports_from edges for package-form submodule imports.
+    for from_path, to_path, line in facts.module_imports:
+        try:
+            from_rel = from_path.relative_to(root)
+            to_rel = to_path.relative_to(root)
+        except ValueError:
+            continue
+        source_id = _make_id(_file_stem(from_rel))
+        target_id = _make_id(_file_stem(to_rel))
+        add_edge(source_id, target_id, "imports_from", "submodule_import", line, from_path)
 
     for use_fact in facts.uses:
         file_path = use_fact.file_path.resolve()
@@ -7540,8 +7567,20 @@ def _collect_python_symbol_resolution_facts(
             target_path = _resolve_python_module_path(module_name, path, root, level)
             if target_path is None:
                 continue
+            # #1146: `from pkg import submod` — if the target is a package
+            # (__init__.py) and an imported name matches a submodule file on
+            # disk, emit a file-level import edge to that submodule rather
+            # than only to the package.
+            pkg_dir = target_path.parent if target_path.name == "__init__.py" else None
             for imported_name, local_name in _python_imported_names(node, source):
                 line = node.start_point[0] + 1
+                if pkg_dir is not None:
+                    sub_py = pkg_dir / f"{imported_name}.py"
+                    sub_pkg = pkg_dir / imported_name / "__init__.py"
+                    submodule = sub_py if sub_py.is_file() else (sub_pkg if sub_pkg.is_file() else None)
+                    if submodule is not None:
+                        facts.module_imports.append((path, submodule, line))
+                        continue
                 facts.imports.append(
                     _SymbolImportFact(path, local_name, target_path, imported_name, line)
                 )
