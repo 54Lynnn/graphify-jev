@@ -2,6 +2,11 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.8.35 (2026-06-07)
+
+- Feat: CodeBuddy platform support. `graphify codebuddy install` installs the graphify skill to `~/.codebuddy/skills/graphify/SKILL.md`, writes a `CODEBUDDY.md` always-on section, and registers Bash + Read|Glob PreToolUse hooks in `.codebuddy/settings.json` that nudge the agent toward `graphify query` instead of grepping raw files when a graph exists. `graphify install --platform codebuddy` and `graphify codebuddy uninstall` also supported. Thanks to @studyzy (#1136).
+- Fix: `graphify --update` no longer destructively collapses distinct same-named symbols across files. The skill's `--update` merge now passes re-extracted (changed) files to `prune_sources` alongside deleted files, so old nodes for changed files are pruned before fresh AST is inserted — no fuzzy reconciliation needed. Separately, `dedup.py` Pass 1 now skips nodes with an empty `source_file` so label-only merging across no-source-file nodes is prevented. The anti-shrink guard message now names fuzzy dedup as a possible cause rather than only blaming missing chunk files (#1178).
+
 ## 0.8.34 (2026-06-07)
 
 - Feat: Streamable HTTP transport for the MCP server. `python -m graphify.serve graph.json --transport http --port 8080 --api-key $SECRET` serves the graph over the MCP Streamable HTTP transport (spec 2025-03-26) so a single shared process can serve the whole team. Flags: `--host`, `--port`, `--api-key` (env `GRAPHIFY_API_KEY`), `--path`, `--json-response`, `--stateless`, `--session-timeout`. Docker image included. stdio remains the default (#1143).
