@@ -41,6 +41,49 @@ A short summary near the graph node could reduce repeated file reads during
 - Display a summary in `graphify explain <node>` when one exists.
 - Include summaries in `graphify serve` / MCP node lookup when one exists.
 
+## Proposed summary contents
+
+Each file-level summary should give an agent enough signal to decide whether to
+inspect the file, without replacing the file or bloating graph output.
+
+Recommended fields:
+
+| Field | Why it helps agents |
+| --- | --- |
+| `summary` | One bounded sentence describing the file's responsibility. This is the main token-saving field. |
+| `source_file` | Lets the agent jump to the right file without resolving a node ID manually. |
+| `label` | Keeps the summary readable in CLI, MCP, and UI contexts. |
+| `generated_by` | Distinguishes deterministic summaries from future LLM-generated summaries. |
+| `summary_version` | Allows the format to evolve without guessing how an older summary was produced. |
+
+Recommended signal inside the `summary` sentence:
+
+| Signal | Why it belongs in the sentence |
+| --- | --- |
+| Module docstring or top comment | Usually the highest-quality human-authored purpose statement. |
+| Exported classes/functions/symbols | Tells the agent what API surface the file provides. |
+| Important imports or dependencies | Reveals whether the file belongs to auth, database, UI, CLI, test, etc. |
+| Dominant graph relations | Shows whether the file mainly calls, imports, defines, contains, or references other nodes. |
+| Community or nearby hub label | Gives architectural context without reading the whole community report. |
+| Source location coverage when available | Helps distinguish a file-level summary from a symbol-level explanation. |
+
+Example:
+
+```json
+{
+  "label": "extract.py",
+  "source_file": "graphify/extract.py",
+  "summary": "Extracts source files into graph nodes and relationships; defines language parsers and import/call extraction helpers.",
+  "generated_by": "deterministic",
+  "summary_version": 1
+}
+```
+
+The summary should not include long call chains, full dependency lists, raw code,
+or every symbol in the file. Those details already belong in the graph and can
+be fetched through `graphify explain`, `graphify query`, or direct file reads
+when needed.
+
 ## Option A: `summary` attribute in `graph.json`
 
 Add an optional `summary` field to file-level nodes:
