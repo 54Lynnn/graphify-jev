@@ -3370,7 +3370,7 @@ def main() -> None:
 
     elif cmd == "export":
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
-        if subcmd not in ("html", "callflow-html", "obsidian", "wiki", "svg", "graphml", "neo4j"):
+        if subcmd not in ("html", "callflow-html", "obsidian", "wiki", "svg", "graphml", "neo4j", "falkordb"):
             print("Usage: graphify export <format>", file=sys.stderr)
             print("  html      [--graph PATH] [--labels PATH] [--node-limit N] [--no-viz]", file=sys.stderr)
             print("  callflow-html [GRAPH|DIR] [--graph PATH] [--labels PATH] [--report PATH] [--sections PATH] [--output HTML]", file=sys.stderr)
@@ -3381,6 +3381,8 @@ def main() -> None:
             print("  graphml   [--graph PATH]", file=sys.stderr)
             print("  neo4j     [--graph PATH] [--push URI] [--user U] [--password P]", file=sys.stderr)
             print("            (or set NEO4J_PASSWORD instead of --password to keep it off argv)", file=sys.stderr)
+            print("  falkordb  [--graph PATH] [--push URI] [--user U] [--password P]", file=sys.stderr)
+            print("            (or set FALKORDB_PASSWORD instead of --password to keep it off argv)", file=sys.stderr)
             sys.exit(1)
 
         # Parse shared args
@@ -3407,7 +3409,9 @@ def main() -> None:
         # F-031: prefer the NEO4J_PASSWORD env var so the password never
         # appears on argv (visible in `ps` output / shell history). The
         # explicit --password flag still overrides it for compatibility.
-        neo4j_password: str | None = os.environ.get("NEO4J_PASSWORD") or None
+        neo4j_password: str | None = (
+            os.environ.get("NEO4J_PASSWORD") or os.environ.get("FALKORDB_PASSWORD") or None
+        )
         i = 0
         while i < len(args):
             a = args[i]
@@ -3625,6 +3629,18 @@ def main() -> None:
                 from graphify.export import to_cypher as _to_cypher
                 _to_cypher(G, str(out_dir / "cypher.txt"))
                 print(f"cypher.txt written - import with: cypher-shell < {out_dir}/cypher.txt")
+
+        elif subcmd == "falkordb":
+            if neo4j_uri:
+                from graphify.export import push_to_falkordb as _push
+                result = _push(G, uri=neo4j_uri, user=neo4j_user,
+                               password=neo4j_password, communities=communities)
+                print(f"Pushed to FalkorDB: {result['nodes']} nodes, {result['edges']} edges")
+            else:
+                from graphify.export import to_cypher as _to_cypher
+                _to_cypher(G, str(out_dir / "cypher.txt"))
+                print(f"cypher.txt written - FalkorDB is OpenCypher-compatible; "
+                      f"import with: redis-cli -x GRAPH.QUERY graphify < {out_dir}/cypher.txt")
 
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark
