@@ -1910,7 +1910,8 @@ def claude_uninstall(project_dir: Path | None = None, *, project: bool = False) 
 
 
 def codebuddy_install(project_dir: Path | None = None) -> None:
-    """Write the graphify section to the local CODEBUDDY.md."""
+    """Install the graphify skill and CODEBUDDY.md section for CodeBuddy."""
+    _copy_skill_file("codebuddy", project=bool(project_dir), project_dir=project_dir)
     target = (project_dir or Path(".")) / "CODEBUDDY.md"
 
     if target.exists():
