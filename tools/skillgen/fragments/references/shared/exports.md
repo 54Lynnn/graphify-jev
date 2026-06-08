@@ -30,7 +30,7 @@ Default URI is `bolt://localhost:7687`, default user is `neo4j`. Uses MERGE - sa
 
 ### Step 7a - FalkorDB export (only if --falkordb or --falkordb-push flag)
 
-**If `--falkordb`** - generate a Cypher file (FalkorDB is OpenCypher-compatible, so the same `cypher.txt` imports cleanly):
+**If `--falkordb`** - generate a Cypher file. The statements are OpenCypher, but FalkorDB's `GRAPH.QUERY` runs one statement at a time (no bulk script import like Neo4j's `cypher-shell`), so prefer `--falkordb-push` to load a graph. Use this only when you want the portable `cypher.txt` artifact:
 
 ```bash
 graphify export falkordb

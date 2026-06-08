@@ -3639,8 +3639,10 @@ def main() -> None:
             else:
                 from graphify.export import to_cypher as _to_cypher
                 _to_cypher(G, str(out_dir / "cypher.txt"))
-                print(f"cypher.txt written - FalkorDB is OpenCypher-compatible; "
-                      f"import with: redis-cli -x GRAPH.QUERY graphify < {out_dir}/cypher.txt")
+                print(f"cypher.txt written ({out_dir}/cypher.txt) - statements are OpenCypher. "
+                      f"FalkorDB's GRAPH.QUERY runs one statement at a time (no bulk script "
+                      f"import), so load a graph with: graphify export falkordb --push "
+                      f"falkordb://localhost:6379")
 
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark
