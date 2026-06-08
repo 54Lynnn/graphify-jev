@@ -1324,8 +1324,9 @@ def push_to_falkordb(
     FalkorDB is OpenCypher-compatible, so the MERGE/SET upsert queries are
     identical to push_to_neo4j. Differences from the Neo4j path:
       - connects with FalkorDB(host, port, username, password) instead of a bolt
-        driver; the URI is parsed for host/port (default port 6379, scheme
-        defaults to redis:// when omitted, e.g. "localhost:6379").
+        driver; only the host/port are read from the URI, so the scheme is
+        informational - "falkordb://localhost:6379", "redis://localhost:6379"
+        and a bare "localhost:6379" are all equivalent (default port 6379).
       - a named graph is selected via db.select_graph(graph_name) (default
         "graphify"); FalkorDB keys each graph by name in the same instance.
       - queries run via graph.query(cypher, params) - there is no session object.
