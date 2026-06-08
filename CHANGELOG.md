@@ -2,10 +2,17 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## Unreleased
+## 0.8.36 (2026-06-08)
 
-- Feat: `extra_body` field in `providers.json` is now sent to the OpenAI-compatible client at both the extraction and labeling code paths. Lets self-hosted OpenAI-compatible endpoints (vLLM serving Qwen3, Llama-3.1, etc.) pass model-specific request shapes — most importantly `{"chat_template_kwargs": {"enable_thinking": false}}` for Qwen3, which otherwise emits chain-of-thought instead of the JSON the parser expects. An explicit `extra_body` from a custom provider also bypasses the Ollama `num_ctx` auto-derive, so a provider that points at Ollama can opt out of that default if it knows better.
-- Feat: `label_communities` now batches communities in chunks of 100 (configurable via `batch_size=`) instead of a single call capped at 200. This was the only obstacle to running community labeling against any backend with a 16k token context window (Qwen3.6-27B served by vLLM, Llama-3.1 8B-Instruct, etc.): 200 communities × 12 sampled node labels routinely overflowed the prompt. The default `max_communities` is now `None` (label them all); explicit integer caps still work for back-compat. Partial batch failures no longer drop the whole pass — successful batches still contribute labels, only the failed batch's communities stay as placeholders.
+- Feat: `extra_body` field in `providers.json` forwarded to OpenAI-compat calls at extraction and labeling. Lets vLLM/Qwen3/Llama endpoints pass model-specific request shapes (e.g. `{"chat_template_kwargs": {"enable_thinking": false}}`). Explicit `extra_body` also bypasses Ollama `num_ctx` auto-derive. Thanks to @EirikWolf (#1197).
+- Feat: `label_communities` multi-batch for 16k-context models. Chunks of 100 communities per call (configurable `batch_size=`); `max_communities` defaults to `None` (label all); partial batch failures no longer drop the whole pass. Thanks to @EirikWolf (#1197).
+- Feat: `.slnx` Visual Studio solution file support. Extracts `contains` (project references) and `imports` (build dependencies) edges from the modern XML solution format (VS 2022 17.13+). Thanks to @bakgaard (#1189).
+- Feat: `graphify-mcp` console script. MCP stdio server now directly invocable as `graphify-mcp` from `uv tool install` / `pipx`. Thanks to @jr2804 (#1190).
+- Fix: `label_communities` token budget raised and `GRAPHIFY_MAX_OUTPUT_TOKENS` now honoured. Hardcoded `min(40+16n, 4096)` undershooted (~16 tok/community); raised to `min(64+24n, 8192)` and wrapped in `_resolve_max_tokens()` (#1200).
+- Fix: `find_import_cycles` no longer hangs on large graphs. `nx.simple_cycles()` now receives `length_bound=max_cycle_length`, pruning during enumeration rather than post-filtering — drops from never-returns to ~0.1s on dense graphs (#1196).
+- Fix: fuzzy dedup no longer merges prefix-extension symbol pairs. `getActiveSession`/`getActiveSessions`, `parseConfig`/`parseConfigFile` etc. scored ~98-99 JW and were auto-merged. A prefix-extension guard now prevents merge when one normalised label is a strict prefix of the other, in both Pass 2 and the LLM tiebreaker (#1201).
+- Fix: `_norm`, `_norm_label`, `_strip_diacritics` guard against `None` node labels, preventing `TypeError` crash on corpora with explicit `null` label fields (#1194). Thanks to @freiit (#1195).
+- Fix: skill frontmatter `trigger:` field removed from all 14 skill variants — not part of Agent Skills spec, flagged by `agentskills validate` CI (#1180).
 
 ## 0.8.35 (2026-06-07)
 
