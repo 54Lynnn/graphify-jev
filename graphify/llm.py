@@ -1890,7 +1890,10 @@ def label_communities(
             "Respond ONLY with a JSON object mapping the community id (as a string) to "
             "its name - no prose, no markdown fences.\n\n" + "\n".join(batch_lines)
         )
-        max_tokens = min(40 + 16 * len(batch_cids), 4096)
+        # 24 tok/community covers 2-5 word JSON entries including id, quotes,
+        # and punctuation. Cap at 8192 for 16k-context models. Wrapped in
+        # _resolve_max_tokens so GRAPHIFY_MAX_OUTPUT_TOKENS applies here too (#1200).
+        max_tokens = _resolve_max_tokens(min(64 + 24 * len(batch_cids), 8192))
         try:
             text = _call_llm(prompt, backend=backend, max_tokens=max_tokens)
             parsed = _parse_label_response(text, batch_cids)
