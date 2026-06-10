@@ -621,6 +621,101 @@ def test_anchored_multi_segment_pattern(tmp_path):
     )
 
 
+# Tests for #1235 - memoise _is_ignored/_eval results via a per-detect() cache
+
+def test_is_ignored_cache_matches_uncached_results(tmp_path):
+    """A shared _cache must not change _is_ignored results, including negation.
+
+    Builds a tree with a normal ignore pattern and a negation pattern, then
+    asserts that evaluating every path with a cache yields identical results
+    to evaluating without one (#1235).
+    """
+    from graphify.detect import _is_ignored, _load_graphifyignore
+
+    # Normal pattern: ignore everything under build/.
+    # Negation pattern: re-include logs/keep.log even though *.log is ignored.
+    (tmp_path / "build" / "sub").mkdir(parents=True)
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "src").mkdir()
+    paths = [
+        tmp_path / "build",
+        tmp_path / "build" / "out.o",
+        tmp_path / "build" / "sub",
+        tmp_path / "build" / "sub" / "deep.o",
+        tmp_path / "logs",
+        tmp_path / "logs" / "drop.log",
+        tmp_path / "logs" / "keep.log",
+        tmp_path / "src" / "main.py",
+    ]
+    for p in paths:
+        if p.suffix:
+            p.write_text("x")
+    (tmp_path / ".graphifyignore").write_text(
+        "build/\n*.log\n!logs/keep.log\n"
+    )
+    patterns = _load_graphifyignore(tmp_path)
+
+    cache: dict = {}
+    for p in paths:
+        uncached = _is_ignored(p, tmp_path, patterns)
+        cached = _is_ignored(p, tmp_path, patterns, _cache=cache)
+        assert cached == uncached, (
+            f"cached result for {p} ({cached}) differs from uncached ({uncached})"
+        )
+
+    # Sanity: the negation actually fired so the test exercises a non-trivial case.
+    assert not _is_ignored(tmp_path / "logs" / "keep.log", tmp_path, patterns)
+    assert _is_ignored(tmp_path / "logs" / "drop.log", tmp_path, patterns)
+
+
+def test_is_ignored_cache_evaluates_each_dir_once():
+    """Siblings under the same subtree must share the cached parent result (#1235).
+
+    Counts how many times each unique target path is evaluated through the
+    cache: every directory (ancestor) should be evaluated exactly once across
+    a multi-file subtree rather than once per descendant file.
+    """
+    from graphify.detect import _is_ignored
+
+    root = Path("/repo")
+    patterns = [(root, "*.tmp")]  # non-empty so _eval runs
+
+    # A subtree where many files share the same ancestor directories.
+    files = [
+        root / "a" / "b" / "f1.py",
+        root / "a" / "b" / "f2.py",
+        root / "a" / "b" / "f3.py",
+        root / "a" / "c" / "f4.py",
+        root / "a" / "c" / "f5.py",
+    ]
+
+    eval_counts: dict[Path, int] = {}
+
+    # A dict subclass records every cache write. Since _eval writes to the
+    # cache exactly once per computed target (and reads short-circuit before
+    # any write), one write == one evaluation of that path.
+    class CountingCache(dict):
+        def __setitem__(self, key, value):
+            eval_counts[key] = eval_counts.get(key, 0) + 1
+            super().__setitem__(key, value)
+
+    cache = CountingCache()
+    for f in files:
+        _is_ignored(f, root, patterns, _cache=cache)
+
+    # Each unique path (files + ancestor dirs) must be computed exactly once.
+    for target, count in eval_counts.items():
+        assert count == 1, f"{target} evaluated {count} times, expected 1 (cache miss)"
+
+    # Shared ancestors must be present and counted only once each.
+    assert eval_counts[root / "a"] == 1
+    assert eval_counts[root / "a" / "b"] == 1
+    assert eval_counts[root / "a" / "c"] == 1
+    # All five distinct files are computed once each.
+    for f in files:
+        assert eval_counts[f] == 1
+
+
 # Regression tests for #920 - sensitive pattern misses underscore-prefixed names
 def test_sensitive_flags_api_token_txt():
     assert _is_sensitive(Path("api_token.txt"))
