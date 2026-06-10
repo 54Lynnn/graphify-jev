@@ -23,10 +23,13 @@ jobs:
         run: uv sync --frozen
 
       - name: Build graph of graphify source (AST-only, no API cost)
-        # Extract only the graphify/ package directory — pure Python code, no
-        # docs/skill/markdown files — so extraction never needs an LLM API key.
-        # --out . writes output to ./graphify-out/ (not ./graphify/graphify-out/).
-        run: uv run --frozen graphify extract graphify/ --out .
+        # graphify/skills/ contains 126+ .md files that trigger the LLM pass.
+        # Temporarily ignore all .md files so extraction stays pure AST (no API key needed).
+        run: |
+          echo "*.md" >> .graphifyignore
+          echo "*.txt" >> .graphifyignore
+          uv run --frozen graphify extract graphify/ --out .
+          git checkout .graphifyignore 2>/dev/null || rm -f .graphifyignore
 
       - name: Generate HTML viewer
         # HTML is written next to graph.json automatically; no --out flag needed.
