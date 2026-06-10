@@ -10202,8 +10202,64 @@ def extract_razor(path: Path) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
+# Config/manifest JSON filenames the structural extractor understands. Anything
+# else (eval fixtures, datasets, GeoJSON, API dumps) is *data* and must NOT be
+# AST-walked into per-key nodes — that floods the graph with orphan key-nodes
+# and near-duplicate communities (#1224). Data JSON is left to the LLM semantic
+# pass instead. Matched case-insensitively against the bare filename.
+_CONFIG_JSON_NAMES = frozenset({
+    "package.json", "tsconfig.json", "jsconfig.json", "composer.json",
+    "deno.json", "deno.jsonc", "bower.json", "manifest.json",
+    "app.json", "now.json", "vercel.json", "angular.json", "nest-cli.json",
+    "biome.json", "biome.jsonc", "renovate.json", ".babelrc", ".babelrc.json",
+    ".eslintrc.json", ".prettierrc.json", ".prettierrc", "babel.config.json",
+})
+
+# Top-level keys that prove a JSON object is a config/manifest the extractor can
+# draw *cross-file* edges from (deps, extends chains, schema refs).
+_CONFIG_JSON_KEYS = frozenset({
+    "dependencies", "devDependencies", "peerDependencies",
+    "optionalDependencies", "bundleDependencies", "bundledDependencies",
+    "extends", "$ref", "$schema", "compilerOptions",
+})
+
+
+def _is_config_json(path: Path, obj_node, source: bytes) -> bool:
+    """True if a .json file is a recognized config/manifest worth AST-extracting.
+
+    Matches by filename first (cheap), then falls back to a top-level key probe
+    so arbitrarily-named config files (e.g. ``api.tsconfig.json``,
+    ``foo.eslintrc.json``) are still picked up. Returns False for data JSON so it
+    is skipped by the structural pass (#1224)."""
+    name = path.name.casefold()
+    if name in _CONFIG_JSON_NAMES:
+        return True
+    # Common compound config names: *.eslintrc.json, *.prettierrc.json, etc.
+    if name.endswith((".eslintrc.json", ".prettierrc.json", ".babelrc.json",
+                      "tsconfig.json", "jsconfig.json")):
+        return True
+    # Top-level key probe: scan the root object's immediate keys (no deep walk).
+    for top_key in obj_node.children:
+        if top_key.type != "pair":
+            continue
+        key_node = top_key.child_by_field_name("key")
+        if key_node is None:
+            continue
+        kc = key_node.child_by_field_name("string_content")
+        text = _read_text(kc, source) if kc else _read_text(key_node, source).strip('"\'')
+        if text in _CONFIG_JSON_KEYS:
+            return True
+    return False
+
+
 def extract_json(path: Path) -> dict:
-    """Extract top-level keys, nested structure, and dependency edges from a .json file."""
+    """Extract structure and dependency edges from a *config/manifest* .json file.
+
+    Data-shaped JSON (eval fixtures, datasets, GeoJSON, API response dumps) is
+    deliberately skipped — AST-walking it produced hundreds of orphan key-nodes
+    and duplicate communities that swamped real structure (#1224). Recognition
+    is by filename (package.json, tsconfig.json, …) or a top-level key probe
+    (dependencies / extends / $ref / $schema / compilerOptions)."""
     _JSON_MAX_BYTES = 1_048_576  # 1 MiB — skip large fixture dumps / GeoJSON blobs
 
     try:
@@ -10342,7 +10398,15 @@ def extract_json(path: Path) -> dict:
     if doc.type == "document" and doc.child_count > 0:
         doc = doc.children[0]
     if doc.type == "object":
+        # Only AST-extract recognized config/manifest JSON. Data JSON (fixtures,
+        # datasets, GeoJSON, API dumps) is skipped so it doesn't explode into
+        # orphan key-nodes (#1224); it's left to the LLM semantic pass.
+        if not _is_config_json(path, doc, source):
+            return {"nodes": [], "edges": [], "skipped": "data json (not a config/manifest)"}
         walk_object(doc, file_nid, None, 0, [0])
+    else:
+        # Top-level array or scalar => data JSON, never a config/manifest.
+        return {"nodes": [], "edges": [], "skipped": "data json (non-object root)"}
 
     return {"nodes": nodes, "edges": edges}
 

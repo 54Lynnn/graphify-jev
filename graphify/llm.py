@@ -95,6 +95,10 @@ BACKENDS: dict[str, dict] = {
         "env_key": "OPENAI_API_KEY",
         "model_env_key": "GRAPHIFY_OPENAI_MODEL",
         "pricing": {"input": 0.40, "output": 1.60},  # USD per 1M tokens
+        # Default (gpt-4.1-mini) accepts temperature=0. Reasoning models
+        # (o1/o3/o4/gpt-5) reject any explicit temperature and have it omitted
+        # automatically by _resolve_temperature; GRAPHIFY_LLM_TEMPERATURE
+        # overrides either way (#1191).
         "temperature": 0,
         "vision": True,
     },
@@ -242,6 +246,80 @@ def _resolve_max_tokens(default: int) -> int:
         except ValueError:
             pass
     return default
+
+
+# Model-name fragments for OpenAI-compatible "reasoning" models that reject an
+# explicit temperature: the API returns 400 "Unsupported value: 'temperature'
+# does not support 0 with this model. Only the default (1) value is supported."
+# Covers the o1/o3/o4 reasoning series and the gpt-5 family, which share the
+# same restriction. Matched case-insensitively against the resolved model id
+# (issue #1191).
+_FIXED_TEMPERATURE_MODEL_MARKERS = ("o1", "o1-", "o3", "o3-", "o4", "o4-", "gpt-5")
+
+
+def _model_requires_default_temperature(model: str) -> bool:
+    """True if `model` is a reasoning model that rejects an explicit temperature.
+
+    OpenAI's o-series (o1, o3, o4...) and gpt-5 family only accept the default
+    temperature (1) and return HTTP 400 if any value — including 0 — is sent.
+    We must omit the parameter entirely for these (#1191).
+    """
+    m = (model or "").lower()
+    # Strip a leading "openai/" or provider prefix some gateways prepend.
+    base = m.rsplit("/", 1)[-1]
+    if base.startswith("gpt-5"):
+        return True
+    # o1 / o3 / o4 family: bare ("o1") or versioned ("o3-mini", "o1-preview").
+    for fam in ("o1", "o3", "o4"):
+        if base == fam or base.startswith(fam + "-"):
+            return True
+    return False
+
+
+def _resolve_temperature(default: float | None, model: str = "") -> float | None:
+    """Resolve the temperature to send, honouring GRAPHIFY_LLM_TEMPERATURE.
+
+    Precedence (issue #1191):
+      1. GRAPHIFY_LLM_TEMPERATURE env var, if set:
+           - a numeric value (e.g. "0", "0.2", "1") is used verbatim;
+           - the literal "none"/"omit"/"default" (case-insensitive) means
+             "omit the temperature parameter entirely" (-> None).
+      2. Otherwise, reasoning models (o1/o3/o4/gpt-5) get None — the parameter
+         must be omitted or the API rejects the request.
+      3. Otherwise, the backend config default (`default`, usually 0).
+
+    Returns None when the temperature parameter should be omitted from the
+    request; the call sites already guard `if temperature is not None`.
+    """
+    raw = os.environ.get("GRAPHIFY_LLM_TEMPERATURE", "").strip()
+    if raw:
+        if raw.lower() in ("none", "omit", "default"):
+            return None
+        try:
+            return float(raw)
+        except ValueError:
+            print(
+                f"[graphify] GRAPHIFY_LLM_TEMPERATURE={raw!r} is not a number or "
+                "'none'; falling back to the backend default.",
+                file=sys.stderr,
+            )
+    if _model_requires_default_temperature(model):
+        return None
+    return default
+
+
+def _bedrock_inference_config(max_tokens: int, model: str = "") -> dict:
+    """Build Bedrock inferenceConfig, honouring GRAPHIFY_LLM_TEMPERATURE.
+
+    Bedrock's Converse API treats `temperature` as optional; omitting it uses
+    the model default. We default to 0 for deterministic extraction but let the
+    env var override (or omit) it for parity with the OpenAI-compatible path.
+    """
+    cfg: dict = {"maxTokens": max_tokens}
+    temp = _resolve_temperature(0, model)
+    if temp is not None:
+        cfg["temperature"] = temp
+    return cfg
 
 
 def _resolve_api_timeout(default: float = 600.0) -> float:
@@ -1100,7 +1178,7 @@ def _call_bedrock(model: str, user_message: str, max_tokens: int = 8192, *, deep
             modelId=model,
             system=[{"text": _extraction_system(deep=deep_mode)}],
             messages=[{"role": "user", "content": _bedrock_content(user_message, images or [])}],
-            inferenceConfig={"maxTokens": max_tokens, "temperature": 0},
+            inferenceConfig=_bedrock_inference_config(max_tokens, model),
         )
     except botocore.exceptions.ClientError as exc:
         code = exc.response["Error"]["Code"]
@@ -1204,7 +1282,7 @@ def extract_files_direct(
             endpoint,
             mdl,
             user_msg,
-            temperature=cfg.get("temperature", 0),
+            temperature=_resolve_temperature(cfg.get("temperature", 0), mdl),
             max_tokens=max_out,
             deep_mode=deep_mode,
         )
@@ -1213,7 +1291,7 @@ def extract_files_direct(
         key,
         mdl,
         user_msg,
-        temperature=cfg.get("temperature", 0),
+        temperature=_resolve_temperature(cfg.get("temperature", 0), mdl),
         reasoning_effort=cfg.get("reasoning_effort"),
         max_completion_tokens=_resolve_max_tokens(cfg.get("max_completion_tokens", 8192)),
         backend=backend,
@@ -1668,7 +1746,7 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
         resp = client.converse(
             modelId=mdl,
             messages=[{"role": "user", "content": [{"text": prompt}]}],
-            inferenceConfig={"maxTokens": max_tokens, "temperature": 0},
+            inferenceConfig=_bedrock_inference_config(max_tokens, mdl),
         )
         return resp.get("output", {}).get("message", {}).get("content", [{}])[0].get("text", "")
 
@@ -1679,12 +1757,15 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
                 "Azure OpenAI backend requires AZURE_OPENAI_ENDPOINT to be set."
             )
         azure_client = _azure_client(key, endpoint)
-        resp = azure_client.chat.completions.create(
-            model=mdl,
-            messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=max_tokens,
-            temperature=cfg.get("temperature", 0),
-        )
+        azure_kwargs: dict = {
+            "model": mdl,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_completion_tokens": max_tokens,
+        }
+        azure_temp = _resolve_temperature(cfg.get("temperature", 0), mdl)
+        if azure_temp is not None:
+            azure_kwargs["temperature"] = azure_temp
+        resp = azure_client.chat.completions.create(**azure_kwargs)
         if not resp.choices or resp.choices[0].message is None:
             raise ValueError("Azure OpenAI returned empty or filtered response")
         return resp.choices[0].message.content or ""
@@ -1700,7 +1781,7 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
         "messages": [{"role": "user", "content": prompt}],
         "max_completion_tokens": max_tokens,
     }
-    temperature = cfg.get("temperature", 0)
+    temperature = _resolve_temperature(cfg.get("temperature", 0), mdl)
     if temperature is not None:
         kwargs["temperature"] = temperature
     if cfg.get("reasoning_effort"):

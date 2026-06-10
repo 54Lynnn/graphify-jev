@@ -610,10 +610,22 @@ def convert_office_file(path: Path, out_dir: Path) -> Path | None:
         return None
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    # Use a stable name derived from the original path to avoid collisions
+    # Use a stable name derived from the original path to avoid collisions.
+    # Normalize the resolved path to NFC before hashing: on macOS (HFS+/APFS)
+    # os.walk/rglob return filenames in NFD, while Python string literals and
+    # directly-constructed Path objects are NFC, so the same source file would
+    # otherwise hash to different sidecar names across runs — causing --update
+    # to treat every Office file as new and re-extract it (#1226).
     import hashlib
-    name_hash = hashlib.sha256(str(path.resolve()).encode()).hexdigest()[:8]
+    import unicodedata
+    normalized_path = unicodedata.normalize("NFC", str(path.resolve()))
+    name_hash = hashlib.sha256(normalized_path.encode()).hexdigest()[:8]
     out_path = out_dir / f"{path.stem}_{name_hash}.md"
+    # Once the hash is stable the sidecar name is deterministic; skip re-writing
+    # an existing sidecar so an unchanged source never churns its mtime (which
+    # would still flag it as changed in detect_incremental).
+    if out_path.exists():
+        return out_path
     out_path.write_text(
         f"<!-- converted from {path.name} -->\n\n{text}",
         encoding="utf-8",

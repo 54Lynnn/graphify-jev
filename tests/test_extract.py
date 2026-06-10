@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from graphify.extract import extract_python, extract, collect_files, _make_id, extract_bash, extract_json, _DISPATCH
 
@@ -903,6 +904,52 @@ def test_extract_json_no_self_loops():
     result = extract_json(FIXTURES / "sample.json")
     for e in result["edges"]:
         assert e["source"] != e["target"], f"Self-loop: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Data JSON must not explode into orphan key-nodes (#1224)
+# ---------------------------------------------------------------------------
+
+def test_extract_json_data_file_skipped(tmp_path):
+    """A data-shaped .json (eval fixture / dataset) must NOT emit per-key nodes."""
+    data = tmp_path / "cases.json"
+    data.write_text(json.dumps({
+        "generation": {"target": "gpt-4", "cases_file": "c.json", "num_cases": 12},
+        "prompt_inputs_spec": {"a": 1, "b": 2},
+        "suite": [{"name": "x"}, {"name": "y"}],
+    }))
+    result = extract_json(data)
+    assert result["nodes"] == []
+    assert result["edges"] == []
+    assert "skipped" in result
+
+
+def test_extract_json_top_level_array_skipped(tmp_path):
+    """A JSON file whose root is an array is data, never a config/manifest."""
+    data = tmp_path / "records.json"
+    data.write_text(json.dumps([{"id": 1}, {"id": 2}]))
+    result = extract_json(data)
+    assert result["nodes"] == []
+    assert result["edges"] == []
+
+
+def test_extract_json_config_by_filename_still_extracted(tmp_path):
+    """tsconfig.json must still be AST-extracted even without telltale keys."""
+    cfg = tmp_path / "tsconfig.json"
+    cfg.write_text(json.dumps({"compilerOptions": {"strict": True}}))
+    result = extract_json(cfg)
+    assert len(result["nodes"]) > 0
+    assert "skipped" not in result
+
+
+def test_extract_json_config_by_key_probe(tmp_path):
+    """An arbitrarily-named JSON with config keys (dependencies) is still extracted."""
+    cfg = tmp_path / "weird-name.json"
+    cfg.write_text(json.dumps({"dependencies": {"lodash": "^4"}}))
+    result = extract_json(cfg)
+    import_edges = [e for e in result["edges"] if e["relation"] == "imports"]
+    assert any("lodash" in e["target"] for e in import_edges)
+    assert "skipped" not in result
 
 
 def test_extract_bash_via_dispatch():

@@ -1,5 +1,7 @@
+import unicodedata
 from pathlib import Path
 from graphify.detect import classify_file, count_words, detect, detect_incremental, save_manifest, FileType, _looks_like_paper, _is_ignored, _load_graphifyignore, _is_sensitive
+from graphify import detect as detect_mod
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -1395,3 +1397,49 @@ def test_save_manifest_in_root_symlink_roundtrips(tmp_path):
 
     loaded = load_manifest(manifest_path, root=tmp_path)
     assert str(tmp_path.resolve() / "alias.py") in loaded
+
+
+def test_convert_office_file_hash_stable_across_nfc_nfd(tmp_path, monkeypatch):
+    """The sidecar name must be identical whether the source path arrives in
+    NFC or NFD form. On macOS os.walk/rglob yield NFD paths while directly
+    constructed Paths are NFC; without NFC-normalizing before hashing the same
+    .docx would get a different sidecar name (and manifest key) on every run,
+    forcing a full re-extraction under --update (#1226).
+    """
+    monkeypatch.setattr(detect_mod, "docx_to_markdown", lambda p: "hello world")
+
+    out_dir = tmp_path / "converted"
+    # "한글" / "ä" style filename with a precomposed (NFC) and decomposed (NFD)
+    # representation that are distinct byte strings but the same logical name.
+    base = tmp_path / "report"
+    nfc_name = unicodedata.normalize("NFC", "café.docx")
+    nfd_name = unicodedata.normalize("NFD", "café.docx")
+    assert nfc_name != nfd_name  # sanity: the two forms differ byte-wise
+
+    nfc_path = base / nfc_name
+    nfd_path = base / nfd_name
+
+    out_nfc = detect_mod.convert_office_file(nfc_path, out_dir)
+    out_nfd = detect_mod.convert_office_file(nfd_path, out_dir)
+
+    assert out_nfc is not None and out_nfd is not None
+    # The hash suffix (and therefore the whole sidecar filename) must match.
+    assert out_nfc.name.split("_")[-1] == out_nfd.name.split("_")[-1]
+
+
+def test_convert_office_file_does_not_rewrite_existing_sidecar(tmp_path, monkeypatch):
+    """A second conversion of an unchanged source must not rewrite the sidecar,
+    so its mtime stays put and detect_incremental keeps treating it as
+    unchanged (#1226)."""
+    monkeypatch.setattr(detect_mod, "docx_to_markdown", lambda p: "hello world")
+
+    out_dir = tmp_path / "converted"
+    src = tmp_path / "doc.docx"
+
+    first = detect_mod.convert_office_file(src, out_dir)
+    assert first is not None
+    mtime_before = first.stat().st_mtime_ns
+
+    second = detect_mod.convert_office_file(src, out_dir)
+    assert second == first
+    assert second.stat().st_mtime_ns == mtime_before
