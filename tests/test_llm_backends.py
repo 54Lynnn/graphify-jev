@@ -66,12 +66,17 @@ def test_extract_files_direct_routes_gemini_through_openai_compat(tmp_path, monk
     with patch("graphify.llm._call_openai_compat", return_value=result) as call:
         assert llm.extract_files_direct([source], backend="gemini", root=tmp_path) is result
 
-    assert call.call_args.args[:4] == (
+    assert call.call_args.args[:3] == (
         "https://generativelanguage.googleapis.com/v1beta/openai/",
         "google-key",
         "gemini-3-flash-preview",
-        "=== note.md ===\n# Architecture\n\nThe runner emits a snapshot.\n",
     )
+    # Source content is wrapped in an untrusted_source delimiter block (#1210)
+    # rather than the old `=== path ===` separator.
+    user_msg = call.call_args.args[3]
+    assert '<untrusted_source path="note.md" sha256=' in user_msg
+    assert "# Architecture\n\nThe runner emits a snapshot." in user_msg
+    assert user_msg.rstrip().endswith("</untrusted_source>")
     assert call.call_args.kwargs["temperature"] == 0
     assert call.call_args.kwargs["reasoning_effort"] == "low"
     assert call.call_args.kwargs["max_completion_tokens"] == 16384

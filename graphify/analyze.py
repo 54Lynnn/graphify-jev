@@ -13,6 +13,11 @@ _BUILTIN_NOISE_LABELS = frozenset({
     "True", "False",
     "MagicMock", "Mock", "AsyncMock", "NonCallableMock",
     "NonCallableMagicMock", "PropertyMock", "patch", "sentinel",
+    # Python stdlib types commonly confused for project symbols
+    "Path", "Any", "Optional", "List", "Dict", "Set", "Tuple", "Union",
+    "Callable", "Type", "ClassVar", "Final", "Literal", "Protocol",
+    "Counter", "defaultdict", "OrderedDict", "datetime", "Enum",
+    "os", "sys", "re", "json", "io", "abc", "typing",
 })
 
 # Language families — extensions sharing a runtime can legitimately call each other

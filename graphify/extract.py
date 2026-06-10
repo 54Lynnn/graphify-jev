@@ -11540,26 +11540,53 @@ def extract(
         if rc.get("is_member_call"):
             continue
         candidates = global_label_to_nids.get(callee.lower(), [])
-        # Skip ambiguous names that resolve to multiple nodes — these are
-        # common short names (log, execute, find) with no import evidence
-        # to pick the right target; emitting all edges inflates god_nodes.
-        if len(candidates) != 1:
+        if not candidates:
             continue
-        tgt = candidates[0]
         caller = rc["caller_nid"]
+        caller_file_nid = nid_to_file_nid.get(caller)
+        imported_symbols = file_to_symbol_imports.get(caller_file_nid, set())
+        imported_modules = file_to_module_imports.get(caller_file_nid, set())
+
+        def _has_import_evidence(candidate_id: str) -> bool:
+            # Direct symbol import (`import { foo }`) is the strongest evidence:
+            # the caller's file has an `imports` edge straight to this symbol.
+            # A module import (`import './helper.js'`) confirms the caller pulled
+            # in the file the candidate lives in.
+            candidate_file_nid = nid_to_file_nid.get(candidate_id)
+            return (
+                candidate_id in imported_symbols
+                or (candidate_file_nid is not None and candidate_file_nid in imported_modules)
+            )
+
+        if len(candidates) == 1:
+            tgt = candidates[0]
+            has_import_evidence = _has_import_evidence(tgt)
+        else:
+            # Ambiguous name (defined in 2+ files). Don't bail outright (#1219):
+            # if the caller has explicit import evidence pointing at exactly one
+            # of the candidates, that named import disambiguates unambiguously.
+            # Prefer direct symbol-import matches; fall back to module-import
+            # matches only when they too collapse to a single target. Without a
+            # unique evidence-backed pick we skip, preserving the #543 guard
+            # against over-connecting common short names (log, execute, find).
+            symbol_matches = [c for c in candidates if c in imported_symbols]
+            if len(symbol_matches) == 1:
+                tgt = symbol_matches[0]
+            else:
+                module_matches = [
+                    c for c in candidates
+                    if (cf := nid_to_file_nid.get(c)) is not None and cf in imported_modules
+                ]
+                if len(module_matches) == 1:
+                    tgt = module_matches[0]
+                else:
+                    continue
+            has_import_evidence = True
         if tgt != caller and (caller, tgt) not in existing_pairs:
             existing_pairs.add((caller, tgt))
             # Promote to EXTRACTED when there's a direct import edge from the
             # caller's file pointing at either the callee symbol itself or the
             # file the callee lives in.
-            caller_file_nid = nid_to_file_nid.get(caller)
-            callee_file_nid = nid_to_file_nid.get(tgt)
-            imported_symbols = file_to_symbol_imports.get(caller_file_nid, set())
-            imported_modules = file_to_module_imports.get(caller_file_nid, set())
-            has_import_evidence = (
-                tgt in imported_symbols
-                or (callee_file_nid is not None and callee_file_nid in imported_modules)
-            )
             if has_import_evidence:
                 confidence = "EXTRACTED"
                 confidence_score = 1.0

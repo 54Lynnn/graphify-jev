@@ -359,7 +359,7 @@ _SETTINGS_HOOK = {
                 "case \"$CMD\" in "
                 r"*grep*|*rg\ *|*ripgrep*|*find\ *|*fd\ *|*ack\ *|*ag\ *) "
                 "  [ -f graphify-out/graph.json ] && "
-                r"""  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"graphify: knowledge graph at graphify-out/. For focused questions, run `graphify query \"<question>\"` (scoped subgraph, usually much smaller than GRAPH_REPORT.md) instead of grepping raw files. Read GRAPH_REPORT.md only for broad architecture context."}}' """
+                r"""  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"MANDATORY: graphify-out/graph.json exists. You MUST run `graphify query \"<question>\"` before grepping raw files. Only grep after graphify has oriented you, or to modify/debug specific lines."}}' """
                 "  || true ;; "
                 "esac"
             ),
@@ -389,7 +389,7 @@ _READ_SETTINGS_HOOK = {
                 "exts=('.py','.js','.ts','.tsx','.jsx','.go','.rs','.java','.rb','.c','.h','.cpp','.hpp','.cc','.cs','.kt','.swift','.php','.scala','.lua','.sh','.md','.rst','.txt','.mdx');"
                 "sys.stdout.write('1' if 'graphify-out/' not in s and any(e in s for e in exts) else '')\" 2>/dev/null || true); "
                 "if [ \"$HIT\" = 1 ] && [ -f graphify-out/graph.json ]; then "
-                r"""echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"graphify: knowledge graph at graphify-out/. For codebase questions, run `graphify query \"<question>\"` (scoped subgraph, usually much smaller than reading files one by one), `graphify explain \"<concept>\"`, or `graphify path \"<A>\" \"<B>\"`, instead of reading source files to answer. Read raw files to modify or debug specific code, or when the graph lacks the detail."}}'; """
+                r"""echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"MANDATORY: graphify-out/graph.json exists. You MUST run graphify before reading source files. Use: `graphify query \"<question>\"` (scoped subgraph), `graphify explain \"<concept>\"`, or `graphify path \"<A>\" \"<B>\"`. Only read raw files after graphify has oriented you, or to modify/debug specific lines. This rule applies to subagents too — include it in every subagent prompt involving code exploration."}}'; """
                 "fi || true"
             ),
         }
@@ -1113,10 +1113,20 @@ alwaysApply: true
 
 This project has a graphify knowledge graph at graphify-out/.
 
-- For codebase or architecture questions, when `graphify-out/graph.json` exists, first run `graphify query "<question>"` (or `graphify path "<A>" "<B>"` / `graphify explain "<concept>"`). These return a scoped subgraph, usually much smaller than `GRAPH_REPORT.md` or raw grep output.
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context
-- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
+**MANDATORY: Before using Read, Grep, Glob, or Bash to explore the codebase, you MUST run graphify first:**
+- `graphify query "<question>"` — scoped subgraph for any codebase or architecture question
+- `graphify path "<A>" "<B>"` — dependency path between two symbols
+- `graphify explain "<concept>"` — all nodes related to a concept
+
+This applies to YOU and to every subagent you spawn. Include this rule explicitly in every subagent prompt that involves code exploration. Do not skip graphify because files are "already known" or because you are executing a plan — the graph surfaces cross-file dependencies and INFERRED edges that grep and Read cannot find.
+
+Only use Read/Grep/Glob directly when:
+1. graphify has already oriented you and you need to modify or debug specific lines
+2. `graphify-out/graph.json` does not exist yet
+
+- If `graphify-out/wiki/index.md` exists, navigate it instead of reading raw files
+- Read `graphify-out/GRAPH_REPORT.md` only for broad architecture review when query/path/explain do not surface enough context
+- After modifying code files, run `graphify update .` to keep the graph current (AST-only, no API cost)
 """
 
 
@@ -3169,7 +3179,25 @@ def main() -> None:
         from graphify.export import to_json, to_html
 
         print("Loading existing graph...")
-        _enforce_graph_size_cap_or_exit(graph_json)
+        # Solution 3 (#1019): don't hard-exit on an oversized graph.json here.
+        # Core outputs (graph.json + GRAPH_REPORT.md) still get written; the
+        # graph.html render below falls back to the community-aggregation view
+        # (node_limit=5000) when over the cap.
+        from graphify.security import check_graph_file_size_cap as _check_cap
+        _over_cap = False
+        try:
+            _check_cap(graph_json)
+        except ValueError:
+            _over_cap = True
+            try:
+                _over_cap_bytes = graph_json.stat().st_size
+            except OSError:
+                _over_cap_bytes = -1
+            print(
+                f"warning: graph.json exceeds cap ({_over_cap_bytes} bytes); "
+                f"falling back to community-aggregation view (node_limit=5000)",
+                file=sys.stderr,
+            )
         _raw = json.loads(graph_json.read_text(encoding="utf-8"))
         _directed = bool(_raw.get("directed", False))
         G = build_from_json(_raw, directed=_directed)
@@ -3238,7 +3266,11 @@ def main() -> None:
             print(f"Done - {len(communities)} communities. GRAPH_REPORT.md and graph.json updated (--no-viz; graph.html removed).")
         else:
             try:
-                to_html(G, communities, str(html_target), community_labels=labels or None)
+                # Over-cap fallback (#1019): force the community-aggregation
+                # path so an oversized graph still renders a usable graph.html.
+                _node_limit = 5000 if _over_cap else None
+                to_html(G, communities, str(html_target), community_labels=labels or None,
+                        node_limit=_node_limit)
                 print(f"Done - {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
             except ValueError as viz_err:
                 if html_target.exists():
@@ -3644,8 +3676,30 @@ def main() -> None:
 
         from networkx.readwrite import json_graph as _jg
         from graphify.build import build_from_json as _bfj
+        from graphify.security import check_graph_file_size_cap as _check_cap
 
-        _enforce_graph_size_cap_or_exit(graph_path)
+        # Solution 3 (#1019): for the HTML view, an oversized graph.json should
+        # not be a hard error. Detect the over-cap condition here and fall back
+        # to the community-aggregation view (node_limit=5000) below instead of
+        # exiting 1. All other subcommands keep the hard cap.
+        _over_cap = False
+        try:
+            _check_cap(graph_path)
+        except ValueError as _cap_err:
+            if subcmd == "html":
+                _over_cap = True
+                try:
+                    _over_cap_bytes = graph_path.stat().st_size
+                except OSError:
+                    _over_cap_bytes = -1
+                print(
+                    f"warning: graph.json exceeds cap ({_over_cap_bytes} bytes); "
+                    f"falling back to community-aggregation view (node_limit=5000)",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"error: {_cap_err}", file=sys.stderr)
+                sys.exit(1)
         _raw = json.loads(graph_path.read_text(encoding="utf-8"))
         if "links" not in _raw and "edges" in _raw:
             _raw = dict(_raw, links=_raw["edges"])
@@ -3702,10 +3756,15 @@ def main() -> None:
                     html_target.unlink()
                 print("--no-viz: skipped graph.html")
             else:
+                # Over-cap fallback (#1019): force the community-aggregation
+                # path so the oversized graph still renders a usable artifact.
+                _effective_node_limit = 5000 if _over_cap else node_limit
                 _to_html(G, communities, str(out_dir / "graph.html"),
-                         community_labels=labels or None, node_limit=node_limit)
-                if G.number_of_nodes() <= node_limit:
+                         community_labels=labels or None, node_limit=_effective_node_limit)
+                if G.number_of_nodes() <= _effective_node_limit:
                     print(f"graph.html written - open in any browser, no server needed")
+                if _over_cap:
+                    sys.exit(0)
 
         elif subcmd == "obsidian":
             from graphify.export import to_obsidian as _to_obsidian, to_canvas as _to_canvas

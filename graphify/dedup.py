@@ -126,6 +126,20 @@ _NUM_PERM = 128
 _CHUNK_SUFFIX = re.compile(r"_c\d+$")
 
 
+def _is_code(node: dict) -> bool:
+    """True for AST-extracted code symbols.
+
+    Code-node identity is the node ID (which already encodes the fully
+    qualified path: module/class/symbol). The label is only a display name
+    (e.g. a bare ``.draw()`` method name, or a function name shared by two
+    parallel backends), so label-based merging conflates distinct symbols
+    (#1205). Genuine duplicates — the same symbol re-extracted — share an ID
+    and are already collapsed by the exact-ID ``seen_ids`` pre-dedup above,
+    so code never needs label-based merging.
+    """
+    return node.get("file_type") == "code"
+
+
 # ── main entry point ──────────────────────────────────────────────────────────
 
 def deduplicate_entities(
@@ -173,6 +187,10 @@ def deduplicate_entities(
     # ── pass 1: exact normalization ───────────────────────────────────────────
     norm_to_nodes: dict[str, list[dict]] = defaultdict(list)
     for node in unique_nodes:
+        # Code symbols are keyed by ID, never by label — skip them entirely so
+        # distinct same-named symbols are never merged by string similarity (#1205).
+        if _is_code(node):
+            continue
         key = _norm(node.get("label", node.get("id", "")))
         if key:
             norm_to_nodes[key].append(node)
@@ -203,6 +221,12 @@ def deduplicate_entities(
     candidates: list[dict] = []
     seen_norms: set[str] = set()
     for node in unique_nodes:
+        # Code symbols are excluded from fuzzy matching too: two functions with
+        # similar long names in different files (parallel backends, sibling
+        # classes) must not be fuzzy-merged, and a code↔concept fuzzy match must
+        # not transitively union two distinct code symbols via a concept (#1205).
+        if _is_code(node):
+            continue
         key = _norm(node.get("label", node.get("id", "")))
         if key and key not in seen_norms:
             seen_norms.add(key)
