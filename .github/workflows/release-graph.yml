@@ -23,10 +23,14 @@ jobs:
         run: uv sync --frozen
 
       - name: Build graph of graphify source (AST-only, no API cost)
-        run: uv run --frozen graphify extract . --code-only --out graphify-out
+        # Extract only the graphify/ package directory — pure Python code, no
+        # docs/skill/markdown files — so extraction never needs an LLM API key.
+        # --out . writes output to ./graphify-out/ (not ./graphify/graphify-out/).
+        run: uv run --frozen graphify extract graphify/ --out .
 
       - name: Generate HTML viewer
-        run: uv run --frozen graphify export html --graph graphify-out/graph.json --out graphify-out/graph.html
+        # HTML is written next to graph.json automatically; no --out flag needed.
+        run: uv run --frozen graphify export html --graph graphify-out/graph.json
 
       - name: Bundle release asset
         run: |
