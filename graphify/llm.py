@@ -322,6 +322,18 @@ def _bedrock_inference_config(max_tokens: int, model: str = "") -> dict:
     return cfg
 
 
+def _no_window_kwargs() -> dict:
+    """subprocess kwargs that suppress the console window claude.cmd would
+    otherwise pop on Windows. A labeling/extraction run spawns one `claude -p`
+    per batch — with Windows Terminal as the default terminal each spawn
+    becomes a visible window that appears and vanishes for the duration of the
+    model call. CREATE_NO_WINDOW keeps the children invisible; no-op elsewhere."""
+    import subprocess
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
 def _resolve_api_timeout(default: float = 600.0) -> float:
     """Honour GRAPHIFY_API_TIMEOUT env var override, else use default (seconds)."""
     raw = os.environ.get("GRAPHIFY_API_TIMEOUT", "").strip()
@@ -1064,6 +1076,7 @@ def _call_claude_cli(user_message: str, max_tokens: int = 8192, *, deep_mode: bo
         encoding="utf-8",  # Force UTF-8 — prevents UnicodeEncodeError on Windows cp1252
         timeout=_resolve_api_timeout(),
         check=False,
+        **_no_window_kwargs(),
     )
     if proc.returncode != 0:
         raise RuntimeError(
@@ -1718,17 +1731,28 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
         return resp.content[0].text if resp.content else ""
 
     if backend == "claude-cli":
-        import shutil, subprocess
-        if shutil.which("claude") is None:
+        import platform, shutil, subprocess
+        # Mirror the extraction-path resolution: on Windows the npm shim is
+        # claude.cmd, which CreateProcess can't resolve from a bare "claude"
+        # (PATHEXT doesn't apply), so pass the resolved .cmd path explicitly.
+        claude_cmd = "claude"
+        if platform.system() == "Windows":
+            cmd_path = shutil.which("claude.cmd")
+            if cmd_path:
+                claude_cmd = cmd_path
+            elif shutil.which("claude") is None:
+                raise RuntimeError("Claude Code CLI not found on $PATH")
+        elif shutil.which("claude") is None:
             raise RuntimeError("Claude Code CLI not found on $PATH")
         proc = subprocess.run(
-            ["claude", "-p", "--output-format", "json", "--no-session-persistence"],
+            [claude_cmd, "-p", "--output-format", "json", "--no-session-persistence"],
             input=prompt,
             capture_output=True,
             text=True,
             encoding="utf-8",  # Force UTF-8 — prevents UnicodeEncodeError on Windows cp1252
             timeout=_resolve_api_timeout(),
             check=False,
+            **_no_window_kwargs(),
         )
         if proc.returncode != 0:
             raise RuntimeError(f"claude -p exited {proc.returncode}: {proc.stderr.strip()[:500]}")
