@@ -4206,7 +4206,10 @@ def main() -> None:
         ast_result: dict = {"nodes": [], "edges": [], "input_tokens": 0, "output_tokens": 0}
         if code_files:
             from graphify.extract import extract as _ast_extract
-            ast_kwargs: dict = {"cache_root": target}
+            # Anchor the cache at the output root, not the scanned project:
+            # with --out, a <target>/graphify-out/cache/ would leak a
+            # graphify-out/ dir into a project that asked for external output.
+            ast_kwargs: dict = {"cache_root": out_root}
             if cli_max_workers is not None:
                 ast_kwargs["max_workers"] = cli_max_workers
             print(f"[graphify extract] AST extraction on {len(code_files)} code files...")
@@ -4230,7 +4233,7 @@ def main() -> None:
         if semantic_files:
             sem_paths_str = [str(p) for p in semantic_files]
             cached_nodes, cached_edges, cached_hyperedges, uncached_paths = (
-                _check_semantic_cache(sem_paths_str, root=target)
+                _check_semantic_cache(sem_paths_str, root=out_root)
             )
             sem_cache_hits = len(semantic_files) - len(uncached_paths)
             sem_cache_misses = len(uncached_paths)
@@ -4300,7 +4303,7 @@ def main() -> None:
                         fresh.get("nodes", []),
                         fresh.get("edges", []),
                         fresh.get("hyperedges", []),
-                        root=target,
+                        root=out_root,
                     )
                 except Exception as exc:
                     print(f"[graphify extract] warning: could not write semantic cache: {exc}", file=sys.stderr)
