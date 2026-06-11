@@ -334,6 +334,27 @@ def test_tsconfig_alias_import_resolves_existing_ts_file(tmp_path: Path):
     assert _has_edge(result, "src/routes/page.ts", "src/lib/types/type-helpers.ts")
 
 
+def test_tsconfig_alias_with_subdirectory_baseurl_resolves_existing_ts_file(tmp_path: Path):
+    # `paths` are resolved relative to `baseUrl`, which is commonly a
+    # subdirectory in monorepo / NestJS layouts (baseUrl "./src").
+    # Regression: baseUrl was ignored, so "@services/*": ["services/*"] with
+    # baseUrl "./src" resolved to <root>/services instead of <root>/src/services,
+    # and every aliased import edge was silently dropped.
+    _write(
+        tmp_path / "tsconfig.json",
+        json.dumps({"compilerOptions": {"baseUrl": "./src", "paths": {"@services/*": ["services/*"]}}}),
+    )
+    target = _write(tmp_path / "src/services/foo/index.ts", "export class Foo { id = '' }\n")
+    importer = _write(
+        tmp_path / "src/routes/page.ts",
+        "import { Foo } from '@services/foo'\nnew Foo()\n",
+    )
+
+    result = _extract_for([target, importer], tmp_path)
+
+    assert _has_edge(result, "src/routes/page.ts", "src/services/foo/index.ts")
+
+
 def test_tsconfig_array_extends_alias_resolves_existing_ts_file(tmp_path: Path):
     # TypeScript 5.0 allows `extends` as an array; later entries override
     # earlier ones. The `paths` alias is inherited from the second parent.
