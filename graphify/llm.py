@@ -1,4 +1,3 @@
-# Direct LLM backend for semantic extraction — supports Claude, Kimi K2.6,
 # Gemini, and OpenAI.
 # Used by `graphify extract . --backend gemini` and the benchmark scripts.
 # The default graphify pipeline uses Claude Code subagents via skill.md;
@@ -984,6 +983,38 @@ def _call_claude(api_key: str, model: str, user_message: str, max_tokens: int = 
     return result
 
 
+def _claude_cli_envelope(stdout: str) -> dict:
+    """Parse the JSON returned by `claude -p --output-format json`.
+
+    Older Claude Code CLI versions returned a single envelope object. Newer
+    versions (>= ~2.1) emit a JSON ARRAY of streamed event objects (a system
+    init event, assistant turns, an optional rate_limit_event, and a final
+    {"type":"result"} object). Normalize both shapes to the result dict that
+    carries `result`, `usage`, `modelUsage`, and `stop_reason`.
+    """
+    try:
+        envelope = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"claude -p produced unparseable JSON envelope: {exc}; "
+            f"first 500 chars of stdout: {stdout[:500]!r}"
+        ) from exc
+    if isinstance(envelope, list):
+        result_events = [
+            e for e in envelope
+            if isinstance(e, dict) and e.get("type") == "result"
+        ]
+        if result_events:
+            return result_events[-1]
+        if envelope and isinstance(envelope[-1], dict):
+            return envelope[-1]
+        raise RuntimeError(
+            "claude -p returned a JSON array with no result object; "
+            f"first 500 chars of stdout: {stdout[:500]!r}"
+        )
+    return envelope
+
+
 def _call_claude_cli(user_message: str, max_tokens: int = 8192, *, deep_mode: bool = False, images: list[_ImageRef] | None = None) -> dict:
     """Call Claude via the locally-installed Claude Code CLI (`claude -p`).
 
@@ -1070,13 +1101,7 @@ def _call_claude_cli(user_message: str, max_tokens: int = 8192, *, deep_mode: bo
             f"claude -p exited {proc.returncode}: {proc.stderr.strip()[:500]}"
         )
 
-    try:
-        envelope = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"claude -p produced unparseable JSON envelope: {exc}; "
-            f"first 500 chars of stdout: {proc.stdout[:500]!r}"
-        ) from exc
+    envelope = _claude_cli_envelope(proc.stdout)
 
     raw_content = envelope.get("result", "")
     result = _parse_llm_json(raw_content or "{}")
@@ -1732,10 +1757,7 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
         )
         if proc.returncode != 0:
             raise RuntimeError(f"claude -p exited {proc.returncode}: {proc.stderr.strip()[:500]}")
-        try:
-            envelope = json.loads(proc.stdout)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"claude -p produced unparseable JSON envelope: {exc}") from exc
+        envelope = _claude_cli_envelope(proc.stdout)
         return envelope.get("result", "")
 
 
