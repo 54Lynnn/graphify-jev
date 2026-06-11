@@ -157,14 +157,17 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
         G.add_node(node["id"], **{k: v for k, v in node.items() if k != "id"})
     node_set = set(G.nodes())
 
-    # #1145: merge semantic ghost-duplicate nodes into AST nodes.
-    # When AST and semantic extractors emit different IDs for the same symbol
-    # (one has source_location=L<n>, the other has source_location=None), find
-    # pairs that share (source_file basename, label) and collapse the semantic
-    # copy into the AST copy so edges re-point to a single node.
-    # Two passes: first collect all AST (located) nodes, then find ghosts.
-    _loc_nodes: dict[tuple[str, str], str] = {}   # (basename, label) -> AST node id
-    _noloc_nodes: dict[tuple[str, str], str] = {}  # (basename, label) -> semantic node id
+    # #1145 (extended): merge LLM ghost-duplicate nodes into AST canonical nodes.
+    # Original bug: AST uses parent-qualified IDs (mingpt_bpe_get_pairs) while LLM
+    # uses bare-stem IDs (bpe_get_pairs) — different IDs, same symbol.
+    # Original fix only caught LLM nodes with source_location=None; LLM now
+    # populates source_location, so those ghosts survived. Extended fix: use
+    # _origin=="ast" as the canonical signal. AST nodes always win; any non-AST
+    # node sharing (basename, label) with an AST node is a ghost.
+    _loc_nodes: dict[tuple[str, str], str] = {}   # (basename, label) -> canonical node id
+    _noloc_nodes: dict[tuple[str, str], str] = {}  # (basename, label) -> ghost node id
+
+    # Pass 1: collect canonical nodes — AST-origin nodes take precedence over LLM nodes.
     for nid in node_set:
         attrs = G.nodes[nid]
         label = str(attrs.get("label", "")).strip()
@@ -172,14 +175,21 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
         basename = Path(sf).name if sf else ""
         if not label or not basename:
             continue
-        if attrs.get("source_location"):
-            _loc_nodes[(basename, label)] = nid
+        if attrs.get("source_location") or attrs.get("_origin") == "ast":
+            key = (basename, label)
+            # AST-origin nodes always overwrite; non-AST only written if key unseen.
+            if attrs.get("_origin") == "ast" or key not in _loc_nodes:
+                _loc_nodes[key] = nid
+
+    # Pass 2: find ghosts — non-AST nodes that have an AST canonical twin.
     for nid in node_set:
         attrs = G.nodes[nid]
+        if attrs.get("_origin") == "ast":
+            continue  # AST nodes are never ghosts
         label = str(attrs.get("label", "")).strip()
         sf = str(attrs.get("source_file", ""))
         basename = Path(sf).name if sf else ""
-        if not label or not basename or attrs.get("source_location"):
+        if not label or not basename:
             continue
         key = (basename, label)
         if key in _loc_nodes and _loc_nodes[key] != nid:
