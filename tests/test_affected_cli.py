@@ -92,3 +92,34 @@ def test_affected_cli_forces_directed_on_undirected_graph(monkeypatch, tmp_path,
     assert "calls" in out
     # B is the query node, not an affected node, and the result is not empty.
     assert "No affected nodes found." not in out
+
+
+def test_resolve_seed_bare_name_matches_callable_label():
+    from graphify.affected import resolve_seed
+
+    graph = nx.DiGraph()
+    graph.add_node("a", label="classifyProperty()", source_file="pkg/entity.py")
+    graph.add_node("b", label="classifyPropertySafe()", source_file="app/context.py")
+
+    assert resolve_seed(graph, "classifyProperty") == "a"
+    assert resolve_seed(graph, "classifyPropertySafe") == "b"
+
+
+def test_resolve_seed_decorated_query_matches_bare_label():
+    from graphify.affected import resolve_seed
+
+    graph = nx.DiGraph()
+    graph.add_node("a", label="Foo", source_file="pkg/foo.py")
+    graph.add_node("b", label="FooBar", source_file="pkg/foobar.py")
+
+    assert resolve_seed(graph, "Foo()") == "a"
+
+
+def test_resolve_seed_bare_name_tie_still_returns_none():
+    from graphify.affected import resolve_seed
+
+    graph = nx.DiGraph()
+    graph.add_node("a", label="dup()", source_file="pkg/one.py")
+    graph.add_node("b", label="dup()", source_file="pkg/two.py")
+
+    assert resolve_seed(graph, "dup") is None

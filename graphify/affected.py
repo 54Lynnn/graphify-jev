@@ -43,6 +43,12 @@ def _format_location(data: dict) -> str:
     return str(source_file)
 
 
+def _bare_name(label: str) -> str:
+    """Lowercased label with the callable decoration (trailing "()") removed."""
+    label = label.lower()
+    return label[:-2] if label.endswith("()") else label
+
+
 def resolve_seed(graph: nx.Graph, query: str) -> str | None:
     if query in graph:
         return query
@@ -54,6 +60,17 @@ def resolve_seed(graph: nx.Graph, query: str) -> str | None:
     ]
     if len(exact_label_matches) == 1:
         return exact_label_matches[0]
+    # Callable labels are decorated ("name()"), so a bare "name" query falls
+    # through exact matching and then ties with any "name*" sibling in the
+    # contains pass. Match on the undecorated name before giving up.
+    query_bare = _bare_name(query_lower)
+    bare_name_matches = [
+        str(node_id)
+        for node_id, data in graph.nodes(data=True)
+        if _bare_name(str(data.get("label", ""))) == query_bare
+    ]
+    if len(bare_name_matches) == 1:
+        return bare_name_matches[0]
     exact_source_matches = [
         str(node_id)
         for node_id, data in graph.nodes(data=True)
