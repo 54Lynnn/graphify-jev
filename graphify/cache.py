@@ -5,6 +5,7 @@ import atexit
 import hashlib
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -14,14 +15,26 @@ from pathlib import Path
 _GRAPHIFY_OUT = os.environ.get("GRAPHIFY_OUT", "graphify-out")
 
 
+# A frontmatter delimiter is a whole line of exactly three dashes (optional
+# trailing whitespace). Substring checks like startswith("---") /
+# find("\n---") also match `----` thematic breaks and `--- text` prose,
+# silently dropping everything above them from the hash (#1259).
+_FRONTMATTER_DELIM = re.compile(r"^---[ \t]*\r?$", re.MULTILINE)
+
+
 def _body_content(content: bytes) -> bytes:
     """Strip YAML frontmatter from Markdown content, returning only the body."""
     text = content.decode(errors="replace")
-    if text.startswith("---"):
-        end = text.find("\n---", 3)
-        if end != -1:
-            return text[end + 4:].encode()
-    return content
+    opener = _FRONTMATTER_DELIM.match(text)
+    if opener is None:
+        return content
+    closer = _FRONTMATTER_DELIM.search(text, opener.end())
+    if closer is None:
+        return content
+    # Slice right after the closing `---` (not after its line) so the output
+    # stays byte-identical with the historical implementation for well-formed
+    # frontmatter -- existing semantic-cache hashes must not churn.
+    return text[closer.start() + 3:].encode()
 
 
 # Stat-based index: maps absolute path → {size, mtime_ns, hash}.
