@@ -11704,18 +11704,34 @@ def collect_files(target: Path, *, follow_symlinks: bool = False, root: Path | N
     from graphify.detect import _is_ignored, _is_noise_dir, _load_graphifyignore
     ignore_root = root if root is not None else target
     patterns = _load_graphifyignore(ignore_root)
+    # Shared across all _is_ignored calls in this scan so ancestor-directory
+    # results are memoised instead of re-evaluated per file.
+    ignore_cache: dict[Path, bool] = {}
 
     def _ignored(p: Path) -> bool:
-        return bool(patterns and _is_ignored(p, ignore_root, patterns))
+        return bool(patterns and _is_ignored(p, ignore_root, patterns, _cache=ignore_cache))
 
     if not follow_symlinks:
+        # The old rglob filter rejected paths with a noise component anywhere,
+        # including components of target itself — preserve that.
+        if any(_is_noise_dir(part) for part in target.parts):
+            return []
+        # When negation (!) patterns exist, skip directory-level ignore pruning
+        # so negated files inside ignored dirs can still be reached (same
+        # conservatism as detect's scan walk).
+        has_negation = any(pat.startswith("!") for _, pat in patterns)
         results: list[Path] = []
-        for ext in sorted(_EXTENSIONS):
-            results.extend(
-                p for p in target.rglob(f"*{ext}")
-                if not any(_is_noise_dir(part) for part in p.parts)
-                and not _ignored(p)
-            )
+        for dirpath, dirnames, filenames in os.walk(target):
+            dp = Path(dirpath)
+            dirnames[:] = [
+                d for d in dirnames
+                if not _is_noise_dir(d)
+                and (has_negation or not _ignored(dp / d))
+            ]
+            for fname in filenames:
+                p = dp / fname
+                if p.suffix in _EXTENSIONS and not _ignored(p):
+                    results.append(p)
         return sorted(results)
     # Walk with symlink following + cycle detection
     results = []
