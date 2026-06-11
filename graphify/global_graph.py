@@ -105,20 +105,24 @@ def global_add(source_path: Path, repo_tag: str) -> dict:
         for n, d in G.nodes(data=True)
         if not d.get("source_file") and d.get("label")
     }
-    nodes_to_skip = set()
+    # Map each deduplicated external onto the existing global node so that
+    # edges incident to it can be rewired instead of dropped.
+    remap = {}
     for node, data in prefixed.nodes(data=True):
         if not data.get("source_file") and data.get("label") in external_labels:
-            nodes_to_skip.add(node)
+            remap[node] = external_labels[data["label"]]
 
     # Compose: add prefixed nodes (except deduplicated externals) into global graph
     for node, data in prefixed.nodes(data=True):
-        if node not in nodes_to_skip:
+        if node not in remap:
             G.add_node(node, **data)
     for u, v, data in prefixed.edges(data=True):
-        if u not in nodes_to_skip and v not in nodes_to_skip:
+        u = remap.get(u, u)
+        v = remap.get(v, v)
+        if u != v:  # don't introduce self-loops via remapping
             G.add_edge(u, v, **data)
 
-    added = prefixed.number_of_nodes() - len(nodes_to_skip)
+    added = prefixed.number_of_nodes() - len(remap)
     _save_global_graph(G)
 
     manifest["repos"][repo_tag] = {
