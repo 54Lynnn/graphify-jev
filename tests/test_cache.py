@@ -128,6 +128,66 @@ def test_body_content_no_frontmatter():
     assert _body_content(content) == content
 
 
+# --- #1259: frontmatter delimiters must be whole `---` lines -----------------
+
+def test_body_content_hr_start_is_not_frontmatter():
+    """A document opening with a ``----`` thematic break has no frontmatter;
+    a later ``---`` hr must not be mistaken for a close delimiter."""
+    content = b"----\nIntro paragraph that must be hashed.\n\n---\nbody"
+    assert _body_content(content) == content
+
+
+def test_body_content_dash_title_start_is_not_frontmatter():
+    """``--- title`` on the first line is prose, not an open delimiter."""
+    content = b"--- title\nIntro that must be hashed.\n\n---\nbody"
+    assert _body_content(content) == content
+
+
+def test_body_content_dash_text_line_is_not_close_delimiter():
+    """``--- text`` and ``----`` lines inside opened frontmatter are not the
+    close; without a proper close the content passes through unchanged."""
+    content = b"---\ntitle: Test\nbody starts here\n--- not a delimiter\n----\nreal content"
+    assert _body_content(content) == content
+
+
+def test_body_content_later_proper_close_skips_dash_text_lines():
+    """A ``--- text`` line is skipped; the next whole ``---`` line closes."""
+    content = b"---\ntitle: Test\nnote: --- inline\n---\nreal body"
+    assert _body_content(content) == b"\nreal body"
+
+
+def test_body_content_well_formed_output_byte_identical():
+    """For well-formed frontmatter the stripped body must stay byte-identical
+    to the historical substring implementation, so existing semantic-cache
+    hashes do not churn (re-extraction is billed LLM work)."""
+    cases = [
+        # (input, output of the historical text.find("\n---")+4 algorithm)
+        (b"---\ntitle: Test\n---\n\nActual body.", b"\n\nActual body."),
+        (b"---\nreviewed: 2026-01-01\n---\n\n# Title\n\nBody text.", b"\n\n# Title\n\nBody text."),
+        # close delimiter with trailing whitespace keeps it in the body
+        (b"---\ntitle: Test\n---  \nbody", b"  \nbody"),
+        # CRLF line endings
+        (b"---\r\ntitle: Test\r\n---\r\nbody", b"\r\nbody"),
+        # empty frontmatter block
+        (b"---\n---\nbody", b"\nbody"),
+        # close as the very last line, no trailing newline
+        (b"---\ntitle: Test\n---", b""),
+    ]
+    for content, expected in cases:
+        assert _body_content(content) == expected, content
+
+
+def test_md_edit_above_hr_changes_hash(tmp_path):
+    """Editing content above a mid-document ``----`` break must change the
+    hash -- previously that region was silently excluded from hashing."""
+    f = tmp_path / "doc.md"
+    f.write_text("----\nIntro paragraph.\n\n---\nbody")
+    h1 = file_hash(f)
+    f.write_text("----\nEdited intro paragraph.\n\n---\nbody")
+    h2 = file_hash(f)
+    assert h1 != h2
+
+
 # --- #777: portable cache source_file fields --------------------------------
 # ``save_cached`` relativizes ``source_file`` entries inside the cache file
 # so a committed ``graphify-out/cache/`` is portable across machines and
