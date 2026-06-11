@@ -255,13 +255,23 @@ def _read_tsconfig_aliases(tsconfig: Path, base_dir: Path, seen: set) -> dict[st
         if extended_path.exists():
             aliases.update(_read_tsconfig_aliases(extended_path, extended_path.parent, seen))
 
-    paths = data.get("compilerOptions", {}).get("paths", {})
+    # tsconfig `paths` are resolved relative to `baseUrl` (itself relative to
+    # the tsconfig's directory), not the tsconfig directory directly. Honoring
+    # baseUrl is required for the common monorepo / NestJS layout where
+    # baseUrl points at a subdirectory, e.g. baseUrl "./src" with
+    # "@services/*": ["services/*"] must resolve to <dir>/src/services rather
+    # than <dir>/services. Defaults to "." so configs without baseUrl (paths
+    # relative to the tsconfig dir, the TS 4.1+ behavior) keep working.
+    compiler_options = data.get("compilerOptions", {})
+    base_url = compiler_options.get("baseUrl") or "."
+    paths_base = base_dir / base_url
+    paths = compiler_options.get("paths", {})
     for alias, targets in paths.items():
         if not targets:
             continue
         alias_prefix = alias.rstrip("/*")
         target_base = targets[0].rstrip("/*")
-        aliases[alias_prefix] = str(base_dir / target_base)
+        aliases[alias_prefix] = str(os.path.normpath(paths_base / target_base))
 
     return aliases
 

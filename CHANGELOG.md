@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased
+
+- Fix: tsconfig `paths` aliases are now resolved relative to `baseUrl`. `_read_tsconfig_aliases` previously joined alias targets onto the tsconfig's directory and ignored `compilerOptions.baseUrl`, so the common monorepo / NestJS layout (`baseUrl: "./src"` with `"@services/*": ["services/*"]`) resolved to `<dir>/services` instead of `<dir>/src/services` and every aliased import edge was silently dropped — leaving cross-file caller graphs nearly empty on alias-heavy TypeScript codebases. Resolution now joins `paths` onto `baseUrl` (defaulting to `.`, preserving prior behavior for configs without `baseUrl`).
+
 ## 0.8.37 (2026-06-10)
 
 - Security: SSRF guard rewritten to eliminate thread-safety race. The global `socket.getaddrinfo` monkey-patch is replaced with per-connection `_SSRFGuardedHTTPConnection`/`_SSRFGuardedHTTPSConnection` subclasses that resolve DNS once, validate the IP, and connect to that exact address — closing both the concurrent-thread race window and the underlying TOCTOU gap. No global state is mutated, so sibling threads (MCP server, PR triage pool) are unaffected.
