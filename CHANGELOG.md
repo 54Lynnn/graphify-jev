@@ -4,7 +4,7 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
-- Fix: tsconfig `paths` aliases are now resolved relative to `baseUrl`. `_read_tsconfig_aliases` previously joined alias targets onto the tsconfig's directory and ignored `compilerOptions.baseUrl`, so the common monorepo / NestJS layout (`baseUrl: "./src"` with `"@services/*": ["services/*"]`) resolved to `<dir>/services` instead of `<dir>/src/services` and every aliased import edge was silently dropped — leaving cross-file caller graphs nearly empty on alias-heavy TypeScript codebases. Resolution now joins `paths` onto `baseUrl` (defaulting to `.`, preserving prior behavior for configs without `baseUrl`).
+- Fix: default imports/exports now produce symbol-level edges. JS/TS symbol resolution only handled named imports, so a `export default class Foo` imported as `import Foo from './foo'` got just a file→file `imports_from` edge — the class node received no incoming symbol edge. On codebases that default-export most classes (NestJS services/helpers/models, etc.) this left those symbols looking like isolated leaf nodes and made `graphify affected "<Class>"` / `explain` report no callers. Default imports are now recorded with `imported_name="default"`, `export default <class|function|identifier>` registers a `"default"` export, and the existing resolver wires the `imports` edge (and resolves calls through the local binding, even when renamed). Anonymous defaults (`export default class {}`) remain file-level only.
 
 ## 0.8.37 (2026-06-10)
 
