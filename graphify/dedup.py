@@ -293,9 +293,11 @@ def deduplicate_entities(
                         sf_b = neighbor.get("source_file") or ""
                         if sf_a != sf_b:
                             continue
-                    all_group = norm_to_nodes.get(norm_label, [node]) + \
-                                norm_to_nodes.get(neighbor_norm, [neighbor])
-                    winner = _pick_winner(all_group)
+                    # Pick the winner from the verified pair only. Selecting it
+                    # from the union of both normalized-label groups pulls
+                    # never-compared nodes (same label, different source_file)
+                    # into the merge, bypassing the #1046/#1178 guards.
+                    winner = _pick_winner([node, neighbor])
                     uf.union(winner["id"], node_id)
                     uf.union(winner["id"], neighbor_id)
                     fuzzy_merges += 1

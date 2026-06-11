@@ -208,6 +208,36 @@ def test_prefix_extension_symbols_not_merged():
         )
 
 
+def test_pass2_winner_union_does_not_pull_in_uncompared_same_label_nodes():
+    """Pass 2's winner selection must consider only the verified pair (#1247).
+
+    Picking the winner from the union of both normalized-label groups pulls
+    never-compared nodes into the merge: here A ("Session Manager", auth.md)
+    and B ("Session Manager", billing.md) are deliberately kept distinct by
+    the cross-file identical-label guards (#1046, #1178), yet when the
+    A-C fuzzy match ("Session Managr" typo) fires, _pick_winner over
+    [A, B, C] selects B (shortest id) and unions B with both A and C —
+    merging B although it was never compared against anything.
+    """
+    nodes = [
+        {"id": "session_manager_auth", "label": "Session Manager",
+         "source_file": "auth.md"},
+        {"id": "sm", "label": "Session Manager",
+         "source_file": "billing.md"},
+        {"id": "session_managr_notes", "label": "Session Managr",
+         "source_file": "notes.md"},
+    ]
+    result_nodes, _ = deduplicate_entities(nodes, [], communities={})
+    ids = {n["id"] for n in result_nodes}
+    # B must survive as a distinct node: identical label across different
+    # source files is exactly what the #1046/#1178 guards keep separate.
+    assert "sm" in ids, (
+        "uncompared cross-file node 'sm' was absorbed via pass-2 winner-union"
+    )
+    # The verified fuzzy pair (A, C) still merges — only one of them survives.
+    assert len(result_nodes) == 2
+
+
 def test_prefix_guard_does_not_block_same_length_typos():
     """The prefix-extension guard must not fire for same-length pairs — only strict
     prefix-extensions (one is a substring of the other) should be blocked (#1201).
