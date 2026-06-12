@@ -1042,13 +1042,19 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
                 # Prune noise dirs in-place so os.walk never descends into them.
                 # Dot dirs are allowed — users often want .github/, .claude/, etc.
                 # Framework caches (.next, .nuxt, …) are caught by _is_noise_dir.
-                # When negation patterns (!) exist, skip directory-level ignore
-                # pruning so negated files inside can still be reached.
-                has_negation = any(p.startswith("!") for _, p in ignore_patterns)
+                # Negations need no special-casing here: _is_ignored already applies
+                # last-match-wins (so `!dir/` un-ignores a directory and it won't be
+                # pruned) and the gitignore parent-exclusion rule (a `!` cannot rescue
+                # a file beneath an excluded dir), so descending an ignored directory to
+                # look for a re-included file is never necessary. The previous blanket
+                # `has_negation` disabled directory pruning for EVERY ignored dir whenever
+                # any `!` rule existed — e.g. a single `!docs/**` made the walk descend
+                # bin/, obj/, wwwroot/, generated/, … : a pathological slowdown on large
+                # repos for no correctness gain.
                 dirnames[:] = [
                     d for d in dirnames
                     if not _is_noise_dir(d, dp)
-                    and (has_negation or not _is_ignored(dp / d, root, ignore_patterns, _cache=ignore_cache))
+                    and not _is_ignored(dp / d, root, ignore_patterns, _cache=ignore_cache)
                 ]
             for fname in filenames:
                 if fname in _SKIP_FILES:

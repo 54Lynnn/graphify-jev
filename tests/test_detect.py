@@ -542,6 +542,51 @@ def test_negation_ancestor_itself_reincluded(tmp_path):
     assert not _is_ignored(f, tmp_path, patterns)
 
 
+def test_negation_does_not_disable_directory_pruning(tmp_path, monkeypatch):
+    """A single `!` re-include must not switch off pruning of *unrelated* ignored dirs.
+
+    Regression: a blanket ``has_negation`` flag used to disable directory-level pruning
+    for EVERY ignored dir whenever any ``!`` pattern existed, so a single ``!docs/**``
+    made os.walk descend bin/, obj/, wwwroot/, generated/, … — a pathological slowdown
+    on large repos. Output stayed correct (the per-file ``_is_ignored`` filter still
+    excluded those files), so this guards the *walk* itself: the ignored dir must never
+    be descended, while the negation must still re-include its target.
+    """
+    import os
+    import graphify.detect as det
+
+    (tmp_path / ".graphifyignore").write_text("myignored/\n*.md\n!docs/**\n")
+    deep = tmp_path / "myignored" / "deep" / "deeper"
+    deep.mkdir(parents=True)
+    (deep / "junk.py").write_text("x = 1")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "guide.md").write_text("# guide")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("y = 2")
+
+    visited: list[str] = []
+    real_walk = os.walk
+
+    def tracking_walk(top, *args, **kwargs):
+        for dirpath, dirnames, filenames in real_walk(top, *args, **kwargs):
+            visited.append(dirpath)
+            yield dirpath, dirnames, filenames
+
+    monkeypatch.setattr(det.os, "walk", tracking_walk)
+    result = det.detect(tmp_path)
+
+    # The ignored (non-noise) dir must never be descended, despite the !docs/** negation.
+    assert not any("myignored" in Path(v).parts for v in visited), (
+        "ignored 'myignored/' was walked despite being ignored — the has_negation bypass regressed"
+    )
+    # Detection itself is unaffected: negation still re-includes docs/*.md, real source is
+    # found, and nothing leaks out of the ignored dir.
+    all_files = [p for cat in result["files"].values() for p in cat]
+    assert any(p.endswith("app.py") for p in all_files)
+    assert any(p.endswith("guide.md") for p in all_files)
+    assert not any("junk.py" in p for p in all_files)
+
+
 # Regression tests for #1087 - anchored patterns must not match basename deep in tree
 
 def test_anchored_dir_not_matched_at_depth(tmp_path):
