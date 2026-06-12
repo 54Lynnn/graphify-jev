@@ -1716,7 +1716,13 @@ def _merge_into(merged: dict, result: dict) -> None:
     merged["output_tokens"] += result.get("output_tokens", 0)
 
 
-def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
+def _call_llm(
+    prompt: str,
+    *,
+    backend: str,
+    max_tokens: int = 200,
+    model: str | None = None,
+) -> str:
     """Send a plain-text prompt to `backend` and return the model's text reply.
 
     Used by lightweight callers (e.g. `graphify.dedup` LLM tiebreaker) that
@@ -1740,7 +1746,7 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
         raise ValueError(
             f"No API key for backend '{backend}'. Set {_format_backend_env_keys(backend)}."
         )
-    mdl = _default_model_for_backend(backend)
+    mdl = model or _default_model_for_backend(backend)
 
     if backend == "claude":
         try:
@@ -1769,8 +1775,11 @@ def _call_llm(prompt: str, *, backend: str, max_tokens: int = 200) -> str:
                 raise RuntimeError("Claude Code CLI not found on $PATH")
         elif shutil.which("claude") is None:
             raise RuntimeError("Claude Code CLI not found on $PATH")
+        cli_args = [claude_cmd, "-p", "--output-format", "json", "--no-session-persistence"]
+        if model is not None:
+            cli_args.extend(["--model", mdl])
         proc = subprocess.run(
-            [claude_cmd, "-p", "--output-format", "json", "--no-session-persistence"],
+            cli_args,
             input=prompt,
             capture_output=True,
             text=True,
@@ -2033,6 +2042,7 @@ def label_communities(
     communities,
     *,
     backend: str,
+    model: str | None = None,
     gods=None,
     max_communities: int | None = None,
     top_k: int = _LABEL_TOP_K,
@@ -2084,7 +2094,10 @@ def label_communities(
         # _resolve_max_tokens so GRAPHIFY_MAX_OUTPUT_TOKENS applies here too (#1200).
         max_tokens = _resolve_max_tokens(min(64 + 24 * len(batch_cids), 8192))
         try:
-            text = _call_llm(prompt, backend=backend, max_tokens=max_tokens)
+            call_kwargs = {"backend": backend, "max_tokens": max_tokens}
+            if model is not None:
+                call_kwargs["model"] = model
+            text = _call_llm(prompt, **call_kwargs)
             parsed = _parse_label_response(text, batch_cids)
             labels.update(parsed)
             written += len(parsed)
@@ -2109,6 +2122,7 @@ def generate_community_labels(
     communities,
     *,
     backend: str | None = None,
+    model: str | None = None,
     gods=None,
     quiet: bool = False,
 ) -> tuple[dict[int, str], str]:
@@ -2130,7 +2144,7 @@ def generate_community_labels(
             )
         return _placeholder_community_labels(communities), "placeholder"
     try:
-        labels = label_communities(G, communities, backend=backend, gods=gods)
+        labels = label_communities(G, communities, backend=backend, model=model, gods=gods)
         return labels, "llm"
     except Exception as exc:
         if not quiet:
