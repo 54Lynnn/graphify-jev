@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+## 0.8.39 (2026-06-12)
+
 - Perf: O(n²)→O(n) LSH neighbor lookup in `deduplicate_entities`. The inner scan `next(n for n in candidates if n["id"]==neighbor_id)` was O(n) per neighbor; replaced with a `candidates_by_id` dict built once per pass. Also adds a `norm_cache` to avoid re-normalising labels on every comparison.
 - Fix: `graphify merge-chunks` summary now prints the node count instead of the raw list object. `global_graph.py` printed `merged['nodes']` (the list) instead of `len(merged['nodes'])`.
 - Fix: manifest data-loss on corrupt `~/.graphify/manifest.json`. A parse error previously triggered `except Exception: pass`, silently returning an empty manifest and overwriting the file — wiping all tracked repos. The corrupt file is now renamed to a timestamped `.corrupt.<ts>` backup with a stderr warning before starting fresh.
