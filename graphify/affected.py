@@ -165,6 +165,12 @@ def load_graph(path: Path) -> nx.Graph:
     # Force directed so stored caller→callee direction survives the round-trip;
     # mirrors serve.py and __main__.py (#1174).
     raw = {**raw, "directed": True}
+    # Normalize the edge key: graphify's `extract` output uses "edges" while
+    # networkx's node_link_data default is "links". Without this, an edges-keyed
+    # graph.json raises an uncaught KeyError: 'links' here — every other loader
+    # (__main__.py) already normalizes this (#738; same class as #1198).
+    if "links" not in raw and "edges" in raw:
+        raw = dict(raw, links=raw["edges"])
     try:
         return json_graph.node_link_graph(raw, edges="links")
     except TypeError:
