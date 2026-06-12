@@ -3549,7 +3549,7 @@ def main() -> None:
 
     elif cmd == "export":
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
-        if subcmd not in ("html", "callflow-html", "obsidian", "wiki", "svg", "graphml", "neo4j"):
+        if subcmd not in ("html", "callflow-html", "obsidian", "wiki", "svg", "graphml", "neo4j", "falkordb"):
             print("Usage: graphify export <format>", file=sys.stderr)
             print("  html      [--graph PATH] [--labels PATH] [--node-limit N] [--no-viz]", file=sys.stderr)
             print("  callflow-html [GRAPH|DIR] [--graph PATH] [--labels PATH] [--report PATH] [--sections PATH] [--output HTML]", file=sys.stderr)
@@ -3560,6 +3560,8 @@ def main() -> None:
             print("  graphml   [--graph PATH]", file=sys.stderr)
             print("  neo4j     [--graph PATH] [--push URI] [--user U] [--password P]", file=sys.stderr)
             print("            (or set NEO4J_PASSWORD instead of --password to keep it off argv)", file=sys.stderr)
+            print("  falkordb  [--graph PATH] [--push URI] [--user U] [--password P]", file=sys.stderr)
+            print("            (or set FALKORDB_PASSWORD instead of --password to keep it off argv)", file=sys.stderr)
             sys.exit(1)
 
         # Parse shared args
@@ -3581,12 +3583,18 @@ def main() -> None:
         node_limit = 5000
         no_viz = False
         obsidian_dir = Path(_GRAPHIFY_OUT) / "obsidian"
-        neo4j_uri: str | None = None
-        neo4j_user = "neo4j"
-        # F-031: prefer the NEO4J_PASSWORD env var so the password never
-        # appears on argv (visible in `ps` output / shell history). The
-        # explicit --password flag still overrides it for compatibility.
-        neo4j_password: str | None = os.environ.get("NEO4J_PASSWORD") or None
+        # Shared push-connection settings for the graph-database sinks (neo4j,
+        # falkordb), parsed from the generic --push/--user/--password flags below.
+        push_uri: str | None = None
+        push_user = "neo4j"  # Neo4j default user; FalkorDB auth is optional and ignores it
+        # F-031: prefer an env var so the password never appears on argv (visible
+        # in `ps` output / shell history). The explicit --password flag still
+        # overrides it. Each sink reads its own var: FALKORDB_PASSWORD for falkordb,
+        # NEO4J_PASSWORD otherwise.
+        push_password: str | None = (
+            os.environ.get("FALKORDB_PASSWORD") if subcmd == "falkordb"
+            else os.environ.get("NEO4J_PASSWORD")
+        ) or None
         i = 0
         while i < len(args):
             a = args[i]
@@ -3637,11 +3645,11 @@ def main() -> None:
             elif a == "--dir" and i + 1 < len(args):
                 obsidian_dir = Path(args[i + 1]); i += 2
             elif a == "--push" and i + 1 < len(args):
-                neo4j_uri = args[i + 1]; i += 2
+                push_uri = args[i + 1]; i += 2
             elif a == "--user" and i + 1 < len(args):
-                neo4j_user = args[i + 1]; i += 2
+                push_user = args[i + 1]; i += 2
             elif a == "--password" and i + 1 < len(args):
-                neo4j_password = args[i + 1]; i += 2
+                push_password = args[i + 1]; i += 2
             elif subcmd == "callflow-html" and not a.startswith("-") and not graph_path_explicit:
                 candidate = Path(a)
                 if candidate.name == "graph.json" or candidate.suffix.lower() == ".json":
@@ -3819,18 +3827,32 @@ def main() -> None:
             print(f"graph.graphml written - open in Gephi, yEd, or any GraphML tool")
 
         elif subcmd == "neo4j":
-            if neo4j_uri:
+            if push_uri:
                 from graphify.export import push_to_neo4j as _push
-                if neo4j_password is None:
+                if push_password is None:
                     print("error: --password required for --push", file=sys.stderr)
                     sys.exit(1)
-                result = _push(G, uri=neo4j_uri, user=neo4j_user,
-                               password=neo4j_password, communities=communities)
+                result = _push(G, uri=push_uri, user=push_user,
+                               password=push_password, communities=communities)
                 print(f"Pushed to Neo4j: {result['nodes']} nodes, {result['edges']} edges")
             else:
                 from graphify.export import to_cypher as _to_cypher
                 _to_cypher(G, str(out_dir / "cypher.txt"))
                 print(f"cypher.txt written - import with: cypher-shell < {out_dir}/cypher.txt")
+
+        elif subcmd == "falkordb":
+            if push_uri:
+                from graphify.export import push_to_falkordb as _push
+                result = _push(G, uri=push_uri, user=push_user,
+                               password=push_password, communities=communities)
+                print(f"Pushed to FalkorDB: {result['nodes']} nodes, {result['edges']} edges")
+            else:
+                from graphify.export import to_cypher as _to_cypher
+                _to_cypher(G, str(out_dir / "cypher.txt"))
+                print(f"cypher.txt written ({out_dir}/cypher.txt) - statements are OpenCypher. "
+                      f"FalkorDB's GRAPH.QUERY runs one statement at a time (no bulk script "
+                      f"import), so load a graph with: graphify export falkordb --push "
+                      f"falkordb://localhost:6379")
 
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark
