@@ -2141,8 +2141,10 @@ def main() -> None:
         print("    --graph <path>          path to graph.json (default <path>/graphify-out/graph.json)")
         print("    --no-label              keep 'Community N' placeholders (skip LLM community naming)")
         print("    --backend=<name>        backend to use for community naming (default: auto-detect)")
+        print("    --model=<name>          model to use for community naming")
         print("  label <path>            (re)name communities with the configured LLM backend, regenerate report")
         print("    --backend=<name>        backend to use (default: auto-detect from API keys)")
+        print("    --model=<name>          model to use for community naming")
         print("  query \"<question>\"       BFS traversal of graph.json for a question")
         print("    --dfs                   use depth-first instead of breadth-first")
         print("    --context C             explicit edge-context filter (repeatable)")
@@ -3131,6 +3133,8 @@ def main() -> None:
         no_label = "--no-label" in sys.argv
         _backend_arg = next((a for a in sys.argv if a.startswith("--backend=")), None)
         label_backend = _backend_arg.split("=", 1)[1] if _backend_arg else None
+        _model_arg = next((a for a in sys.argv if a.startswith("--model=")), None)
+        label_model = _model_arg.split("=", 1)[1] if _model_arg else None
         _min_cs_arg = next((a for a in sys.argv if a.startswith("--min-community-size=")), None)
         min_community_size = int(_min_cs_arg.split("=")[1]) if _min_cs_arg else 3
         args = sys.argv[2:]
@@ -3143,6 +3147,14 @@ def main() -> None:
             a = args[i_arg]
             if a == "--graph" and i_arg + 1 < len(args):
                 graph_override = Path(args[i_arg + 1]); i_arg += 2
+            elif a == "--backend" and i_arg + 1 < len(args):
+                label_backend = args[i_arg + 1]; i_arg += 2
+            elif a.startswith("--backend="):
+                label_backend = a.split("=", 1)[1]; i_arg += 1
+            elif a == "--model" and i_arg + 1 < len(args):
+                label_model = args[i_arg + 1]; i_arg += 2
+            elif a.startswith("--model="):
+                label_model = a.split("=", 1)[1]; i_arg += 1
             elif a == "--resolution" and i_arg + 1 < len(args):
                 co_resolution = float(args[i_arg + 1]); i_arg += 2
             elif a.startswith("--resolution="):
@@ -3240,7 +3252,7 @@ def main() -> None:
             # The final labels (LLM or placeholder fallback) are persisted to
             # .graphify_labels.json by the unconditional write below.
             labels, _ = generate_community_labels(
-                G, communities, backend=label_backend, gods=gods
+                G, communities, backend=label_backend, model=label_model, gods=gods
             )
         questions = suggest_questions(G, communities, labels)
         tokens = {"input": 0, "output": 0}
