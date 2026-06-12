@@ -4,6 +4,11 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: `affected` and `graphify query` now handle graph files that use `"edges"` as the top-level key instead of `"links"`. Graphs produced by native `graphify extract` on some corpus layouts used `"edges"`; loading them in `affected.py` raised `KeyError: 'links'`. Normalised using the same established pattern already in `__main__.py` and `serve.py`.
+- Fix: a single `!` negation rule in `.graphifyignore` no longer disables all directory pruning. Previously any negation pattern caused `collect_files` to descend every ignored directory to look for re-included files. Since gitignore semantics cannot rescue files beneath an excluded parent, this descent was always wasted — the per-file filter still excluded them. Pruning now proceeds unconditionally; only the final per-file `_is_ignored` check is consulted for negation.
+- Feat: `--model` flag added to `graphify label-communities` and `graphify cluster-only`. Routes through `generate_community_labels` → `label_communities` → `_call_llm`; defaults to `None` (keeps existing backend default). Also fixes a latent arg-parsing bug where `--backend gemini` (space-separated) was mis-parsed as the positional path argument.
+- Docs: Persian (فارسی) README translation added (`docs/translations/README.fa-IR.md`).
+
 ## 0.8.38 (2026-06-11)
 
 - Fix: LLM-generated `calls` edges now have correct direction. The extraction prompt previously never stated that `source` = caller and `target` = callee; the LLM systematically emitted callee→caller edges. An explicit direction rule was added to the prompt. Separately, ghost-node merge was extended to collapse LLM duplicate nodes (bare-stem IDs) onto AST canonical nodes (parent-qualified IDs) even when the LLM node carries a `source_location` — the old check only caught `source_location=None` ghosts. Post-fix annotation: `calls` precision 100% (n=6), overall INFERRED precision 94% (n=16).
