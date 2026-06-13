@@ -5,6 +5,7 @@ import json
 import os
 import re
 import shlex
+from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 from pathlib import Path
 
@@ -1164,6 +1165,15 @@ def _md5_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def _stat_and_hash(path_str: str) -> tuple[str, float, str] | None:
+    """Stat + MD5 a single file; returns None on OSError (e.g. deleted mid-run)."""
+    try:
+        p = Path(path_str)
+        return path_str, p.stat().st_mtime, _md5_file(p)
+    except OSError:
+        return None
+
+
 def _to_relative_for_storage(key: str, root: Path) -> str:
     """Return ``key`` as a forward-slash relative path from ``root``.
 
@@ -1279,26 +1289,29 @@ def save_manifest(
         except OSError:
             continue
 
-    for file_list in files.values():
-        for f in file_list:
-            try:
-                p = Path(f)
-                mtime = p.stat().st_mtime
-                h = _md5_file(p)
-            except OSError:
-                continue  # file deleted between detect() and manifest write
-            prev = _normalise_entry(existing.get(f, {})) or {}
-            entry: dict = {"mtime": mtime}
-            if kind in ("ast", "both"):
-                entry["ast_hash"] = h
-            else:
-                entry["ast_hash"] = prev.get("ast_hash", "")
-            if kind in ("semantic", "both"):
-                entry["semantic_hash"] = h
-            else:
-                # Preserve semantic_hash only when content is unchanged
-                entry["semantic_hash"] = prev.get("semantic_hash", "") if h == prev.get("ast_hash", "") else ""
-            manifest[f] = entry
+    all_files = [f for file_list in files.values() for f in file_list]
+    with ThreadPoolExecutor() as pool:
+        raw = pool.map(_stat_and_hash, all_files)
+    hashed: dict[str, tuple[float, str]] = {
+        r[0]: (r[1], r[2]) for r in raw if r is not None
+    }
+
+    for f in all_files:
+        if f not in hashed:
+            continue  # file deleted between detect() and manifest write
+        mtime, h = hashed[f]
+        prev = _normalise_entry(existing.get(f, {})) or {}
+        entry: dict = {"mtime": mtime}
+        if kind in ("ast", "both"):
+            entry["ast_hash"] = h
+        else:
+            entry["ast_hash"] = prev.get("ast_hash", "")
+        if kind in ("semantic", "both"):
+            entry["semantic_hash"] = h
+        else:
+            # Preserve semantic_hash only when content is unchanged
+            entry["semantic_hash"] = prev.get("semantic_hash", "") if h == prev.get("ast_hash", "") else ""
+        manifest[f] = entry
     if root is not None:
         # Persist in portable form: forward-slash relative paths. Keys outside
         # ``root`` (out-of-tree symlinked corpora, --include sources) keep
