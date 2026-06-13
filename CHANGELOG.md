@@ -4,6 +4,9 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- CI: bandit (MEDIUM+ severity) and pip-audit security scans added as a non-blocking `security-scan` job. Both run with `continue-on-error: true` so they never break CI — advisory signal only, with the intent to remove the gate once pre-existing findings are triaged.
+- Docs: RFC for file-level node summaries added (`docs/node-summaries-rfc.md`). Proposes inline `graph.json` attribute vs sidecar storage options with pros/cons, phased implementation plan, and open questions for maintainer decision.
+
 - Fix: AST extraction no longer crashes on Windows machines with >61 logical cores. `ProcessPoolExecutor` on Windows is hard-capped at 61 workers via `WaitForMultipleObjects`; the clamp now applies to all three input paths (auto-compute, `GRAPHIFY_MAX_WORKERS`, `--max-workers`) (#1298).
 - Fix: ghost-merge skips ambiguous `(basename, label)` collisions where two AST nodes share the same key. When same-named symbols appear in same-named files across different directories (e.g. two `render()` in two `index.ts`), the previous last-writer-wins produced an arbitrary canonical node and mis-pointed all edges. Ambiguous keys are now tracked and skipped (#1257).
 - Fix: startup no longer crashes on unreadable `.graphify_version` files. On restricted-permission installs or network mounts, `.exists()` / `.read_text()` raised `PermissionError` and crashed every `graphify query/explain/path` call. All three FS probes now wrapped in `try/except OSError: return` (#1299).
