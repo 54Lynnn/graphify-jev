@@ -7421,9 +7421,14 @@ def _parse_js_tree(path: Path):
 
 
 def _walk_js_tree(node):
-    yield node
-    for child in node.children:
-        yield from _walk_js_tree(child)
+    # Iterative DFS avoids Python's O(depth) generator-chain overhead.
+    # Recursive yield-from creates one generator frame per level — at 26+
+    # levels deep each leaf's value had to propagate through 26 frames.
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        yield n
+        stack.extend(reversed(n.children))
 
 
 def _js_module_specifier(node, source: bytes) -> str | None:
