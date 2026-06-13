@@ -4,6 +4,9 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: `graphify query`, `graphify explain`, and MCP `query_graph`/`get_node` now show the human-readable community name (e.g. "FlashAttention Paper") instead of a blank or numeric ID after running `cluster-only`. `to_json` now accepts `community_labels` and embeds `community_name` on each node; read paths fall back to the numeric `community` field for backward compatibility with old graphs (#1305).
+- Fix: `graphify-mcp` and `python -m graphify.serve` now accept `--graph <path>` as an alias for the positional argument, consistent with every other graphify subcommand. Previously `--graph` raised "unrecognized arguments" (#1304).
+
 - CI: bandit (MEDIUM+ severity) and pip-audit security scans added as a non-blocking `security-scan` job. Both run with `continue-on-error: true` so they never break CI — advisory signal only, with the intent to remove the gate once pre-existing findings are triaged.
 - Docs: RFC for file-level node summaries added (`docs/node-summaries-rfc.md`). Proposes inline `graph.json` attribute vs sidecar storage options with pros/cons, phased implementation plan, and open questions for maintainer decision.
 
