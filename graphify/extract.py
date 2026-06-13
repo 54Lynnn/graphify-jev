@@ -11565,6 +11565,14 @@ def _extract_parallel(
         cpu_cap = env_cap if env_cap is not None else (os.cpu_count() or 4)
         max_workers = min(cpu_cap, len(uncached_work))
 
+    # Windows ProcessPoolExecutor hard-caps at 61 workers (CPython limitation
+    # tied to WaitForMultipleObjects). Clamp here so every path — auto-compute,
+    # GRAPHIFY_MAX_WORKERS, and --max-workers — stays valid on >61-core boxes
+    # (issue #1298). Guard against 0 from an empty work list.
+    if sys.platform == "win32":
+        max_workers = min(max_workers, 61)
+    max_workers = max(max_workers, 1)
+
     root_str = str(effective_root)
     work_items = [(idx, str(path), root_str) for idx, path in uncached_work]
 
