@@ -349,6 +349,7 @@ graphify query "what connects DigestAuth to Response?" --graph graphify-out/grap
 
 # expose the graph as an MCP server (for repeated tool-call access)
 python -m graphify.serve graphify-out/graph.json
+python -m graphify.serve --graph graphify-out/graph.json  # --graph flag also accepted
 
 # register with Kimi Code:
 kimi mcp add --transport stdio graphify -- python -m graphify.serve graphify-out/graph.json
