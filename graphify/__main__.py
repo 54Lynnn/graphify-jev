@@ -4425,7 +4425,11 @@ def main() -> None:
         if no_cluster:
             # --no-cluster: dump the raw merged extraction as graph.json.
             # No NetworkX, no community detection, no analysis sidecar.
+            # Dedupe parallel edges so counts match the clustered path (whose
+            # DiGraph collapses them) and stay deterministic across modes (#1317).
+            from graphify.build import dedupe_edges as _dedupe_edges
             from graphify.export import backup_if_protected as _backup
+            merged["edges"] = _dedupe_edges(merged["edges"])
             _backup(graphify_out)
             graph_json_path.write_text(
                 json.dumps(merged, indent=2), encoding="utf-8"

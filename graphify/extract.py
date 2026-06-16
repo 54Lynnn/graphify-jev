@@ -466,6 +466,12 @@ class LanguageConfig:
     # Extra walk hook called after generic dispatch (for JS arrow functions, C# namespaces, etc.)
     extra_walk_fn: Callable | None = None
 
+    # When True, synthesize a node for each `imports` edge target an import_handler
+    # emits (carrying an `_import_label` key). Languages whose imports name modules
+    # rather than resolvable files (e.g. Swift `import CoreKit`) need this, else the
+    # edge is pruned in build.py for pointing at a non-existent target node.
+    synthesize_import_module_nodes: bool = False
+
 
 # ── Generic helpers ───────────────────────────────────────────────────────────
 
@@ -2229,6 +2235,9 @@ def _import_swift(node, source: bytes, file_nid: str, stem: str, edges: list, st
                 "source_file": str_path,
                 "source_location": f"L{node.start_point[0] + 1}",
                 "weight": 1.0,
+                # Consumed by import-node synthesis at the walk() call site
+                # (LanguageConfig.synthesize_import_module_nodes); see #1327.
+                "_import_label": raw,
             })
             break
 
@@ -2267,6 +2276,7 @@ _SWIFT_CONFIG = LanguageConfig(
     body_fallback_child_types=("class_body", "protocol_body", "function_body", "enum_class_body"),
     function_boundary_types=frozenset({"function_declaration", "init_declaration", "deinit_declaration", "subscript_declaration"}),
     import_handler=_import_swift,
+    synthesize_import_module_nodes=True,
 )
 
 # ── Generic extractor ─────────────────────────────────────────────────────────
@@ -2372,7 +2382,25 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
         # Import types
         if t in config.import_types:
             if config.import_handler:
+                _imp_before = len(edges)
                 config.import_handler(node, source, file_nid, stem, edges, str_path)
+                if config.synthesize_import_module_nodes:
+                    # Imports that name a module (not a resolvable file) point at a
+                    # synthetic target node; create it so build.py keeps the edge (#1327).
+                    for _e in edges[_imp_before:]:
+                        _lbl = _e.pop("_import_label", None)
+                        if _lbl is None or _e.get("relation") != "imports":
+                            continue
+                        _tgt = _e["target"]
+                        if _tgt not in seen_ids:
+                            seen_ids.add(_tgt)
+                            nodes.append({
+                                "id": _tgt,
+                                "label": _lbl,
+                                "file_type": "code",
+                                "source_file": str_path,
+                                "source_location": _e.get("source_location", "L1"),
+                            })
             # For export_statement: only return (skip children) if it's a re-export
             # (has a `from` source). Otherwise fall through to walk children which may
             # contain function_declaration, class_declaration, etc.
@@ -11568,6 +11596,7 @@ _DISPATCH: dict[str, Any] = {
     ".toc": extract_lua,
     ".zig": extract_zig,
     ".ps1": extract_powershell,
+    ".psm1": extract_powershell,
     ".ex": extract_elixir,
     ".exs": extract_elixir,
     ".m": extract_objc,

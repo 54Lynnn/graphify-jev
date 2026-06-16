@@ -2,9 +2,35 @@ import json
 from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph
-from graphify.build import build_from_json, build, build_merge, edge_data, edge_datas
+from graphify.build import build_from_json, build, build_merge, edge_data, edge_datas, dedupe_edges
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def test_dedupe_edges_collapses_exact_parallels():
+    # #1317: --no-cluster / incremental update concatenate edge lists raw.
+    edges = [
+        {"source": "a", "target": "b", "relation": "calls", "source_location": "L1"},
+        {"source": "a", "target": "b", "relation": "calls", "source_location": "L9"},  # dup
+        {"source": "a", "target": "b", "relation": "imports"},  # different relation: kept
+        {"source": "b", "target": "c", "relation": "calls"},
+    ]
+    out = dedupe_edges(edges)
+    keys = [(e["source"], e["target"], e["relation"]) for e in out]
+    assert keys == [("a", "b", "calls"), ("a", "b", "imports"), ("b", "c", "calls")]
+    # first occurrence wins (keeps L1, not L9)
+    assert out[0]["source_location"] == "L1"
+
+
+def test_dedupe_edges_is_idempotent():
+    edges = [
+        {"source": "a", "target": "b", "relation": "calls"},
+        {"source": "a", "target": "b", "relation": "calls"},
+    ]
+    once = dedupe_edges(edges)
+    twice = dedupe_edges(once + edges)  # simulate a second `update` re-concatenating
+    assert len(once) == 1
+    assert len(twice) == 1
 
 def load_extraction():
     return json.loads((FIXTURES / "extraction.json").read_text())
