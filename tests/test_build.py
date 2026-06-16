@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 import networkx as nx
 from networkx.readwrite import json_graph
-from graphify.build import build_from_json, build, build_merge, edge_data, edge_datas, dedupe_edges
+from graphify.build import build_from_json, build, build_merge, edge_data, edge_datas, dedupe_edges, dedupe_nodes
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -31,6 +31,21 @@ def test_dedupe_edges_is_idempotent():
     twice = dedupe_edges(once + edges)  # simulate a second `update` re-concatenating
     assert len(once) == 1
     assert len(twice) == 1
+
+
+def test_dedupe_nodes_collapses_by_id_last_wins():
+    # #1327: a shared module anchor is emitted once per importing file; the
+    # --no-cluster raw writer must collapse same-id node dicts (#1317).
+    nodes = [
+        {"id": "foundation", "label": "Foundation", "type": "module", "source_file": "A.swift"},
+        {"id": "akit", "label": "AKit", "file_type": "code"},
+        {"id": "foundation", "label": "Foundation", "type": "module", "source_file": "B.swift"},
+    ]
+    out = dedupe_nodes(nodes)
+    ids = [n["id"] for n in out]
+    assert ids == ["foundation", "akit"]  # first-appearance order
+    # last writer wins on attributes
+    assert next(n for n in out if n["id"] == "foundation")["source_file"] == "B.swift"
 
 def load_extraction():
     return json.loads((FIXTURES / "extraction.json").read_text())

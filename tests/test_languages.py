@@ -610,6 +610,9 @@ def test_swift_imports_survive_build():
     node_ids = {n["id"] for n in r["nodes"]}
     for e in import_edges:
         assert e["target"] in node_ids  # synthesized module node exists
+    # Imported modules are tagged type=module (anchor nodes, #1327/#1330).
+    module_labels = {n["label"] for n in r["nodes"] if n.get("type") == "module"}
+    assert {"Foundation", "UIKit"} <= module_labels
     # No private bookkeeping key should leak into output edges.
     assert all("_import_label" not in e for e in r["edges"])
     # Edges must survive the build (which prunes edges with unknown endpoints).

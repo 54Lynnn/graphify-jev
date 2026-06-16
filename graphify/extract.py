@@ -466,12 +466,6 @@ class LanguageConfig:
     # Extra walk hook called after generic dispatch (for JS arrow functions, C# namespaces, etc.)
     extra_walk_fn: Callable | None = None
 
-    # When True, synthesize a node for each `imports` edge target an import_handler
-    # emits (carrying an `_import_label` key). Languages whose imports name modules
-    # rather than resolvable files (e.g. Swift `import CoreKit`) need this, else the
-    # edge is pruned in build.py for pointing at a non-existent target node.
-    synthesize_import_module_nodes: bool = False
-
 
 # ── Generic helpers ───────────────────────────────────────────────────────────
 
@@ -2221,7 +2215,16 @@ _LUA_CONFIG = LanguageConfig(
 )
 
 
-def _import_swift(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> None:
+def _import_swift(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str) -> list[tuple[str, str]]:
+    """Emit module-level ``imports`` edges and report the imported modules.
+
+    A Swift ``import CoreKit`` names a module, not a file path, so — unlike the
+    file-resolving JS/TS handlers — there is no existing node for the edge to
+    point at. The returned ``(id, label)`` pairs let the extractor materialize a
+    ``type=module`` anchor node so the edge survives; without it ``build_from_json``
+    prunes every Swift import edge as a dangling/external reference (#1327).
+    """
+    modules: list[tuple[str, str]] = []
     for child in node.children:
         if child.type == "identifier":
             raw = _read_text(child, source)
@@ -2235,11 +2238,10 @@ def _import_swift(node, source: bytes, file_nid: str, stem: str, edges: list, st
                 "source_file": str_path,
                 "source_location": f"L{node.start_point[0] + 1}",
                 "weight": 1.0,
-                # Consumed by import-node synthesis at the walk() call site
-                # (LanguageConfig.synthesize_import_module_nodes); see #1327.
-                "_import_label": raw,
             })
+            modules.append((tgt_nid, raw))
             break
+    return modules
 
 
 def _read_csharp_type_name(node, source: bytes) -> str | None:
@@ -2276,7 +2278,6 @@ _SWIFT_CONFIG = LanguageConfig(
     body_fallback_child_types=("class_body", "protocol_body", "function_body", "enum_class_body"),
     function_boundary_types=frozenset({"function_declaration", "init_declaration", "deinit_declaration", "subscript_declaration"}),
     import_handler=_import_swift,
-    synthesize_import_module_nodes=True,
 )
 
 # ── Generic extractor ─────────────────────────────────────────────────────────
@@ -2382,24 +2383,27 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
         # Import types
         if t in config.import_types:
             if config.import_handler:
-                _imp_before = len(edges)
-                config.import_handler(node, source, file_nid, stem, edges, str_path)
-                if config.synthesize_import_module_nodes:
-                    # Imports that name a module (not a resolvable file) point at a
-                    # synthetic target node; create it so build.py keeps the edge (#1327).
-                    for _e in edges[_imp_before:]:
-                        _lbl = _e.pop("_import_label", None)
-                        if _lbl is None or _e.get("relation") != "imports":
-                            continue
-                        _tgt = _e["target"]
-                        if _tgt not in seen_ids:
-                            seen_ids.add(_tgt)
+                imported_modules = config.import_handler(node, source, file_nid, stem, edges, str_path)
+                # Module-level import handlers (Swift) name a module, not a file
+                # path, so there is no pre-existing node to anchor the edge to.
+                # They return (id, label) pairs for which we materialize a
+                # `type=module` node; otherwise build_from_json prunes every such
+                # import edge as a dangling/external reference. The same module
+                # imported from N files shares one id (file_type=code keeps
+                # build.py validation happy; `type=module` exempts it from
+                # id-disambiguation) so it collapses to one shared node (#1327).
+                if imported_modules:
+                    line = node.start_point[0] + 1
+                    for mod_nid, mod_label in imported_modules:
+                        if mod_nid not in seen_ids:
+                            seen_ids.add(mod_nid)
                             nodes.append({
-                                "id": _tgt,
-                                "label": _lbl,
+                                "id": mod_nid,
+                                "label": mod_label,
                                 "file_type": "code",
+                                "type": "module",
                                 "source_file": str_path,
-                                "source_location": _e.get("source_location", "L1"),
+                                "source_location": f"L{line}",
                             })
             # For export_statement: only return (skip children) if it's a re-export
             # (has a `from` source). Otherwise fall through to walk children which may
@@ -7161,9 +7165,18 @@ def _disambiguate_colliding_node_ids(
     raw_calls: list[dict],
     root: Path,
 ) -> None:
-    """Rewrite only colliding node IDs, using source path as the disambiguator."""
+    """Rewrite only colliding node IDs, using source path as the disambiguator.
+
+    Module anchor nodes (#1327) are exempt: ``import CoreKit`` from three files
+    yields three ``type=module`` nodes with the same id but different
+    source_files. Those are the *same* module, not distinct same-named symbols,
+    so they must collapse to one shared node — disambiguating them by path would
+    scatter a single module across N file-qualified duplicates.
+    """
     by_id: dict[str, list[dict]] = {}
     for node in nodes:
+        if node.get("type") == "module":
+            continue
         nid = node.get("id")
         if isinstance(nid, str) and nid:
             by_id.setdefault(nid, []).append(node)

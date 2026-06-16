@@ -104,6 +104,25 @@ def edge_datas(G: nx.Graph, u: str, v: str) -> list[dict]:
     return [raw]
 
 
+def dedupe_nodes(nodes: list[dict]) -> list[dict]:
+    """Collapse nodes sharing an ``id``, last-writer-wins on attributes.
+
+    Mirrors what ``build_from_json``'s ``G.add_node`` does implicitly (idempotent;
+    a later node overwrites an earlier one's attributes). The ``--no-cluster``
+    write path dumps the raw node list without building a graph, so same-id nodes
+    — e.g. a Swift ``type=module`` anchor emitted once per importing file (#1327)
+    — would otherwise appear as duplicates. Insertion order follows each id's
+    first appearance; the retained dict is the last one seen.
+    """
+    by_id: dict = {}
+    for n in nodes:
+        nid = n.get("id")
+        if nid is None:
+            continue
+        by_id[nid] = n
+    return list(by_id.values())
+
+
 def dedupe_edges(edges: list[dict]) -> list[dict]:
     """Collapse exact parallel edges by ``(source, target, relation)``, keeping the
     first occurrence.

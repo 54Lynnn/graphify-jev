@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: Swift imports of the same module from multiple files now collapse to a single shared `type=module` node instead of N path-qualified duplicates. The import target is tagged `type=module` and exempted from id-disambiguation, so reverse traversal ("what imports CoreKit?") works; the `--no-cluster` writer also now dedupes nodes by id (and edges) to match the clustered `build_from_json` path. Builds on the v0.8.40 Swift-import fix (#1327, #1330; thanks @duncan-daydream).
+
 ## 0.8.40 (2026-06-16)
 
 - Feat: custom OpenAI- and Anthropic-compatible endpoints via `OPENAI_BASE_URL`/`OPENAI_MODEL` and `ANTHROPIC_BASE_URL`/`ANTHROPIC_MODEL`. Point either backend at a self-hosted or proxy server (vLLM, llama.cpp, LM Studio, LiteLLM, gateways); defaults still resolve to `api.openai.com` / `api.anthropic.com`, and `GRAPHIFY_OPENAI_MODEL` keeps precedence over `OPENAI_MODEL`. Wired through both the extraction path (`_call_claude`) and community labeling (#1273).
