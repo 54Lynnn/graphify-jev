@@ -4,6 +4,7 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: cross-file Java `implements`/`inherits`/`imports` edges no longer orphan onto bare "shadow" nodes when two packages define a same-named type. The referencing file's `import` statement now disambiguates by exact package (FQN) and re-points the edge to the real definition, dropping the orphan stub. Previously `_rewire_unique_stub_nodes` could only repair the globally-unique case, so same-named interfaces (common in large Java codebases — `Handler`, `Service`, interface+impl pairs) left the real definition isolated in its own community (#1318).
 - Fix: Swift imports of the same module from multiple files now collapse to a single shared `type=module` node instead of N path-qualified duplicates. The import target is tagged `type=module` and exempted from id-disambiguation, so reverse traversal ("what imports CoreKit?") works; the `--no-cluster` writer also now dedupes nodes by id (and edges) to match the clustered `build_from_json` path. Builds on the v0.8.40 Swift-import fix (#1327, #1330; thanks @duncan-daydream).
 
 ## 0.8.40 (2026-06-16)

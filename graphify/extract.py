@@ -8641,6 +8641,134 @@ def _resolve_cross_file_java_imports(
     return new_edges
 
 
+def _resolve_java_type_references(
+    per_file: list[dict],
+    paths: list[Path],
+    all_nodes: list[dict],
+    all_edges: list[dict],
+) -> None:
+    """Re-point dangling Java ``implements``/``inherits`` edges to the real
+    definition, using the referencing file's ``import`` statements (+ package)
+    for exact disambiguation.
+
+    Cross-file type references resolve by bare name and fall back to a no-source
+    "shadow" stub. ``_rewire_unique_stub_nodes`` repairs that only when the name
+    is globally unique; when two packages define a same-named type it bails, so
+    the ``implements`` edge stays stuck on the shadow node and the real interface
+    is wrongly isolated (#1318). An ``import com.a.handler.AIResponseHandler``
+    names the exact package, so it disambiguates where bare-name matching cannot.
+
+    Mutates ``all_nodes``/``all_edges`` in place. Runs after id-disambiguation so
+    target ids are final, and after ``_rewire_unique_stub_nodes`` so it only has
+    to handle the ambiguous remainder.
+    """
+    try:
+        import tree_sitter_java as tsjava
+        from tree_sitter import Language, Parser
+    except ImportError:
+        return
+
+    language = Language(tsjava.language())
+    parser = Parser(language)
+
+    # package + simple-name->FQN imports, keyed by the source_file string the
+    # file's own nodes use (so it matches edge/node source_file exactly).
+    pkg_by_file: dict[str, str] = {}
+    imports_by_file: dict[str, dict[str, str]] = {}
+    for path, result in zip(paths, per_file):
+        srcs = {n.get("source_file") for n in result.get("nodes", []) if n.get("source_file")}
+        if not srcs:
+            continue
+        try:
+            source = path.read_bytes()
+            tree = parser.parse(source)
+        except Exception:
+            continue
+        pkg = ""
+        imps: dict[str, str] = {}
+
+        def walk(n) -> None:
+            nonlocal pkg
+            if n.type == "package_declaration":
+                pkg = _read_text(n, source).strip()[len("package"):].strip().rstrip(";").strip()
+            elif n.type == "import_declaration":
+                body = _read_text(n, source).strip()[len("import"):].strip().rstrip(";").strip()
+                if body.startswith("static "):
+                    body = body[len("static "):].strip()
+                if body.endswith(".*") or "." not in body:
+                    return
+                simple = body.split(".")[-1]
+                if simple and simple[0].isupper():
+                    imps[simple] = body
+            for child in n.children:
+                walk(child)
+
+        walk(tree.root_node)
+        for s in srcs:
+            pkg_by_file[s] = pkg
+            imports_by_file[s] = imps
+
+    # FQN (package.Class) -> definition node id, for type-like defs with a source.
+    fqn_to_id: dict[str, str] = {}
+    for node in all_nodes:
+        label = node.get("label", "")
+        src = node.get("source_file", "")
+        nid = node.get("id", "")
+        if not (label and src and nid) or src not in pkg_by_file:
+            continue
+        if not label[:1].isupper() or label.endswith(")") or label.endswith(".java"):
+            continue
+        pkg = pkg_by_file[src]
+        fqn_to_id.setdefault(f"{pkg}.{label}" if pkg else label, nid)
+
+    # Bare shadow stubs: no source_file, type-like label.
+    stub_label: dict[str, str] = {
+        node["id"]: node.get("label", "")
+        for node in all_nodes
+        if node.get("id") and not node.get("source_file") and node.get("label", "")[:1].isupper()
+    }
+    if not stub_label:
+        return
+
+    # `imports` is included so the file-level import edge that also lands on the
+    # shadow stub gets re-pointed too, leaving the stub unreferenced (and dropped).
+    # External/stdlib imports never resolve (no internal def / same-package match),
+    # so their edges correctly stay on their stub.
+    REPOINT_RELATIONS = {"implements", "inherits", "extends", "imports"}
+    repointed_from: set[str] = set()
+    for edge in all_edges:
+        if edge.get("relation") not in REPOINT_RELATIONS:
+            continue
+        tgt = edge.get("target")
+        label = stub_label.get(tgt)
+        if not label:
+            continue
+        ref_file = edge.get("source_file", "")
+        resolved = None
+        fqn = imports_by_file.get(ref_file, {}).get(label)
+        if fqn:
+            resolved = fqn_to_id.get(fqn)
+        if resolved is None:  # same-package reference (no explicit import)
+            pkg = pkg_by_file.get(ref_file, "")
+            resolved = fqn_to_id.get(f"{pkg}.{label}" if pkg else label)
+        if resolved and resolved != tgt:
+            edge["target"] = resolved
+            repointed_from.add(tgt)
+
+    if not repointed_from:
+        return
+
+    # Drop shadow stubs that no edge references anymore.
+    still_referenced: set[str] = set()
+    for edge in all_edges:
+        still_referenced.add(edge.get("source"))
+        still_referenced.add(edge.get("target"))
+    all_nodes[:] = [
+        node for node in all_nodes
+        if node.get("id") not in repointed_from or node.get("id") in still_referenced
+    ]
+
+
 def extract_objc(path: Path) -> dict:
     """Extract interfaces, implementations, protocols, methods, and imports from .m/.mm/.h files."""
     try:
@@ -12034,6 +12162,13 @@ def extract(
         except Exception as exc:
             import logging
             logging.getLogger(__name__).warning("Java cross-file import resolution failed, skipping: %s", exc)
+        # Re-point dangling implements/inherits edges that bare-name resolution
+        # left on shadow stubs, using imports for exact-package disambiguation (#1318).
+        try:
+            _resolve_java_type_references(java_results, java_paths, all_nodes, all_edges)
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Java type-reference resolution failed, skipping: %s", exc)
 
     # Cross-file call resolution for all languages
     # Each extractor saved unresolved calls in raw_calls. Now that we have all
