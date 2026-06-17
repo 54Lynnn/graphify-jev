@@ -101,10 +101,14 @@ prune = list(dict.fromkeys(deleted + changed)) or None
 
 # Use build_merge() — reads graph.json directly without NetworkX round-trip
 # so edge direction (calls, implements, imports) is always preserved (#801).
+# Pass root= so prune_sources (absolute paths from detect_incremental) are
+# relativized to match the graph's relative source_file values; without it
+# nothing is pruned and stale nodes accumulate on every update (#1361).
 G = build_merge(
     [new_extraction],
     graph_path='graphify-out/graph.json',
     prune_sources=prune,
+    root='INPUT_PATH',
 )
 print(f'[graphify update] Merged: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges')
 
