@@ -108,6 +108,23 @@ def test_source_file_backslash_normalized():
     assert sources == {"src/middleware/auth.py"}
 
 
+def test_edge_missing_source_file_backfilled_from_node():
+    """#1279: a semantic/LLM edge lacking source_file must inherit it from its
+    source node rather than reach graph.json with no file reference."""
+    extraction = {
+        "nodes": [
+            {"id": "n1", "label": "A", "file_type": "concept", "source_file": "docs/a.md"},
+            {"id": "n2", "label": "B", "file_type": "concept", "source_file": "docs/b.md"},
+        ],
+        # No source_file on the edge (as LLM output sometimes omits it).
+        "edges": [{"source": "n1", "target": "n2", "relation": "relates_to", "confidence": "INFERRED"}],
+        "input_tokens": 0, "output_tokens": 0,
+    }
+    G = build_from_json(extraction)
+    sf = edge_data(G, "n1", "n2").get("source_file")
+    assert sf == "docs/a.md"  # backfilled from the source node
+
+
 def test_build_merges_multiple_extractions():
     ext1 = {"nodes": [{"id": "n1", "label": "A", "file_type": "code", "source_file": "a.py"}],
             "edges": [], "input_tokens": 0, "output_tokens": 0}
