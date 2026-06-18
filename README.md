@@ -471,7 +471,7 @@ GRAPHIFY_OLLAMA_NUM_CTX=8192 graphify extract ./docs --backend ollama --token-bu
 ```
 
 **`LLM returned invalid JSON` / `Unterminated string` warnings**
-The model's JSON response hit its output-token limit and was cut off mid-string. graphify auto-recovers (it splits the chunk and re-extracts the halves), so these warnings are noisy but not data loss. To reduce the churn, raise the output cap or shrink each chunk's output:
+The model's JSON response hit its output-token limit and was cut off mid-string. graphify auto-recovers (it splits the chunk and re-extracts the halves, and an oversized single document is first sliced at heading/paragraph boundaries so the whole file is still covered), so these warnings are noisy but not data loss. To reduce the churn, raise the output cap or shrink each chunk's output:
 ```bash
 GRAPHIFY_MAX_OUTPUT_TOKENS=16384 graphify extract . --mode deep   # lift the cap
 graphify extract . --mode deep --token-budget 4000                # smaller input chunks -> smaller output
