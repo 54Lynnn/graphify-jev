@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Security fix: `.graphifyignore` and `.gitignore` are now **merged** per directory instead of `.graphifyignore` silently replacing that directory's `.gitignore`. Previously, adding a `.graphifyignore` (e.g. to exclude media) disabled the dir's `.gitignore` entirely, so a file excluded only by `.gitignore` — including neutrally-named secrets like `prod-dump.sql` or `customer-data.json` that the sensitive-file heuristic doesn't catch — got indexed into the graph, whose artifacts embed file contents and are routinely committed. `.gitignore` is read first and `.graphifyignore` last, so `.graphifyignore` patterns (including `!` negations) still win on conflict; adding one can only ever exclude more, never re-include a `.gitignore`-excluded file. (#1363)
+
 ## 0.8.41 (2026-06-17)
 
 - Fix: OpenAI-compatible backends (`ollama`, `openai`, `deepseek`, `kimi`) now honour their configured `16384` output-token cap instead of silently falling back to `8192`. The dispatch read a `max_completion_tokens` config key that only `gemini` defines; the others set `max_tokens`, so their advertised cap was dead and deep-mode JSON truncated mid-string (recovered by the adaptive bisect, but noisy and slower). The dispatch now reads either key, and the `openai` config gained an explicit cap. `GRAPHIFY_MAX_OUTPUT_TOKENS` still overrides. (#1365)
