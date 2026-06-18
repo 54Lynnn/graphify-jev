@@ -4,6 +4,7 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: Java `record` declarations are now modeled as first-class type nodes (they share `class_declaration`'s name/body/interfaces fields), and `new Foo(...)` constructor calls now produce a `calls` edge to the constructed type. Previously a record appeared only as its file node (degree 0) with no incoming edges, and body-level `new` usages were dropped because `object_creation_expression` wasn't a recognized call type and its callee lives in the `type` field rather than `name`. (#1373)
 - Security fix: `.graphifyignore` and `.gitignore` are now **merged** per directory instead of `.graphifyignore` silently replacing that directory's `.gitignore`. Previously, adding a `.graphifyignore` (e.g. to exclude media) disabled the dir's `.gitignore` entirely, so a file excluded only by `.gitignore` — including neutrally-named secrets like `prod-dump.sql` or `customer-data.json` that the sensitive-file heuristic doesn't catch — got indexed into the graph, whose artifacts embed file contents and are routinely committed. `.gitignore` is read first and `.graphifyignore` last, so `.graphifyignore` patterns (including `!` negations) still win on conflict; adding one can only ever exclude more, never re-include a `.gitignore`-excluded file. (#1363)
 
 ## 0.8.41 (2026-06-17)
