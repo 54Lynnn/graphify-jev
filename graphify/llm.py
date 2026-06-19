@@ -1303,7 +1303,12 @@ def extract_files_direct(
     Returns dict with nodes, edges, hyperedges, input_tokens, output_tokens.
     Raises ValueError for unknown backends or when no API key is configured.
     Raises ImportError if SDK missing.
+
+    Accepts ``str`` paths as well as ``Path``; string entries are coerced up
+    front so downstream helpers (``_partition_semantic_files``, ``_read_files``,
+    ``_build_image_refs``) can rely on ``Path`` semantics (#1386).
     """
+    files = [Path(f) for f in files]
     if backend is None:
         backend = detect_backend()
         if backend is None:
@@ -1728,7 +1733,11 @@ def extract_corpus_parallel(
     Returns merged dict with nodes, edges, hyperedges, input_tokens,
     output_tokens. Failed chunks are logged to stderr and skipped — one bad
     chunk does not abort the run.
+
+    Accepts ``str`` paths as well as ``Path``; string entries are coerced up
+    front so packing/slicing helpers can rely on ``Path`` semantics (#1386).
     """
+    files = [Path(f) for f in files]
     # Split oversized splittable documents into slices that cover the whole file
     # before packing, so content past _FILE_CHAR_CAP is extracted instead of
     # silently dropped (#1369). Files at/under the cap pass through unchanged.
