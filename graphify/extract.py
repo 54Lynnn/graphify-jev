@@ -13,6 +13,7 @@ from typing import Any, Callable
 from .cache import load_cached, save_cached
 from .ids import make_id
 from .mcp_ingest import extract_mcp_config, is_mcp_config_path
+from .manifest_ingest import extract_package_manifest, is_package_manifest_path
 
 _RECURSION_LIMIT = 10_000
 
@@ -12379,6 +12380,11 @@ def _get_extractor(path: Path) -> Any | None:
     # (servers, commands, packages, env vars) instead of opaque JSON keys.
     if is_mcp_config_path(path):
         return extract_mcp_config
+    # Package manifests (apm.yml, pyproject.toml, go.mod, pom.xml) → a canonical
+    # package node + depends_on edges, by filename before generic suffix dispatch
+    # (#1377). apm.yml would otherwise be a .yml document handled by the LLM.
+    if is_package_manifest_path(path):
+        return extract_package_manifest
     return _DISPATCH.get(path.suffix)
 
 
@@ -12683,6 +12689,12 @@ def extract(
         for n in all_nodes:
             sf = n.get("source_file")
             if not sf:
+                continue
+            # Package nodes carry a canonical name-keyed id (pkg_<name>) that must
+            # stay identical across every manifest that references the package, so
+            # they are exempt from the file-stem prefix remap (#1377), like the
+            # type=module anchors (#1327).
+            if n.get("type") == "package":
                 continue
             try:
                 entry = prefix_remap.get(Path(sf).resolve())
