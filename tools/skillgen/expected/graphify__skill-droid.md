@@ -190,7 +190,15 @@ else:
 
 #### Part B - Semantic extraction (parallel subagents)
 
-**Fast path:** If detection found zero docs, papers, and images (code-only corpus), skip Part B entirely and go straight to Part C. AST handles code - there is nothing for semantic subagents to do.
+**Fast path:** If detection found zero docs, papers, and images (code-only corpus), skip Part B entirely and go straight to Part C. AST handles code - there is nothing for semantic subagents to do. **First write an empty semantic file** so Part C's merge has its input (it reads `.graphify_semantic.json` unconditionally; without this a code-only run hits `FileNotFoundError`):
+
+```bash
+$(cat graphify-out/.graphify_python) -c "
+import json
+from pathlib import Path
+Path('graphify-out/.graphify_semantic.json').write_text(json.dumps({'nodes':[],'edges':[],'hyperedges':[],'input_tokens':0,'output_tokens':0}), encoding='utf-8')
+"
+```
 
 **MANDATORY: You MUST use the Agent tool here. Reading files yourself one-by-one is forbidden - it is 5-10x slower. If you do not use the Agent tool you are doing this wrong.**
 
@@ -243,7 +251,7 @@ Each subagent writes its result to its own `graphify-out/.graphify_chunk_NN.json
 
 CHUNK_PATH must be an **absolute** path — derive it before dispatching:
 ```bash
-PROJECT_ROOT=$(cat graphify-out/.graphify_root)
+PROJECT_ROOT=$(pwd)  # cwd — where Part C globs graphify-out/ (NOT .graphify_root/scan dir, #1392)
 # Then for chunk N: CHUNK_PATH="${PROJECT_ROOT}/graphify-out/.graphify_chunk_0N.json"
 ```
 
@@ -385,6 +393,12 @@ detection  = json.loads(Path('graphify-out/.graphify_detect.json').read_text(enc
 # root= mirrors the --update runbook (#1361): relativize source_file to the same
 # base so the full build and incremental --update never drift apart on re-extract.
 G = build_from_json(extraction, root='INPUT_PATH')
+# Guard BEFORE any write: an empty extraction must not clobber a good graph.json /
+# GRAPH_REPORT.md / analysis sidecar. Check immediately after build (#1392).
+if G.number_of_nodes() == 0:
+    print('ERROR: Graph is empty - extraction produced no nodes.')
+    print('Possible causes: all files were skipped, binary-only corpus, or extraction failed.')
+    raise SystemExit(1)
 communities = cluster(G)
 cohesion = score_all(G, communities)
 tokens = {'input': extraction.get('input_tokens', 0), 'output': extraction.get('output_tokens', 0)}
@@ -394,10 +408,17 @@ labels = {cid: 'Community ' + str(cid) for cid in communities}
 # Placeholder questions - regenerated with real labels in Step 5
 questions = suggest_questions(G, communities, labels)
 
+# Export FIRST and honor the #479 shrink-guard: to_json returns False (writing
+# nothing) when the new graph is smaller than the existing graph.json. Only write
+# GRAPH_REPORT.md + the analysis sidecar when the graph was actually written, so
+# they never describe a graph that graph.json doesn't contain (#1392).
+wrote = to_json(G, communities, 'graphify-out/graph.json')
+if not wrote:
+    print('ERROR: refused to shrink graphify-out/graph.json (existing graph has more nodes; #479).')
+    print('If this shrink is intentional (you deleted files), re-run a full build with --force.')
+    raise SystemExit(1)
 report = generate(G, communities, cohesion, labels, gods, surprises, detection, tokens, '.', suggested_questions=questions)
 Path('graphify-out/GRAPH_REPORT.md').write_text(report, encoding=\"utf-8\")
-to_json(G, communities, 'graphify-out/graph.json')
-
 analysis = {
     'communities': {str(k): v for k, v in communities.items()},
     'cohesion': {str(k): v for k, v in cohesion.items()},
@@ -406,10 +427,6 @@ analysis = {
     'questions': questions,
 }
 Path('graphify-out/.graphify_analysis.json').write_text(json.dumps(analysis, indent=2, ensure_ascii=False), encoding=\"utf-8\")
-if G.number_of_nodes() == 0:
-    print('ERROR: Graph is empty - extraction produced no nodes.')
-    print('Possible causes: all files were skipped, binary-only corpus, or extraction failed.')
-    raise SystemExit(1)
 print(f'Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges, {len(communities)} communities')
 "
 ```

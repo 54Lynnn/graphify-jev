@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: generated Claude/agent skill — crash & data-loss bugs in the runbooks (#1392). (1) Semantic chunk files were written under the **scanned dir** (`.graphify_root`) but the merge globs **cwd** `graphify-out/`, so a non-cwd scan produced "no nodes"; chunk paths are now derived from cwd. (2) Code-only corpora skipped Part B but Part C reads `.graphify_semantic.json` unconditionally → `FileNotFoundError`; the fast path now writes an empty semantic file first. (3) `--cluster-only` told the agent to re-run Steps 5–9, which read intermediate files a prior cleanup deleted → `FileNotFoundError`; it now relies on the self-contained `graphify cluster-only` CLI. (4) Step 4's zero-node guard ran *after* `GRAPH_REPORT.md`/`graph.json`/analysis were written, and `GRAPH_REPORT.md` was written before `to_json`'s #479 shrink-guard; the guard now runs before any write and the report/analysis are written only when `to_json` actually persisted the graph.
+
 ## 0.8.43 (2026-06-19)
 
 - Feat: package manifests are now parsed deterministically into a dependency graph. `apm.yml`, `pyproject.toml`, `go.mod`, and `pom.xml` each yield ONE canonical package node per package (keyed by name) plus `depends_on` edges, routed to the AST path so the LLM never sees them. Previously `apm.yml` was an LLM-handled document, so the same package got a different file-anchored id from its own manifest than from each dependent's dependency reference and split into duplicate nodes; a package referenced from N manifests is now a single hub node (#1377).
