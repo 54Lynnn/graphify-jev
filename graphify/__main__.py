@@ -19,7 +19,9 @@ except Exception:
 
 # Output directory — override with GRAPHIFY_OUT env var for worktrees or shared-output setups.
 # Accepts a relative name ("graphify-out-feature") or an absolute path ("/shared/graphify-out").
-_GRAPHIFY_OUT = os.environ.get("GRAPHIFY_OUT", "graphify-out")
+# Defined once in graphify.paths so the security/callflow path guards honour the
+# same override (#1423).
+from graphify.paths import GRAPHIFY_OUT as _GRAPHIFY_OUT
 
 
 @functools.lru_cache(maxsize=None)

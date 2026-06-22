@@ -331,6 +331,12 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
         G.add_edge(src, tgt, **attrs)
     hyperedges = extraction.get("hyperedges", [])
     if hyperedges:
+        # Relativize hyperedge source_file the same way nodes and edges are
+        # (above), so to_json — which has no root and writes G.graph["hyperedges"]
+        # verbatim — never leaks an absolute path from a semantic subagent (#1418).
+        for he in hyperedges:
+            if isinstance(he, dict) and he.get("source_file"):
+                he["source_file"] = _norm_source_file(he["source_file"], _root)
         G.graph["hyperedges"] = hyperedges
     return G
 
