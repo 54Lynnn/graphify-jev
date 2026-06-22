@@ -100,6 +100,29 @@ def test_extract_disambiguates_duplicate_symbol_ids_by_source_path(tmp_path):
             assert edge["target"] in node_ids, f"Dangling structural target: {edge}"
 
 
+def test_cross_file_type_annotation_refs_resolve_to_single_node(tmp_path):
+    """#1402: a class defined once but referenced via type annotations in N other
+    files must NOT create 1+N phantom duplicate nodes (with the referencing file's
+    path — extension and all — baked into the id, e.g. ``pkg_a_py_thing``). The
+    annotation references resolve to the single canonical definition.
+
+    Contrast with test_extract_disambiguates_...: genuinely *defined* duplicates
+    stay separate; only cross-file *references* collapse onto the real node."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "thing.py").write_text("class Thing:\n    def run(self):\n        return 1\n", encoding="utf-8")
+    (pkg / "a.py").write_text("from pkg.thing import Thing\ndef use_a(obj: Thing) -> Thing:\n    return obj\n", encoding="utf-8")
+    (pkg / "b.py").write_text("from pkg.thing import Thing\ndef use_b(obj: Thing) -> Thing:\n    return obj\n", encoding="utf-8")
+
+    result = extract([pkg / "thing.py", pkg / "a.py", pkg / "b.py"], cache_root=tmp_path)
+
+    thing_nodes = [n for n in result["nodes"] if n["label"] == "Thing"]
+    assert len(thing_nodes) == 1, [n["id"] for n in thing_nodes]
+    # The tell-tale phantom signature is the referencing file's path (with .py
+    # extension) baked into the id — must not appear.
+    assert "_py" not in thing_nodes[0]["id"], thing_nodes[0]["id"]
+
+
 def test_extract_updates_raw_call_callers_after_duplicate_id_disambiguation(tmp_path):
     first = tmp_path / "apps/api/Program.cs"
     second = tmp_path / "tools/api/Program.cs"

@@ -4,6 +4,7 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: cross-file type-annotation references no longer create phantom duplicate nodes. A class defined once but referenced via type annotations in N other files (`def f(x: Thing) -> Thing`) produced 1+N nodes — the extra ones with the referencing file's path baked into the id (`pkg_a_py_thing`). `ensure_named_node` minted a *sourced* stub for these cross-file refs, which `_disambiguate_colliding_node_ids` then collided into per-file ids and `_rewire_unique_stub_nodes` refused to collapse. The fallback now emits a *sourceless* stub (like the inheritance-base path), so the references resolve to the single canonical definition. Fixed uniformly across all six language extractors that share the helper (#1402).
 - Feat: CUDA (`.cu`/`.cuh`) source files are now extracted. CUDA is a C++ superset, so these files route through the existing C++ (`tree-sitter-cpp`) extractor — no new grammar dependency. `__global__`/`__device__` kernels, host functions, structs and `#include`s are captured, host call edges are inferred, and `<<<grid, block>>>` kernel-launch syntax parses without error. Detection and file-watching follow automatically since both derive their extension sets from the dispatch table / `CODE_EXTENSIONS` (#1411).
 
 ## 0.8.45 (2026-06-22)
