@@ -152,6 +152,15 @@ def _platform_skill_destination(platform_name: str, *, project: bool = False, pr
             return (project_dir or Path(".")) / ".opencode" / "skills" / "graphify" / "SKILL.md"
         return Path.home() / ".config" / "opencode" / "skills" / "graphify" / "SKILL.md"
 
+    if platform_name == "hermes":
+        if project:
+            return (project_dir or Path(".")) / ".hermes" / "skills" / "graphify" / "SKILL.md"
+        # On Windows, Hermes scans %LOCALAPPDATA%\hermes\skills, not ~/.hermes (#1403).
+        if platform.system() == "Windows":
+            local_appdata = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+            return local_appdata / "hermes" / "skills" / "graphify" / "SKILL.md"
+        return Path.home() / ".hermes" / "skills" / "graphify" / "SKILL.md"
+
     if platform_name == "devin":
         if project:
             return (project_dir or Path(".")) / ".devin" / "skills" / "graphify" / "SKILL.md"

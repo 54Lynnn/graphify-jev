@@ -992,3 +992,21 @@ def test_uninstall_all_removes_amp_user_skill(tmp_path, monkeypatch):
         main()
 
     assert not skill.exists()
+
+
+def test_hermes_skill_destination_windows_uses_localappdata():
+    """#1403: on Windows, Hermes scans %LOCALAPPDATA%\\hermes\\skills, so the global
+    skill must land there — not ~/.hermes/skills (the POSIX path)."""
+    from graphify.__main__ import _platform_skill_destination
+    with patch("graphify.__main__.platform.system", return_value="Windows"), \
+         patch.dict(os.environ, {"LOCALAPPDATA": str(Path("/tmp/AppDataLocal"))}):
+        dst = _platform_skill_destination("hermes", project=False)
+    assert dst == Path("/tmp/AppDataLocal") / "hermes" / "skills" / "graphify" / "SKILL.md", dst
+
+
+def test_hermes_skill_destination_posix_uses_home():
+    """Non-Windows hermes destination is unchanged (~/.hermes/skills)."""
+    from graphify.__main__ import _platform_skill_destination
+    with patch("graphify.__main__.platform.system", return_value="Linux"):
+        dst = _platform_skill_destination("hermes", project=False)
+    assert str(dst).endswith(".hermes/skills/graphify/SKILL.md"), dst
