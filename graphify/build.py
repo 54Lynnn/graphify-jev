@@ -29,6 +29,7 @@ import unicodedata
 from pathlib import Path
 import networkx as nx
 from .ids import normalize_id as _normalize_id
+from .paths import default_graph_json as _default_graph_json
 from .validate import validate_extraction
 
 
@@ -435,7 +436,7 @@ def deduplicate_by_label(nodes: list[dict], edges: list[dict]) -> tuple[list[dic
 
 def build_merge(
     new_chunks: list[dict],
-    graph_path: str | Path = "graphify-out/graph.json",
+    graph_path: str | Path | None = None,
     prune_sources: list[str] | None = None,
     *,
     directed: bool = False,
@@ -452,7 +453,7 @@ def build_merge(
     Safe to call repeatedly.
     root: if given, absolute source_file paths in new_chunks are made relative (#932).
     """
-    graph_path = Path(graph_path)
+    graph_path = Path(graph_path if graph_path is not None else _default_graph_json())
     if graph_path.exists():
         # Read JSON directly instead of going through node_link_graph().
         # The latter rebuilds an undirected nx.Graph and then enumerating

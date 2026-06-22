@@ -1884,12 +1884,12 @@ def uninstall_all(project_dir: Path | None = None, purge: bool = False) -> None:
 
     if purge:
         import shutil as _shutil
-        out = pd / "graphify-out"
+        out = pd / _GRAPHIFY_OUT
         if out.exists():
             _shutil.rmtree(out)
-            print(f"\n  graphify-out/  ->  deleted (--purge)")
+            print(f"\n  {_GRAPHIFY_OUT}/  ->  deleted (--purge)")
         else:
-            print("\n  graphify-out/  ->  not found (nothing to purge)")
+            print(f"\n  {_GRAPHIFY_OUT}/  ->  not found (nothing to purge)")
 
     print("\nDone. Run 'pip uninstall graphifyy' to remove the package itself.")
 
@@ -2763,7 +2763,7 @@ def main() -> None:
             sys.exit(1)
         from graphify.affected import DEFAULT_AFFECTED_RELATIONS, format_affected, load_graph
         query = sys.argv[2]
-        graph_path = "graphify-out/graph.json"
+        graph_path = _default_graph_path()
         depth = 2
         relations: list[str] = []
         args = sys.argv[3:]
@@ -2826,7 +2826,7 @@ def main() -> None:
         p.add_argument("--answer", required=True)
         p.add_argument("--type", dest="query_type", default="query")
         p.add_argument("--nodes", nargs="*", default=[])
-        p.add_argument("--memory-dir", default="graphify-out/memory")
+        p.add_argument("--memory-dir", default=str(Path(_GRAPHIFY_OUT) / "memory"))
         opts = p.parse_args(sys.argv[2:])
         from graphify.ingest import save_query_result as _sqr
 
@@ -3190,7 +3190,7 @@ def main() -> None:
                 i_arg += 1
         if watch_path is None:
             watch_path = Path(".")
-        graph_json = graph_override if graph_override is not None else watch_path / "graphify-out" / "graph.json"
+        graph_json = graph_override if graph_override is not None else watch_path / _GRAPHIFY_OUT / "graph.json"
         if not graph_json.exists():
             print(
                 f"error: no graph found at {graph_json} — run /graphify first",
@@ -3249,7 +3249,7 @@ def main() -> None:
         cohesion = score_all(G, communities)
         gods = god_nodes(G)
         surprises = surprising_connections(G, communities)
-        out = watch_path / "graphify-out"
+        out = watch_path / _GRAPHIFY_OUT
         out.mkdir(parents=True, exist_ok=True)
         labels_path = out / ".graphify_labels.json"
         if labels_path.exists() and not force_relabel:
@@ -3882,7 +3882,7 @@ def main() -> None:
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark
 
-        graph_path = sys.argv[2] if len(sys.argv) > 2 else "graphify-out/graph.json"
+        graph_path = sys.argv[2] if len(sys.argv) > 2 else _default_graph_path()
         _enforce_graph_size_cap_or_exit(Path(graph_path))
         # Try to load corpus_words from detect output
         corpus_words = None
@@ -4117,7 +4117,7 @@ def main() -> None:
         # so a fresh checkout writes graphify-out/ at the project root, matching
         # the skill.md pipeline.
         out_root = (out_dir.resolve() if out_dir else target)
-        graphify_out = out_root / "graphify-out"
+        graphify_out = out_root / _GRAPHIFY_OUT
         graphify_out.mkdir(parents=True, exist_ok=True)
 
         from graphify.detect import (
@@ -4638,7 +4638,7 @@ def main() -> None:
                 i += 1
         files = [f for f in files_from.read_text(encoding="utf-8").splitlines() if f.strip()]
         cached_nodes, cached_edges, cached_hyperedges, uncached = check_semantic_cache(files, root)
-        out = root / "graphify-out"
+        out = root / _GRAPHIFY_OUT
         out.mkdir(parents=True, exist_ok=True)
         if cached_nodes or cached_edges or cached_hyperedges:
             (out / ".graphify_cached.json").write_text(

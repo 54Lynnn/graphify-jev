@@ -9,6 +9,7 @@ import networkx as nx
 from networkx.readwrite import json_graph
 from graphify.security import sanitize_label, check_graph_file_size_cap
 from graphify.build import edge_data
+from graphify.paths import default_graph_json as _default_graph_json
 
 try:
     import jieba as _jieba  # type: ignore[import-untyped]
@@ -1038,8 +1039,9 @@ def _build_server(graph_path: str):
     return server
 
 
-def serve(graph_path: str = "graphify-out/graph.json") -> None:
+def serve(graph_path: str | None = None) -> None:
     """Start the MCP server over stdio (the default, per-developer transport)."""
+    graph_path = graph_path or _default_graph_json()
     try:
         from mcp.server.stdio import stdio_server
     except ImportError as e:
@@ -1196,7 +1198,7 @@ def _build_http_app(
 
 
 def serve_http(
-    graph_path: str = "graphify-out/graph.json",
+    graph_path: str | None = None,
     *,
     host: str = "127.0.0.1",
     port: int = 8080,
@@ -1217,6 +1219,7 @@ def serve_http(
     deliberate follow-up. Binding ``0.0.0.0`` exposes the server beyond
     localhost — set an api_key when you do.
     """
+    graph_path = graph_path or _default_graph_json()
     try:
         import uvicorn
     except ImportError as e:
@@ -1304,7 +1307,7 @@ def _main(argv: list[str] | None = None) -> None:
         help="Reap stateful sessions idle this many seconds (default: 3600; 0 disables)",
     )
     args = parser.parse_args(argv)
-    graph_path = args.graph_flag or args.graph_path or "graphify-out/graph.json"
+    graph_path = args.graph_flag or args.graph_path or _default_graph_json()
 
     if args.transport == "http":
         serve_http(
