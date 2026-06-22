@@ -25,6 +25,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import networkx as nx
 
 from graphify.paths import default_graph_json as _default_graph_json
 
