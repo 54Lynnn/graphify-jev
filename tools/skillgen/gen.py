@@ -798,6 +798,21 @@ def _is_zero_node_guard_fix_line(line: str) -> bool:
     )
 
 
+def _is_manifest_root_fix_line(line: str) -> bool:
+    """Whether a line is part of the manifest-portability fix (#1417).
+
+    The monolith Step 9 called ``save_manifest(detect['files'])`` with no
+    ``root=``, so the manifest stored absolute path keys and a clone or move
+    broke ``--update`` — every cached file missed and the whole corpus
+    re-extracted. The call now threads ``root='INPUT_PATH'`` so keys are
+    relativized to the scan root, matching the native ``graphify update`` path.
+    Both the old bare call (removed) and the new rooted call (added) match here;
+    the ``import`` guard avoids matching the ``from graphify.detect import
+    save_manifest`` line.
+    """
+    return "save_manifest(" in line and "import" not in line
+
+
 # Every line that may differ between a rendered monolith and its pristine v8
 # baseline. Each predicate documents one sanctioned change-class; a blank line is
 # allowed because the multi-line fix blocks insert spacing. Anything else failing
@@ -810,6 +825,7 @@ _SANCTIONED_MONOLITH_DIFFS = (
     _is_content_scope_fix_line,
     _is_cache_unlink_fix_line,
     _is_zero_node_guard_fix_line,
+    _is_manifest_root_fix_line,
 )
 
 

@@ -503,6 +503,32 @@ def test_monoliths_carry_the_1392_runbook_fixes():
         assert "if not wrote:" in body
 
 
+def test_generated_runbooks_pass_root_to_save_manifest():
+    """#1417: every save_manifest call in a shipped runbook threads root=.
+
+    Without root=, save_manifest stores absolute path keys, so a clone or move
+    breaks --update (every cached file misses and the whole corpus re-extracts).
+    The full-build (skill.md / monoliths) and the --update reference all relativize
+    the manifest to the scan root via root='INPUT_PATH'. This guards the actual
+    shipped artifacts; --check keeps them in sync with the fragments.
+    """
+    targets = [
+        REPO_ROOT / "graphify" / "skill.md",
+        REPO_ROOT / "graphify" / "skill-aider.md",
+        REPO_ROOT / "graphify" / "skill-devin.md",
+    ]
+    targets += sorted((REPO_ROOT / "graphify" / "skills").glob("*/references/update.md"))
+    checked = 0
+    for path in targets:
+        for ln in path.read_text(encoding="utf-8").splitlines():
+            if "save_manifest(" in ln and "import" not in ln:
+                checked += 1
+                assert "root=" in ln, (
+                    f"{path.relative_to(REPO_ROOT)}: save_manifest without root= (#1417): {ln.strip()!r}"
+                )
+    assert checked >= 4, f"expected save_manifest calls across the runbooks, found {checked}"
+
+
 def test_devin_keeps_its_multi_field_frontmatter():
     """devin renders inline, so its 4+-field frontmatter is preserved verbatim."""
     platforms = gen.load_platforms()
