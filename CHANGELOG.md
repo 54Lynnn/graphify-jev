@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: the work-memory loop no longer depends on the git hook. The skill now tells the agent to run `graphify reflect` itself at the start of graph work (it is cheap, deterministic, and a no-op when no outcomes have been saved), then read `LESSONS.md`. Previously a skill-only install (without `graphify hook install`) would keep recording outcomes via `save-result` but never regenerate `LESSONS.md`, so the lessons never surfaced. The post-commit hook is now an optimization for between-session freshness rather than a requirement.
+
 ## 0.8.47 (2026-06-24)
 
 - Feat: the work-memory loop is now zero-config for agents (#1441). The skill's query reference instructs the agent to read `graphify-out/reflections/LESSONS.md` at the start of graph work (start from preferred sources, skip known dead ends) and to record an `--outcome useful|dead_end|corrected` on `save-result`; the git post-commit/post-checkout hooks now auto-run `reflect` after each rebuild — best-effort and only when saved outcomes exist — so `LESSONS.md` stays current without a manual `graphify reflect`.
