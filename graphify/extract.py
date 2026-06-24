@@ -11,7 +11,6 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .cache import load_cached, save_cached
-from .ids import make_id
 from .mcp_ingest import extract_mcp_config, is_mcp_config_path
 from .manifest_ingest import extract_package_manifest, is_package_manifest_path
 
