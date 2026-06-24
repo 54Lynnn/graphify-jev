@@ -22,6 +22,7 @@ import pytest
 from graphify.ingest import save_query_result
 from graphify.reflect import (
     aggregate_lessons,
+    lessons_fresh,
     load_memory_docs,
     parse_memory_doc,
     reflect,
@@ -564,3 +565,69 @@ def _make_graph(tmp_path: Path) -> Path:
         json.dumps({str(cid): f"Community {cid}" for cid in communities})
     )
     return out
+
+
+# --- lessons_fresh / `reflect --if-stale` -------------------------------------
+
+def test_lessons_fresh_missing_output_is_not_fresh(tmp_path):
+    mem = tmp_path / "memory"; mem.mkdir()
+    (mem / "q.md").write_text("x", encoding="utf-8")
+    assert lessons_fresh(tmp_path / "LESSONS.md", mem) is False  # must build
+
+
+def test_lessons_fresh_true_when_output_newer_than_inputs(tmp_path):
+    import os
+    mem = tmp_path / "memory"; mem.mkdir()
+    doc = mem / "q.md"; doc.write_text("x", encoding="utf-8")
+    out = tmp_path / "LESSONS.md"; out.write_text("y", encoding="utf-8")
+    os.utime(doc, (1000, 1000))
+    os.utime(out, (2000, 2000))
+    assert lessons_fresh(out, mem) is True
+
+
+def test_lessons_fresh_false_when_memory_newer(tmp_path):
+    import os
+    mem = tmp_path / "memory"; mem.mkdir()
+    doc = mem / "q.md"; doc.write_text("x", encoding="utf-8")
+    out = tmp_path / "LESSONS.md"; out.write_text("y", encoding="utf-8")
+    os.utime(out, (1000, 1000))
+    os.utime(doc, (2000, 2000))  # a new outcome was saved after the last reflect
+    assert lessons_fresh(out, mem) is False
+
+
+def test_lessons_fresh_false_when_graph_newer(tmp_path):
+    import os
+    mem = tmp_path / "memory"; mem.mkdir()
+    (mem / "q.md").write_text("x", encoding="utf-8")
+    out = tmp_path / "LESSONS.md"; out.write_text("y", encoding="utf-8")
+    graph = tmp_path / "graph.json"; graph.write_text("{}", encoding="utf-8")
+    os.utime(mem / "q.md", (1000, 1000))
+    os.utime(out, (1500, 1500))
+    os.utime(graph, (2000, 2000))  # graph rebuilt since last reflect -> stale
+    assert lessons_fresh(out, mem, graph) is False
+
+
+def test_cli_reflect_if_stale_skips_when_fresh(tmp_path):
+    """`reflect --if-stale` skips the rebuild when LESSONS.md is already current,
+    and still runs when a new outcome arrives."""
+    out = _make_graph(tmp_path)
+    real = json.loads((out / "graph.json").read_text())["nodes"][0]["label"]
+    _run(["save-result", "--question", "q", "--answer", "a",
+          "--nodes", real, "--outcome", "useful"], tmp_path)
+    first = _run(["reflect"], tmp_path)
+    assert first.returncode == 0
+    lessons = out / "reflections" / "LESSONS.md"
+    body_before = lessons.read_text(encoding="utf-8")
+
+    # Second call with --if-stale: nothing changed -> skipped, file untouched.
+    skipped = _run(["reflect", "--if-stale"], tmp_path)
+    assert skipped.returncode == 0
+    assert "up to date" in (skipped.stdout + skipped.stderr).lower()
+    assert lessons.read_text(encoding="utf-8") == body_before
+
+    # A new outcome makes it stale -> --if-stale runs again.
+    _run(["save-result", "--question", "q2", "--answer", "a",
+          "--nodes", real, "--outcome", "useful"], tmp_path)
+    ran = _run(["reflect", "--if-stale"], tmp_path)
+    assert ran.returncode == 0
+    assert "up to date" not in (ran.stdout + ran.stderr).lower()

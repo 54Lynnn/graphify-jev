@@ -2957,8 +2957,11 @@ def main() -> None:
                        help="signal weight halves every N days (default 30)")
         p.add_argument("--min-corroboration", type=int, default=2,
                        help="distinct useful results to promote a node to preferred (default 2)")
+        p.add_argument("--if-stale", action="store_true",
+                       help="skip when LESSONS.md is already newer than every input "
+                            "(e.g. the git hook just refreshed it)")
         opts = p.parse_args(sys.argv[2:])
-        from graphify.reflect import reflect as _reflect
+        from graphify.reflect import reflect as _reflect, lessons_fresh as _lessons_fresh
 
         graph_arg = opts.graph
         if graph_arg is None:
@@ -2966,21 +2969,25 @@ def main() -> None:
             if default_graph.exists():
                 graph_arg = str(default_graph)
 
-        out_path, agg = _reflect(
-            memory_dir=Path(opts.memory_dir),
-            out_path=Path(opts.out),
-            graph_path=Path(graph_arg) if graph_arg else None,
-            analysis_path=Path(opts.analysis) if opts.analysis else None,
-            labels_path=Path(opts.labels) if opts.labels else None,
-            half_life_days=opts.half_life_days,
-            min_corroboration=opts.min_corroboration,
-        )
-        c = agg["counts"]
-        print(
-            f"Reflected {agg['total']} memories "
-            f"({c['useful']} useful, {c['dead_end']} dead ends, "
-            f"{c['corrected']} corrected) -> {out_path}"
-        )
+        _gp = Path(graph_arg) if graph_arg else None
+        if opts.if_stale and _lessons_fresh(Path(opts.out), Path(opts.memory_dir), _gp):
+            print(f"Lessons already up to date -> {opts.out} (skipped; omit --if-stale to force)")
+        else:
+            out_path, agg = _reflect(
+                memory_dir=Path(opts.memory_dir),
+                out_path=Path(opts.out),
+                graph_path=_gp,
+                analysis_path=Path(opts.analysis) if opts.analysis else None,
+                labels_path=Path(opts.labels) if opts.labels else None,
+                half_life_days=opts.half_life_days,
+                min_corroboration=opts.min_corroboration,
+            )
+            c = agg["counts"]
+            print(
+                f"Reflected {agg['total']} memories "
+                f"({c['useful']} useful, {c['dead_end']} dead ends, "
+                f"{c['corrected']} corrected) -> {out_path}"
+            )
     elif cmd == "path":
         if len(sys.argv) < 4:
             print(

@@ -485,6 +485,39 @@ def render_lessons_md(agg: dict[str, Any]) -> str:
 # --- orchestrator --------------------------------------------------------------
 
 
+def lessons_fresh(out_path: Path, memory_dir: Path,
+                  graph_path: Path | None = None) -> bool:
+    """True if ``out_path`` exists and is at least as new as every input that
+    feeds it (the memory docs, and the graph when one is used).
+
+    Lets ``graphify reflect --if-stale`` skip a redundant run — e.g. when the git
+    post-commit hook just regenerated ``LESSONS.md`` and an agent then runs reflect
+    again at the start of a session. A missing output is never fresh (it must be
+    built). Mtime-based and best-effort; it only gates whether to *recompute*, not
+    what the recomputation produces (that stays deterministic).
+    """
+    out_path = Path(out_path)
+    try:
+        out_mtime = out_path.stat().st_mtime
+    except OSError:
+        return False  # missing/unreadable -> must build
+    newest = 0.0
+    md = Path(memory_dir)
+    if md.is_dir():
+        for f in md.glob("*.md"):
+            try:
+                newest = max(newest, f.stat().st_mtime)
+            except OSError:
+                pass
+    if graph_path is not None:
+        gp = Path(graph_path)
+        try:
+            newest = max(newest, gp.stat().st_mtime)
+        except OSError:
+            pass
+    return out_mtime >= newest
+
+
 def reflect(memory_dir: Path, out_path: Path,
             graph_path: Path | None = None,
             analysis_path: Path | None = None,
