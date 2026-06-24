@@ -631,3 +631,18 @@ def test_cli_reflect_if_stale_skips_when_fresh(tmp_path):
     ran = _run(["reflect", "--if-stale"], tmp_path)
     assert ran.returncode == 0
     assert "up to date" not in (ran.stdout + ran.stderr).lower()
+
+
+def test_dead_ends_and_corrections_dedupe_by_question():
+    """Saving the same Q&A more than once must not duplicate lines in the dead-ends
+    / corrections lists; for a re-corrected question the most recent text wins."""
+    docs = [
+        _doc("dead_end", question="ws server?", date="2026-01-01"),
+        _doc("dead_end", question="ws server?", date="2026-01-02"),   # duplicate
+        _doc("corrected", question="hash?", correction="SHA-1", date="2026-01-01"),
+        _doc("corrected", question="hash?", correction="SHA-256", date="2026-01-03"),  # newer
+    ]
+    agg = aggregate_lessons(docs, now=_NOW)
+    assert [d["question"] for d in agg["dead_ends"]] == ["ws server?"]
+    assert len(agg["corrections"]) == 1
+    assert agg["corrections"][0]["correction"] == "SHA-256"  # recency wins

@@ -4,6 +4,7 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: `graphify reflect` no longer duplicates lines in the "known dead ends" and "corrections" sections when the same Q&A is saved more than once. Those lists were appended per memory doc with no key (node scoring already dedups by node, but these two did not); they now collapse by question, keeping the most recent entry — so a re-corrected question shows its latest correction. Output stays deterministic (ordered by date then question).
 - Fix: the work-memory loop no longer depends on the git hook. The skill now tells the agent to run `graphify reflect --if-stale` itself at the start of graph work (cheap, deterministic, a no-op when no outcomes have been saved), then read `LESSONS.md`. Previously a skill-only install (without `graphify hook install`) would keep recording outcomes via `save-result` but never regenerate `LESSONS.md`, so the lessons never surfaced. The post-commit hook is now an optimization for between-session freshness rather than a requirement. The new `--if-stale` flag skips the run when `LESSONS.md` is already newer than every input (the memory docs and the graph), so when the hook just refreshed it the agent's session-start run costs almost nothing.
 
 ## 0.8.47 (2026-06-24)

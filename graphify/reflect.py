@@ -328,6 +328,20 @@ def _finalize_sources(bucket: dict[str, Any],
     return {"preferred": preferred, "tentative": tentative, "contested": contested}
 
 
+def _dedupe_by_question(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse repeated questions to one entry. Docs are processed oldest-first, so
+    the last write per question wins (recency — e.g. the most recent correction text).
+    Output is deterministically ordered by (date, question). Without this, saving the
+    same Q&A twice duplicated lines in the dead-ends / corrections lists, even though
+    node scoring already dedups by node.
+    """
+    latest: dict[str, dict[str, Any]] = {}
+    for it in items:
+        latest[it.get("question", "")] = it
+    return sorted(latest.values(),
+                  key=lambda it: (it.get("date", ""), it.get("question", "")))
+
+
 def aggregate_lessons(docs: list[dict[str, Any]],
                       node_community: dict[str, str] | None = None,
                       *,
@@ -384,7 +398,8 @@ def aggregate_lessons(docs: list[dict[str, Any]],
     if node_community:
         community_out = {
             label: {"counts": b["counts"], **_finalize_sources(b, min_corroboration),
-                    "dead_ends": b["dead_ends"], "corrections": b["corrections"]}
+                    "dead_ends": _dedupe_by_question(b["dead_ends"]),
+                    "corrections": _dedupe_by_question(b["corrections"])}
             for label, b in by_community.items()
         }
 
@@ -393,8 +408,8 @@ def aggregate_lessons(docs: list[dict[str, Any]],
         "counts": overall["counts"],
         "min_corroboration": min_corroboration,
         **_finalize_sources(overall, min_corroboration),
-        "dead_ends": overall["dead_ends"],
-        "corrections": overall["corrections"],
+        "dead_ends": _dedupe_by_question(overall["dead_ends"]),
+        "corrections": _dedupe_by_question(overall["corrections"]),
         "by_community": community_out,
     }
 
