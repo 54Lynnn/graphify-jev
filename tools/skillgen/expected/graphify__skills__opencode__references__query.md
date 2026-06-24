@@ -173,6 +173,14 @@ $(cat graphify-out/.graphify_python) -m graphify save-result --question "ORIGINA
 
 Replace `ORIGINAL_QUESTION` with the user's verbatim question, `ANSWER` with your full answer text (containing the expanded-token trace), `NODE1 NODE2` with the list of node labels you cited. This closes the feedback loop: the next `--update` will extract this Q&A as a node in the graph.
 
+**Work memory (self-improving loop).** Add an `--outcome` so future sessions learn from this one — append `--outcome useful|dead_end|corrected` to the `save-result` command (and `--correction "the right answer"` when correcting):
+
+- `useful` — the cited nodes answered the question well (they become *preferred sources*).
+- `dead_end` — the question/path led nowhere; don't re-derive it next time.
+- `corrected` — the saved answer was wrong; `--correction` records what was right.
+
+At the **start** of graph work, if `graphify-out/reflections/LESSONS.md` exists, read it first: it lists **preferred sources** (start there), **known dead ends** (skip them), and prior **corrections**. That file is regenerated automatically by the git post-commit hook after each rebuild (or run `graphify reflect` to refresh it on demand).
+
 ---
 
 ## For /graphify path
