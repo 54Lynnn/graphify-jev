@@ -11036,6 +11036,267 @@ def extract_csproj(path: Path) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
+def _xml_local_name(name: str) -> str:
+    return name.rsplit("}", 1)[-1] if name.startswith("{") else name
+
+
+# A .NET event handler has the signature `(object sender, <T>EventArgs e)`. Used
+# to tell a real event handler in the code-behind apart from an ordinary method
+# whose name a XAML attribute value happens to match. Tolerates `object?`, a
+# namespace-qualified args type, and a generic `EventArgs<T>`.
+_EVENT_HANDLER_SIGNATURE_RE = re.compile(
+    r"\(\s*object\??\s+\w+\s*,\s*[\w.]*EventArgs(?:<[^>]*>)?\s+\w+\s*\)"
+)
+
+# XAML attribute names that carry free-form strings or identifiers and never name
+# an event handler. They are skipped when matching attribute values to code-behind
+# methods so e.g. Content="Save" or Tag="Refresh" can't fabricate an event edge.
+_XAML_NON_EVENT_ATTRS = frozenset({
+    "Name", "Content", "Text", "Title", "Tag", "ToolTip", "Header",
+    "Class", "Key", "Uid", "DataContext", "Style", "Source",
+})
+
+# A handler attribute value is a bare method name (e.g. Click="Save_Click"), not
+# markup, a path, or a sentence. Used to skip values like "{Binding ...}" or
+# free-form content before looking them up as code-behind methods.
+_XAML_IDENT_RE = re.compile(r"[A-Za-z_]\w*")
+
+
+def _xaml_codebehind_path(path: Path) -> Path | None:
+    expected = path.with_suffix(path.suffix + ".cs")
+    if expected.exists():
+        return expected
+    try:
+        for sibling in path.parent.iterdir():
+            if sibling.name.casefold() == expected.name.casefold():
+                return sibling
+    except OSError:
+        return None
+    return None
+
+
+def _xaml_codebehind_symbols(
+    path: Path,
+    class_name: str | None,
+) -> tuple[dict | None, dict[str, dict], list[dict]]:
+    codebehind = _xaml_codebehind_path(path)
+    if not codebehind:
+        return None, {}, []
+    result = extract_csharp(codebehind)
+    if result.get("error"):
+        return None, {}, []
+
+    class_simple = class_name.rsplit(".", 1)[-1] if class_name else None
+    class_node = None
+    if class_simple:
+        for node in result.get("nodes", []):
+            if node.get("label") == class_simple:
+                class_node = node
+                break
+
+    class_method_edges: list[dict] = []
+    if class_node:
+        class_id = class_node.get("id")
+        for edge in result.get("edges", []):
+            if edge.get("source") == class_id and edge.get("relation") == "method":
+                class_method_edges.append(edge)
+    method_ids = {edge.get("target") for edge in class_method_edges} if class_node else None
+
+    # Only methods with a .NET event-handler signature -- (object sender,
+    # <T>EventArgs e) -- are eligible to be wired to a XAML attribute as an
+    # event. Without this gate, any attribute whose value happens to match a
+    # method name (e.g. Content="Save" next to a business method Save()) would
+    # produce a spurious "event" edge. The C# extractor does not record the
+    # parameter list on method nodes, so we read it from the code-behind source
+    # at the method's recorded line.
+    try:
+        cb_lines = codebehind.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        cb_lines = []
+
+    def _has_event_handler_signature(node: dict) -> bool:
+        loc = str(node.get("source_location") or "")
+        m = re.match(r"L(\d+)", loc)
+        if not m or not cb_lines:
+            return False
+        start = int(m.group(1)) - 1
+        # Join a few lines so a signature split across lines still matches.
+        snippet = " ".join(cb_lines[start:start + 3])
+        return _EVENT_HANDLER_SIGNATURE_RE.search(snippet) is not None
+
+    methods: dict[str, dict] = {}
+    for node in result.get("nodes", []):
+        if method_ids is not None and node.get("id") not in method_ids:
+            continue
+        label = str(node.get("label", ""))
+        if label.startswith(".") and label.endswith("()") and _has_event_handler_signature(node):
+            methods[label.strip("()").lstrip(".")] = node
+    return class_node, methods, class_method_edges
+
+
+def extract_xaml(path: Path) -> dict:
+    """Extract WPF/XAML structure, bindings, x:Class, and event handler references."""
+    import xml.etree.ElementTree as ET
+
+    try:
+        src = path.read_bytes()
+    except OSError:
+        return {"nodes": [], "edges": [], "error": f"cannot read {path}"}
+
+    if len(src) > _PROJECT_XML_MAX_BYTES:
+        return {"nodes": [], "edges": [], "error": "xaml file too large"}
+    if not _project_xml_is_safe(src):
+        return {"nodes": [], "edges": [],
+                "error": "refusing XML with DOCTYPE/ENTITY declaration"}
+
+    try:
+        tree = ET.fromstring(src)
+    except ET.ParseError as e:
+        return {"nodes": [], "edges": [], "error": f"XML parse error: {e}"}
+
+    text = src.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    str_path = str(path)
+    stem = _file_stem(path)
+    file_nid = _make_id(str(path))
+    root_type = _xml_local_name(tree.tag)
+    root_nid = _make_id(stem, root_type)
+    nodes: list[dict] = []
+    edges: list[dict] = []
+    seen_ids: set[str] = set()
+    seen_edges: set[tuple[str, str, str, str | None]] = set()
+
+    def line_for(value: str | None) -> int:
+        if value:
+            for idx, line in enumerate(lines, 1):
+                if value in line:
+                    return idx
+        return 1
+
+    def add_node(
+        nid: str,
+        label: str,
+        line: int | None,
+        *,
+        file_type: str = "code",
+        source_file: str = str_path,
+    ) -> None:
+        if nid in seen_ids:
+            return
+        seen_ids.add(nid)
+        nodes.append({
+            "id": nid, "label": label, "file_type": file_type,
+            "source_file": source_file,
+            "source_location": f"L{line}" if line else None,
+        })
+
+    def add_existing_node(node: dict | None) -> None:
+        if not node:
+            return
+        nid = node.get("id")
+        if not nid or nid in seen_ids:
+            return
+        seen_ids.add(nid)
+        nodes.append(dict(node))
+
+    def add_edge(
+        src_nid: str,
+        tgt_nid: str,
+        relation: str,
+        line: int,
+        *,
+        context: str | None = None,
+        source_file: str = str_path,
+    ) -> None:
+        key = (src_nid, tgt_nid, relation, context)
+        if key in seen_edges:
+            return
+        seen_edges.add(key)
+        edge = {
+            "source": src_nid, "target": tgt_nid, "relation": relation,
+            "confidence": "EXTRACTED", "source_file": source_file,
+            "source_location": f"L{line}", "weight": 1.0,
+        }
+        if context:
+            edge["context"] = context
+        edges.append(edge)
+
+    def add_existing_edge(edge: dict) -> None:
+        key = (edge.get("source"), edge.get("target"), edge.get("relation"), edge.get("context"))
+        if key in seen_edges:
+            return
+        seen_edges.add(key)
+        edges.append(dict(edge))
+
+    add_node(file_nid, path.name, 1)
+    add_node(root_nid, root_type, 1)
+    add_edge(file_nid, root_nid, "contains", 1)
+
+    class_name = None
+    for key, value in tree.attrib.items():
+        if _xml_local_name(key) == "Class" and value:
+            class_name = value.strip()
+            break
+
+    class_node, codebehind_methods, class_method_edges = _xaml_codebehind_symbols(path, class_name)
+    if class_name:
+        if class_node:
+            class_nid = class_node["id"]
+            add_existing_node(class_node)
+        else:
+            class_label = class_name.rsplit(".", 1)[-1]
+            class_nid = _make_id(stem, class_label)
+            add_node(class_nid, class_label, line_for(class_name))
+        add_edge(root_nid, class_nid, "references", line_for(class_name), context="x_class")
+
+    binding_re = re.compile(r"\{Binding\s+([^,}\s]+)")
+
+    for elem in tree.iter():
+        elem_type = _xml_local_name(elem.tag)
+        elem_name = None
+        for key, value in elem.attrib.items():
+            if _xml_local_name(key) == "Name" and value:
+                elem_name = value.strip()
+                break
+        owner_nid = root_nid
+        if elem_name:
+            owner_nid = _make_id(stem, elem_name)
+            add_node(owner_nid, elem_name, line_for(elem_name))
+            add_edge(root_nid, owner_nid, "contains", line_for(elem_name))
+            type_nid = _make_id("xaml", elem_type)
+            add_node(type_nid, elem_type, line_for(elem_name), file_type="concept")
+            add_edge(owner_nid, type_nid, "references", line_for(elem_name), context="type")
+
+        for key, value in elem.attrib.items():
+            value = value or ""
+            # Event wiring: an attribute references a handler only when its local
+            # name isn't a known free-form/identity property, its value is a bare
+            # identifier (a method name, not markup or a sentence), and the matched
+            # code-behind method actually has an event-handler signature (the gate
+            # in _xaml_codebehind_symbols). This stops Content="Save" / Tag="..."
+            # from fabricating event edges against same-named ordinary methods.
+            attr_local = _xml_local_name(key)
+            if attr_local not in _XAML_NON_EVENT_ATTRS and _XAML_IDENT_RE.fullmatch(value):
+                method = codebehind_methods.get(value)
+                if method:
+                    add_existing_node(method)
+                    add_edge(owner_nid, method["id"], "references", line_for(value), context="event")
+                    for method_edge in class_method_edges:
+                        if method_edge.get("target") == method["id"]:
+                            add_existing_node(class_node)
+                            add_existing_edge(method_edge)
+                            break
+            for match in binding_re.finditer(value):
+                binding = match.group(1).strip()
+                if not binding:
+                    continue
+                bind_nid = _make_id("binding", binding)
+                add_node(bind_nid, binding, line_for(value), file_type="concept")
+                add_edge(owner_nid, bind_nid, "references", line_for(value), context="binding")
+
+    return {"nodes": nodes, "edges": edges}
+
+
 
 
 # Config/manifest JSON filenames the structural extractor understands. Anything
@@ -12018,6 +12279,7 @@ _DISPATCH: dict[str, Any] = {
     ".csproj": extract_csproj,
     ".fsproj": extract_csproj,
     ".vbproj": extract_csproj,
+    ".xaml": extract_xaml,
     ".razor": extract_razor,
     ".cshtml": extract_razor,
     ".cls": extract_apex,

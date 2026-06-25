@@ -1,8 +1,8 @@
-"""Tests for .NET project file extraction (.sln, .csproj, .razor)."""
+"""Tests for .NET project file extraction (.sln, .csproj, .xaml, .razor)."""
 from pathlib import Path
 import tempfile
 import pytest
-from graphify.extract import extract_sln, extract_slnx, extract_csproj, extract_razor
+from graphify.extract import extract_sln, extract_slnx, extract_csproj, extract_xaml, extract_razor
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -107,6 +107,109 @@ def test_csproj_invalid_xml():
     assert "error" in r
 
 
+# ── .xaml ────────────────────────────────────────────────────────────────────
+
+def test_xaml_class_resolves_to_codebehind_partial_class():
+    r = extract_xaml(FIXTURES / "sample.xaml")
+    assert "error" not in r
+    class_nodes = [
+        n for n in r["nodes"]
+        if n["label"] == "MainWindow" and str(n.get("source_file", "")).endswith("sample.xaml.cs")
+    ]
+    assert class_nodes
+    assert any(
+        e["relation"] == "references"
+        and e.get("context") == "x_class"
+        and e["target"] == class_nodes[0]["id"]
+        for e in r["edges"]
+    )
+
+
+def test_xaml_named_controls_and_bindings():
+    r = extract_xaml(FIXTURES / "sample.xaml")
+    labels = set(_labels(r))
+    assert {"RootPanel", "UserNameBox", "SaveButton", "UserName"} <= labels
+    assert any(e["relation"] == "references" and e.get("context") == "binding" for e in r["edges"])
+
+
+def test_xaml_events_resolve_to_codebehind_methods():
+    r = extract_xaml(FIXTURES / "sample.xaml")
+    method_nodes = {
+        n["label"].strip("()").lstrip("."): n["id"]
+        for n in r["nodes"]
+        if str(n.get("source_file", "")).endswith("sample.xaml.cs")
+    }
+    assert {"Window_Loaded", "UserNameChanged", "Save_Click"} <= set(method_nodes)
+    event_targets = {
+        e["target"] for e in r["edges"]
+        if e["relation"] == "references" and e.get("context") == "event"
+    }
+    assert method_nodes["Window_Loaded"] in event_targets
+    assert method_nodes["UserNameChanged"] in event_targets
+    assert method_nodes["Save_Click"] in event_targets
+
+
+def _event_targets(r):
+    return {e["target"] for e in r["edges"]
+            if e["relation"] == "references" and e.get("context") == "event"}
+
+
+def test_xaml_event_match_requires_handler_signature():
+    """A property value that matches an ordinary method's name must not become an
+    event edge -- only methods with a (object sender, ...EventArgs e) signature do."""
+    xaml = (
+        '<Window x:Class="Demo.MainWindow"\n'
+        '  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"\n'
+        '  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">\n'
+        '  <Button Content="Refresh" Click="Refresh"/>\n'
+        "</Window>\n"
+    )
+    cs = (
+        "using System.Windows;\n"
+        "namespace Demo { public partial class MainWindow : Window {\n"
+        "  public void Refresh() {}\n"  # business method, not a handler signature
+        "}}\n"
+    )
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "view.xaml"
+        p.write_text(xaml)
+        (Path(d) / "view.xaml.cs").write_text(cs)
+        r = extract_xaml(p)
+    assert "error" not in r
+    assert _event_targets(r) == set()
+
+
+def test_xaml_non_event_attribute_value_does_not_fabricate_event():
+    """Content=/Tag= holding a string that equals a real handler's name must not
+    create an event edge; only the genuine event attribute (Click) should."""
+    xaml = (
+        '<Window x:Class="Demo.MainWindow"\n'
+        '  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"\n'
+        '  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">\n'
+        '  <Button x:Name="B1" Content="Save_Click" Tag="OnLoaded" Click="Save_Click"/>\n'
+        "</Window>\n"
+    )
+    cs = (
+        "using System.Windows;\n"
+        "namespace Demo { public partial class MainWindow : Window {\n"
+        "  private void Save_Click(object sender, RoutedEventArgs e) {}\n"
+        "  private void OnLoaded(object sender, RoutedEventArgs e) {}\n"
+        "}}\n"
+    )
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "view.xaml"
+        p.write_text(xaml)
+        (Path(d) / "view.xaml.cs").write_text(cs)
+        r = extract_xaml(p)
+    handlers = {n["label"].strip("()").lstrip("."): n["id"]
+                for n in r["nodes"] if str(n.get("source_file", "")).endswith("view.xaml.cs")}
+    targets = _event_targets(r)
+    # Click -> Save_Click is the only real event; OnLoaded (referenced only via Tag) is not.
+    assert handlers["Save_Click"] in targets
+    assert handlers.get("OnLoaded") not in targets
+    assert len(targets) == 1
+
+
 # ── .razor ───────────────────────────────────────────────────────────────────
 
 def test_razor_using_and_inject():
@@ -150,11 +253,11 @@ def test_razor_missing_file():
 
 def test_dispatch_table():
     from graphify.extract import _get_extractor
-    for ext in (".sln", ".slnx", ".csproj", ".fsproj", ".vbproj", ".razor", ".cshtml"):
+    for ext in (".sln", ".slnx", ".csproj", ".fsproj", ".vbproj", ".xaml", ".razor", ".cshtml"):
         assert _get_extractor(Path(f"foo{ext}")) is not None, f"{ext} not in dispatch"
 
 
 def test_code_extensions():
     from graphify.detect import CODE_EXTENSIONS
-    for ext in (".sln", ".slnx", ".csproj", ".fsproj", ".vbproj", ".razor", ".cshtml"):
+    for ext in (".sln", ".slnx", ".csproj", ".fsproj", ".vbproj", ".xaml", ".razor", ".cshtml"):
         assert ext in CODE_EXTENSIONS, f"{ext} missing"
