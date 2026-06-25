@@ -829,6 +829,19 @@ def _is_manifest_root_fix_line(line: str) -> bool:
     return "save_manifest(" in line and "import" not in line
 
 
+def _is_no_api_key_fix_line(line: str) -> bool:
+    """Whether a line is part of the "no API key required" clarity (#1461).
+
+    The aider/devin monoliths described Step 3 semantic extraction without ever
+    stating that graphify needs no API key, and (like the subagent-host skills)
+    framed the no-key path only around dispatching subagents. Terminal hosts that
+    run the CLI directly and can't dispatch subagents looped for minutes insisting
+    on a missing key. A single blockquote added after the "two parts" line states
+    that no key is ever required and gives a non-subagent fallback.
+    """
+    return "graphify needs no API key" in line
+
+
 # Every line that may differ between a rendered monolith and its pristine v8
 # baseline. Each predicate documents one sanctioned change-class; a blank line is
 # allowed because the multi-line fix blocks insert spacing. Anything else failing
@@ -842,6 +855,7 @@ _SANCTIONED_MONOLITH_DIFFS = (
     _is_cache_unlink_fix_line,
     _is_zero_node_guard_fix_line,
     _is_manifest_root_fix_line,
+    _is_no_api_key_fix_line,
 )
 
 
