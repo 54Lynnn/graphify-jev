@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: `to_obsidian` / `to_canvas` / `to_wiki` no longer silently overwrite notes whose labels differ only by case (e.g. a class `References` and a prose heading `references`). The filename dedup was keyed on the exact-case name, so two such labels counted as non-colliding and the second write clobbered the first on case-insensitive filesystems (macOS/APFS, Windows/NTFS) — no suffix, no warning. Dedup now folds case (keyed on the lowercased name) while still emitting the original-case filename, so any pair that would collide on disk gets a numeric suffix. The obsidian/canvas dedup is shared in one helper so they can't drift, `wiki`'s slug dedup gets the matching fix, the `_COMMUNITY_*.md` overview notes (which had no dedup) are covered, and a generated `base_1` is itself re-checked so it can't overwrite a node literally labelled `base_1` (#1453, thanks @TPAteeq).
+
 ## 0.8.49 (2026-06-24)
 
 - Fix: the `get_community` MCP tool now shows the community name in its header (`Community 12 — Auth & Sessions (8 nodes)`), matching `get_node` and the query-traversal output, which already read the `community_name` attribute `to_json` writes onto every node. `get_community` was the only graph tool still returning a bare numeric id. The name is read from the community's member nodes (they share it), sanitised like every other LLM-derived field, and skipped when it is just the `Community N` placeholder so the header never doubles to `Community 12 — Community 12` (#1448, thanks @rmart1308).
