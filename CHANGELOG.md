@@ -4,6 +4,10 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+## 0.8.49 (2026-06-24)
+
+- Fix (packaging): include the new `graphify.extractors` subpackage in the wheel. 0.8.48 added `graphify/extractors/` (the per-language extractor split, #1212) but `[tool.setuptools] packages` listed only `graphify`, so the subpackage was omitted from the built distribution and `graphify extract` raised `ModuleNotFoundError: No module named 'graphify.extractors'` on install. Dev/editable installs and the test suite were unaffected (they import from the source tree), which is why it slipped through. 0.8.48 is yanked; use 0.8.49.
+
 ## 0.8.48 (2026-06-24)
 
 - Fix: the `get_community` MCP tool now shows the community name in its header (`Community 12 — Auth & Sessions (8 nodes)`), matching `get_node` and the query-traversal output, which already read the `community_name` attribute `to_json` writes onto every node. `get_community` was the only graph tool still returning a bare numeric id. The name is read from the community's member nodes (they share it), sanitised like every other LLM-derived field, and skipped when it is just the `Community N` placeholder so the header never doubles to `Community 12 — Community 12` (#1448, thanks @rmart1308).
