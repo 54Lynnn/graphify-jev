@@ -865,6 +865,70 @@ def test_objc_no_dangling_edges():
         assert e["source"] in node_ids, f"Dangling source: {e}"
 
 
+def test_objc_resolves_self_method_calls():
+    """`[self speak]` inside Dog.fetch must produce a calls edge. The method-body
+    second pass was dead code for ObjC because the grammar emits a simple selector
+    as `identifier`, not `selector`/`keyword_argument_list` (#1475)."""
+    r = extract_objc(FIXTURES / "sample.m")
+    nid2label = {n["id"]: n["label"] for n in r["nodes"]}
+    calls = [nid2label.get(e["target"]) for e in r["edges"] if e["relation"] == "calls"]
+    assert any(t and "speak" in t for t in calls), calls
+
+
+def test_objc_class_method_labeled_with_plus(tmp_path):
+    """`+ (…)shared` is a class method and must be labeled +shared, not -shared (#1475)."""
+    p = tmp_path / "S.m"
+    p.write_text("@implementation S\n+ (instancetype)shared { return nil; }\n- (void)go { }\n@end\n")
+    labels = {n["label"] for n in extract_objc(p)["nodes"]}
+    assert "+shared" in labels and "-go" in labels
+
+
+def test_objc_compound_selector_call_resolves(tmp_path):
+    """A compound message `[self a:x b:y]` resolves to the compound method def (#1475)."""
+    p = tmp_path / "V.m"
+    p.write_text(
+        "@implementation V\n"
+        "- (void)tableView:(id)tv numberOfRowsInSection:(int)s { }\n"
+        "- (void)go { [self tableView:nil numberOfRowsInSection:0]; }\n"
+        "@end\n"
+    )
+    r = extract_objc(p)
+    nid2label = {n["id"]: n["label"] for n in r["nodes"]}
+    calls = [nid2label.get(e["target"]) for e in r["edges"] if e["relation"] == "calls"]
+    assert any(t and "tableViewnumberOfRowsInSection" in t for t in calls), calls
+
+
+def test_objc_generic_property_type_extracted(tmp_path):
+    """`NSArray<Product *> *` must reference the element type Product (and the
+    container NSArray); the generic wrapper made the type invisible before (#1475)."""
+    p = tmp_path / "M.h"
+    p.write_text("@interface M : NSObject\n@property (strong) NSArray<Product *> *items;\n@end\n")
+    refs = _edge_labels(extract_objc(p), "references", "field")
+    assert ("M", "Product") in refs
+    assert ("M", "NSArray") in refs
+
+
+def test_objc_module_import_edge(tmp_path):
+    """`@import Foundation;` / `@import UIKit.UIView;` produce imports edges (#1475)."""
+    from graphify.extract import _make_id
+    p = tmp_path / "X.m"
+    p.write_text("@import Foundation;\n@import UIKit.UIView;\n@implementation X\n@end\n")
+    targets = {e["target"] for e in extract_objc(p)["edges"] if e["relation"] == "imports"}
+    assert _make_id("Foundation") in targets and _make_id("UIKit") in targets
+
+
+def test_objc_header_dispatch_routes_objc_not_c(tmp_path):
+    """An ObjC `.h` (has @interface) routes to extract_objc; a plain C `.h` stays
+    on extract_c, so C/C++ headers are never hijacked by the sniff (#1475)."""
+    from graphify.extract import _get_extractor, extract_objc as _eo, extract_c as _ec
+    objc_h = tmp_path / "AppDelegate.h"
+    objc_h.write_text("@interface AppDelegate : NSObject <UIApplicationDelegate>\n@end\n")
+    c_h = tmp_path / "util.h"
+    c_h.write_text("#include <stdio.h>\nint add(int a, int b);\nstruct Point { int x; };\n")
+    assert _get_extractor(objc_h) is _eo
+    assert _get_extractor(c_h) is _ec
+
+
 # ---------------------------------------------------------------------------
 # Go
 # ---------------------------------------------------------------------------

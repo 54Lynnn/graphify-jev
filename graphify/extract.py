@@ -9380,6 +9380,18 @@ def extract_objc(path: Path) -> dict:
         n = node.child_by_field_name(field)
         return _read(n) if n else None
 
+    def _type_identifiers(node):
+        """Yield every type_identifier under a property's type node, descending
+        through generic_specifier/type_name so NSArray<Product *> yields both
+        NSArray and the element type Product (the generic case was invisible
+        because the type was wrapped in a generic_specifier, not a bare
+        type_identifier child) (#1475)."""
+        if node.type == "type_identifier":
+            yield node
+            return
+        for c in node.children:
+            yield from _type_identifiers(c)
+
     def ensure_named_node(name: str, line: int) -> str:
         nid = _make_id(stem, name)
         if nid in seen_ids:
@@ -9427,6 +9439,15 @@ def extract_objc(path: Path) -> dict:
                                 add_edge(file_nid, tgt_nid, "imports", line, context="import")
             return
 
+        if t == "module_import":
+            # @import Foundation;  /  @import Foundation.NSString;
+            path_node = node.child_by_field_name("path")
+            if path_node is not None:
+                module = _read(path_node).split(".")[0].strip()
+                if module:
+                    add_edge(file_nid, _make_id(module), "imports", line, context="import")
+            return
+
         if t == "class_interface":
             # @interface ClassName : SuperClass <Protocols>
             # children: @interface, identifier(name), ':', identifier(super), parameterized_arguments, ...
@@ -9460,12 +9481,23 @@ def extract_objc(path: Path) -> dict:
                     prop_line = child.start_point[0] + 1
                     for sub in child.children:
                         if sub.type == "struct_declaration":
+                            # The type is either a direct type_identifier
+                            # (NSString *x) or wrapped in a generic_specifier
+                            # (NSArray<Product *> *xs). Walk every type name in the
+                            # type portion, skipping the declarator (the *field
+                            # name), so generic collections are no longer invisible.
+                            seen_types: set[str] = set()
                             for s in sub.children:
-                                if s.type == "type_identifier":
-                                    type_nid = ensure_named_node(_read(s), prop_line)
+                                if s.type in ("struct_declarator", ";"):
+                                    continue
+                                for ti in _type_identifiers(s):
+                                    tname = _read(ti)
+                                    if tname in seen_types:
+                                        continue
+                                    seen_types.add(tname)
+                                    type_nid = ensure_named_node(tname, prop_line)
                                     edges.append(_semantic_reference_edge(
                                         cls_nid, type_nid, "field", str_path, prop_line))
-                                    break
                 elif child.type == "method_declaration":
                     walk(child, cls_nid)
             return
@@ -9507,21 +9539,22 @@ def extract_objc(path: Path) -> dict:
 
         if t in ("method_declaration", "method_definition"):
             container = parent_nid or file_nid
-            # method name is the first identifier child (simple selector)
-            # for compound selectors: identifier + method_parameter pairs
-            parts = []
+            # Class methods start with '+', instance methods with '-' (the grammar
+            # emits the sigil as the first child). The selector is the concatenation
+            # of the direct identifier children: one for a simple selector (-go),
+            # several for a compound one (-tableView:numberOfRowsInSection: ->
+            # "tableViewnumberOfRowsInSection"); method_parameter holds the arg
+            # types/names, not selector keywords, so it is correctly skipped.
+            prefix = "-"
             for child in node.children:
-                if child.type == "identifier":
-                    parts.append(_read(child))
-                elif child.type == "method_parameter":
-                    for sub in child.children:
-                        if sub.type == "identifier":
-                            # selector keyword before ':'
-                            pass
+                if child.type in ("+", "-"):
+                    prefix = child.type
+                    break
+            parts = [_read(c) for c in node.children if c.type == "identifier"]
             method_name = "".join(parts) if parts else None
             if method_name:
                 method_nid = _make_id(container, method_name)
-                add_node(method_nid, f"-{method_name}", line)
+                add_node(method_nid, f"{prefix}{method_name}", line)
                 add_edge(container, method_nid, "method", line)
                 if t == "method_definition":
                     method_bodies.append((method_nid, node))
@@ -9538,26 +9571,30 @@ def extract_objc(path: Path) -> dict:
     for caller_nid, body_node in method_bodies:
         def walk_calls(n) -> None:
             if n.type == "message_expression":
-                # [receiver selector]
-                for child in n.children:
-                    if child.type in ("selector", "keyword_argument_list"):
-                        sel = []
-                        if child.type == "selector":
-                            sel.append(_read(child))
-                        else:
-                            for sub in child.children:
-                                if sub.type == "keyword_argument":
-                                    for s in sub.children:
-                                        if s.type == "selector":
-                                            sel.append(_read(s))
-                        method_name = "".join(sel)
-                        for candidate in all_method_nids:
-                            if candidate.endswith(_make_id("", method_name).lstrip("_")):
-                                pair = (caller_nid, candidate)
-                                if pair not in seen_calls and caller_nid != candidate:
-                                    seen_calls.add(pair)
-                                    add_edge(caller_nid, candidate, "calls", body_node.start_point[0] + 1,
-                                             confidence="EXTRACTED", weight=1.0, context="call")
+                # [receiver sel] and [receiver kw1:a kw2:b] both parse to a
+                # message_expression whose selector parts carry the field name
+                # "method" (one for a simple selector, several for a compound one);
+                # the receiver carries field name "receiver". Reconstruct the
+                # selector from every "method" child so self/super/ClassName
+                # receivers are never mistaken for a selector, and compound sends
+                # resolve too (the whole second pass was previously dead code for
+                # ObjC because the grammar emits these as `identifier`, not
+                # `selector`/`keyword_argument_list`) (#1475).
+                sel_parts = [
+                    _read(child)
+                    for i, child in enumerate(n.children)
+                    if n.field_name_for_child(i) == "method" and child.type == "identifier"
+                ]
+                method_name = "".join(sel_parts)
+                if method_name:
+                    needle = _make_id("", method_name).lstrip("_")
+                    for candidate in all_method_nids:
+                        if candidate.endswith(needle):
+                            pair = (caller_nid, candidate)
+                            if pair not in seen_calls and caller_nid != candidate:
+                                seen_calls.add(pair)
+                                add_edge(caller_nid, candidate, "calls", n.start_point[0] + 1,
+                                         confidence="EXTRACTED", weight=1.0, context="call")
             for child in n.children:
                 walk_calls(child)
         walk_calls(body_node)
@@ -12764,6 +12801,29 @@ _DISPATCH: dict[str, Any] = {
 }
 
 
+# ObjC-only directives. They are illegal in C and C++, so finding one in a `.h`
+# file is a near-zero-false-positive signal that the header is Objective-C (and so
+# belongs to extract_objc, not extract_c). `@property` is deliberately excluded: it
+# doubles as a Doxygen comment command and ObjC properties only ever live inside an
+# @interface/@protocol anyway, so the stronger directives already cover them.
+_OBJC_HEADER_MARKERS = (b"@interface", b"@protocol", b"@implementation", b"@import")
+
+
+def _is_objc_header(path: Path) -> bool:
+    """Whether a `.h` file is Objective-C rather than C/C++ (#1475).
+
+    `.h` is shared by C, C++, and ObjC; the suffix map routes it to extract_c,
+    which silently drops every @interface/@protocol/@property/method (1 node, 0
+    edges). Sniffing for an ObjC-only directive reroutes genuine ObjC headers to
+    extract_objc while leaving every C/C++ header on its existing extractor.
+    """
+    try:
+        head = path.read_bytes()[:256 * 1024]
+    except OSError:
+        return False
+    return any(marker in head for marker in _OBJC_HEADER_MARKERS)
+
+
 def _get_extractor(path: Path) -> Any | None:
     """Return the correct extractor function for a file, or None if unsupported."""
     if path.name.endswith(".blade.php"):
@@ -12778,6 +12838,10 @@ def _get_extractor(path: Path) -> Any | None:
     # (#1377). apm.yml would otherwise be a .yml document handled by the LLM.
     if is_package_manifest_path(path):
         return extract_package_manifest
+    # `.h` is C/C++/ObjC-ambiguous; route Objective-C headers to extract_objc
+    # (the suffix map sends `.h` to extract_c, which can't read @interface etc.).
+    if path.suffix == ".h" and _is_objc_header(path):
+        return extract_objc
     return _DISPATCH.get(path.suffix)
 
 
