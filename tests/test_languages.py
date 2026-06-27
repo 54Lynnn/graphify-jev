@@ -363,6 +363,21 @@ def test_java_field_type_references_have_field_context(tmp_path):
     )
 
 
+def test_java_type_annotations_have_attribute_context(tmp_path):
+    source = tmp_path / "TypeAnnotations.java"
+    source.write_text(
+        '@Service\n'
+        '@Entity(name = "checkout")\n'
+        'class CheckoutService {}\n'
+    )
+
+    result = extract_java(source)
+
+    refs = _edge_labels(result, "references", "attribute")
+    assert ("CheckoutService", "Service") in refs
+    assert ("CheckoutService", "Entity") in refs
+
+
 def test_csharp_field_type_references_have_field_context():
     r = extract_csharp(FIXTURES / "sample.cs")
     refs = _references(r)
