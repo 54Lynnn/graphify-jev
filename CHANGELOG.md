@@ -4,7 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
-- Fix: the Go AST extractor no longer creates phantom duplicate nodes for cross-file type references — the Go copy of `ensure_named_node` still used the older sourced-stub fallback; it now emits a sourceless stub like the other extractors, extending the #1402 fix to Go (#1500).
+- Feat: resolve C# cross-file type references and extract `enum`/`struct`/`record` declarations (#1466, thanks @TheFedaikin). A new `_resolve_csharp_type_references` (the C# counterpart to the Java resolver) re-points dangling `inherits`/`implements`/`references` edges from no-source "shadow" stubs to their real definitions, disambiguating same-named types in different namespaces via the referencing file's `using` directives and enclosing namespace; ambiguous matches are refused rather than guessed. `enum`/`struct`/`record` types are now extracted as definitions so those references resolve too. Advances #1318 for C#.
+- Fix: the Go AST extractor no longer creates phantom duplicate nodes for cross-file type references — the Go copy of `ensure_named_node` still used the older sourced-stub fallback; it now emits a sourceless stub like the other extractors, extending the #1402 fix to Go (#1500, thanks @TPAteeq).
 
 ## 0.8.50 (2026-06-27)
 
