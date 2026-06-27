@@ -912,6 +912,7 @@ def _call_openai_compat(
             {"role": "user", "content": _openai_content(user_message, images or [])},
         ],
         "max_completion_tokens": max_completion_tokens,
+        "stream": False,
     }
     if temperature is not None:
         kwargs["temperature"] = temperature
@@ -1968,6 +1969,11 @@ def _call_llm(
         "model": mdl,
         "messages": [{"role": "user", "content": prompt}],
         "max_completion_tokens": max_tokens,
+        # Force a single non-streamed response: some OpenAI-compatible gateways
+        # default to SSE streaming when `stream` is omitted, but the result here
+        # is always read as resp.choices[0]. Same fix as _call_openai_compat
+        # (#1223) — this path feeds the --dedup-llm tiebreaker.
+        "stream": False,
     }
     temperature = _resolve_temperature(cfg.get("temperature", 0), mdl)
     if temperature is not None:
