@@ -1026,11 +1026,22 @@ def test_extract_bash_no_dangling_edges():
 
 
 def test_extract_bash_skip_builtins_in_calls():
+    from graphify.extract import _file_stem, _make_id
+
     result = extract_bash(FIXTURES / "sample.sh")
     builtins = {"echo", "cd", "set", "export", "local", "mkdir", "if", "then"}
-    call_targets = {e["target"] for e in result["edges"] if e["relation"] == "calls"}
+    # The file-stem prefix is now the full repo-relative path, which can embed a
+    # builtin as a substring (e.g. "graphify" contains "if"). Compare against the
+    # call's SYMBOL NAME — the id with its file-stem prefix stripped — so the
+    # check tests the actual callee, not the path it lives in.
+    prefix = _make_id(_file_stem(FIXTURES / "sample.sh")) + "_"
+    call_names = {
+        t[len(prefix):] if t.startswith(prefix) else t
+        for e in result["edges"] if e["relation"] == "calls"
+        for t in [e["target"]]
+    }
     for b in builtins:
-        assert not any(b in t for t in call_targets), f"Builtin '{b}' appeared as calls target"
+        assert b not in call_names, f"Builtin '{b}' appeared as calls target"
 
 
 def test_extract_bash_missing_grammar_returns_error():
@@ -1456,9 +1467,9 @@ def test_dart_child_node_ids_are_stem_based(tmp_path):
 
     result = extract_dart(src_file)
 
-    stem = _file_stem(src_file)  # -> "mydir.sample"
-    expected_class_nid = _make_id(stem, "MyClass")   # -> "mydir_sample_myclass"
-    expected_func_nid  = _make_id(stem, "myFunc")    # -> "mydir_sample_myfunc"
+    stem = _file_stem(src_file)  # -> full-path form, e.g. ".../mydir/sample"
+    expected_class_nid = _make_id(stem, "MyClass")   # -> ..._mydir_sample_myclass
+    expected_func_nid  = _make_id(stem, "myFunc")    # -> ..._mydir_sample_myfunc
 
     node_ids = {n["id"] for n in result["nodes"]}
 
@@ -1471,13 +1482,16 @@ def test_dart_child_node_ids_are_stem_based(tmp_path):
         "extract_dart may still be using str(path) instead of _file_stem(path)."
     )
 
-    # Sanity-check: no child node ID should contain any path separator fragment.
+    # Sanity-check: no child node ID should contain a raw path separator; every
+    # child must share the normalized file-stem prefix (slashes collapsed to _).
     file_nid = next(n["id"] for n in result["nodes"] if n.get("label") == src_file.name)
+    norm_stem = _make_id(stem)
     for node in result["nodes"]:
         if node["id"] == file_nid:
             continue
-        assert "_" + stem.replace(".", "_") in node["id"] or node["id"].startswith(stem.replace(".", "_")), (
-            f"Child node ID '{node['id']}' does not start with the expected stem prefix '{stem}'. "
+        assert "/" not in node["id"]
+        assert node["id"].startswith(norm_stem), (
+            f"Child node ID '{node['id']}' does not start with the expected stem prefix '{norm_stem}'. "
             "This suggests an absolute path is still leaking into the ID."
         )
 

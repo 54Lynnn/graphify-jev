@@ -484,7 +484,8 @@ def test_build_from_json_relativizes_absolute_source_file(tmp_path):
         ],
     }
     G = build_from_json(extraction, root=root)
-    sf = G.nodes["overview_intro"]["source_file"]
+    # The id-stem migration (#1504) re-keys the old short id to the full-path form.
+    sf = G.nodes["docs_overview_intro"]["source_file"]
     assert not sf.startswith("/"), f"source_file still absolute: {sf}"
     assert sf == "docs/overview.md"
 
@@ -499,7 +500,8 @@ def test_build_relativizes_absolute_source_file(tmp_path):
         "edges": [],
     }
     G = build([extraction], root=root)
-    sf = G.nodes["main_fn"]["source_file"]
+    # #1504 re-keys main_fn (old stem "main") to the full-path form "src_main".
+    sf = G.nodes["src_main_fn"]["source_file"]
     assert sf == "src/main.py"
 
 
@@ -510,7 +512,8 @@ def test_build_from_json_relative_source_file_unchanged(tmp_path):
         "edges": [],
     }
     G = build_from_json(extraction, root=tmp_path)
-    assert G.nodes["foo_bar"]["source_file"] == "src/foo.py"
+    # source_file must be untouched; the id is re-keyed to the full-path form (#1504).
+    assert G.nodes["src_foo_bar"]["source_file"] == "src/foo.py"
 
 
 def test_build_merge_prune_absolute_paths_match_relative_nodes(tmp_path):
@@ -662,8 +665,9 @@ def test_build_merge_root_collapses_convention_drift(tmp_path):
     ], "edges": []}
     G_ok = build_merge([fixed], graph_path, prune_sources=None, dedup=False, root=root)
     assert G_ok.number_of_nodes() == 1, "verbatim path + root must collapse to one node"
-    assert "wiki_overview_stale" not in G_ok, "stale node for the re-extracted file must be dropped"
-    assert G_ok.nodes["wiki_overview_overview"]["source_file"] == "docs/wiki/overview.md", \
+    # #1504 re-keys the author-chosen short ids to the canonical full-path stem.
+    assert "docs_wiki_overview_stale" not in G_ok, "stale node for the re-extracted file must be dropped"
+    assert G_ok.nodes["docs_wiki_overview_overview"]["source_file"] == "docs/wiki/overview.md", \
         "new chunk must be canonicalized to the stored relative base"
 
 
