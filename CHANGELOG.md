@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased
+
+- Fix: the internal `origin_file` disambiguation field (#1462) is no longer serialized into graph.json, where it had shipped (in 0.9.0) as an absolute, machine-specific path — it is dropped once the colliding-id pass consumes it, keeping output portable (#1516, thanks @TPAteeq; cf. #555, #932). `_origin` stays (the incremental watcher needs it, #1116).
+
 ## 0.9.0 (2026-06-28)
 
 - **Breaking — node IDs now include the full repo-relative path** (#1504, #1509). The node-ID stem was the immediate parent dir + filename, so same-named files in different directories collided into one last-writer-wins node and silently dropped graph content (`docs/v1/api/README.md` and `docs/v2/api/README.md` both → `api_readme`). The stem is now the full repo-relative path (`docs_v1_api_readme` vs `docs_v2_api_readme`); top-level files are unchanged (`setup.py` → `setup`). The AST extractor, the LLM system prompt, the extraction-spec, and the two hand-copied stem helpers are all aligned to this one rule (fixing the #1509 AST↔LLM divergence that produced ghost duplicates), and `build_from_json` deterministically re-keys any cached/older semantic fragment onto the new IDs from its `source_file` so the unversioned semantic cache survives without ghosts or a re-bill. **Existing graphs migrate to the new ID format automatically on the next `build`/`update`** (no re-bill). Note: same-named files in different directories that previously collided into one node are only *recovered as distinct nodes* by a fresh extraction — run `graphify extract --force` to rebuild and gain them (migrating an already-collided graph/cache can't resurrect the nodes that were already dropped). If you push to a persisted **Neo4j** store, re-import after upgrading (re-exported IDs change); saved Gephi/yEd (GraphML) layouts go stale; MCP/cypher consumers should query by label rather than persisting node IDs across rebuilds.
