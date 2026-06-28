@@ -618,6 +618,7 @@ graphify extract ./docs --api-timeout 900      # longer HTTP timeout for slow lo
 graphify extract ./docs --google-workspace     # export .gdoc/.gsheet/.gslides via gws before extraction
 graphify extract ./docs --mode deep            # richer semantic extraction via extended system prompt
 graphify extract ./docs --no-cluster           # raw extraction only, skip clustering
+graphify extract ./docs --timing               # print per-stage wall-clock timings to stderr (also works on cluster-only)
 graphify extract ./docs --force                # overwrite graph.json even if new graph has fewer nodes (use after refactors or to clear ghost duplicates)
 graphify extract ./docs --dedup-llm            # LLM tiebreaker for ambiguous entity pairs (uses same API key)
 graphify extract ./docs --global --as myrepo   # extract and register into the cross-project global graph
