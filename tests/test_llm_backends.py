@@ -983,3 +983,48 @@ def test_call_claude_cli_tolerates_non_utf8_in_stderr():
          patch("subprocess.run", return_value=mock_proc):
         with pytest.raises(RuntimeError, match="claude -p exited 1"):
             llm._call_claude_cli("test prompt")
+
+
+def test_resolve_max_retries_default_and_env(monkeypatch):
+    """Default retry count is generous (so 429s are absorbed, #1523); env overrides."""
+    monkeypatch.delenv("GRAPHIFY_MAX_RETRIES", raising=False)
+    assert llm._resolve_max_retries() >= 5
+    monkeypatch.setenv("GRAPHIFY_MAX_RETRIES", "10")
+    assert llm._resolve_max_retries() == 10
+    monkeypatch.setenv("GRAPHIFY_MAX_RETRIES", "0")
+    assert llm._resolve_max_retries() == 0          # disable is allowed
+    monkeypatch.setenv("GRAPHIFY_MAX_RETRIES", "bogus")
+    assert llm._resolve_max_retries() >= 5          # invalid -> default
+
+
+def test_openai_compat_client_built_with_retries(monkeypatch):
+    """The OpenAI-compatible client (kimi/openai/gemini/deepseek/ollama) is built with
+    max_retries so rate-limited (429) chunks are retried with backoff instead of being
+    dropped — the kimi rate-limit failure in #1523."""
+    import sys
+    import types
+
+    ctor_kwargs = {}
+
+    class _FakeOpenAI:
+        def __init__(self, *_, **kwargs):
+            ctor_kwargs.update(kwargs)
+            self.chat = self
+            self.completions = self
+
+        def create(self, **_):
+            return _fake_openai_response(
+                '{"nodes":[],"edges":[],"hyperedges":[]}', finish_reason="stop",
+                completion_tokens=10,
+            )
+
+    fake_module = types.ModuleType("openai")
+    fake_module.OpenAI = _FakeOpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake_module)
+    monkeypatch.delenv("GRAPHIFY_MAX_RETRIES", raising=False)
+
+    llm._call_openai_compat(
+        "https://api.moonshot.ai/v1", "fake-key", "kimi-k2",
+        "user msg", temperature=0, max_completion_tokens=4096, backend="kimi",
+    )
+    assert ctor_kwargs.get("max_retries", 0) >= 5, ctor_kwargs
