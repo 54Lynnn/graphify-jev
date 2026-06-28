@@ -2867,6 +2867,17 @@ def main() -> None:
                 G = json_graph.node_link_graph(_raw, edges="links")
             except TypeError:
                 G = json_graph.node_link_graph(_raw)
+            try:
+                from graphify.build import graph_has_legacy_ids as _legacy
+                if _legacy(_raw.get("nodes", [])):
+                    print(
+                        "[graphify] note: this graph uses the pre-#1504 node-ID scheme; "
+                        "rebuild with `graphify extract --force` to get path-qualified IDs "
+                        "(fixes same-name-file collisions).",
+                        file=sys.stderr,
+                    )
+            except Exception:
+                pass
         except Exception as exc:
             print(f"error: could not load graph: {exc}", file=sys.stderr)
             sys.exit(1)

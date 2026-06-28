@@ -32,6 +32,16 @@ def _load_graph(graph_path: str) -> nx.Graph:
             data = dict(data, links=data["edges"])
         data = {**data, "directed": True}
         try:
+            from graphify.build import graph_has_legacy_ids as _legacy
+            if _legacy(data.get("nodes", [])):
+                print(
+                    "[graphify] note: this graph uses the pre-#1504 node-ID scheme; "
+                    "rebuild with `graphify extract --force` for path-qualified IDs.",
+                    file=sys.stderr,
+                )
+        except Exception:
+            pass
+        try:
             return json_graph.node_link_graph(data, edges="links")
         except TypeError:
             return json_graph.node_link_graph(data)

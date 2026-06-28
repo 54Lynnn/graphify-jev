@@ -718,3 +718,29 @@ def test_build_from_json_skips_edge_with_non_hashable_endpoint():
     assert G.number_of_nodes() == 2
     assert G.number_of_edges() == 1
     assert G.has_edge("a", "b")
+
+
+# ── #1504 migration: legacy-id detection + re-key source_file contract ──────────
+
+def test_graph_has_legacy_ids_detects_old_scheme():
+    """The read-only-consumer nudge (query/serve) flags a pre-#1504 graph and
+    leaves a canonical one alone."""
+    from graphify.build import graph_has_legacy_ids
+    old = [{"id": "api_readme", "source_file": "docs/v1/api/README.md", "type": "document"}]
+    new = [{"id": "docs_v1_api_readme", "source_file": "docs/v1/api/README.md", "type": "document"}]
+    assert graph_has_legacy_ids(old, root=".") is True
+    assert graph_has_legacy_ids(new, root=".") is False
+    # sourceless / top-level nodes don't false-positive
+    assert graph_has_legacy_ids([{"id": "setup", "source_file": "setup.py"}], root=".") is False
+    assert graph_has_legacy_ids([{"id": "x", "label": "y"}], root=".") is False
+
+
+def test_semantic_rekey_relative_vs_absolute_source_file():
+    """Re-key contract: a relative source_file is migrated; an absolute one is left
+    untouched (it can't be relativized, so its on-disk path must not leak into IDs)."""
+    from graphify.build import _semantic_id_remap
+    rel = [{"id": "api_readme", "source_file": "docs/v1/api/README.md", "type": "document"}]
+    assert _semantic_id_remap(rel, ".") == {"api_readme": "docs_v1_api_readme"}
+    # absolute path with no resolvable root → skipped, not remapped to an abs-path id
+    ab = [{"id": "api_readme", "source_file": "/abs/docs/v1/api/README.md", "type": "document"}]
+    assert _semantic_id_remap(ab, None) == {}

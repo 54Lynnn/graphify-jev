@@ -196,6 +196,43 @@ def _semantic_id_remap(nodes: list, root: str | None) -> dict:
     return remap
 
 
+def graph_has_legacy_ids(nodes: list, root: str | Path | None = None, sample: int = 300) -> bool:
+    """Whether a loaded graph still uses pre-#1504 node IDs (parent-dir / filename
+    stem) rather than the full repo-relative path. Read-only consumers (query,
+    serve) use this to nudge the user to rebuild, since they don't re-extract.
+
+    Heuristic and cheap: samples nodes with a relative ``source_file`` and returns
+    True as soon as one ID matches an OLD stem form but NOT the canonical full-path
+    form. Absolute/sourceless nodes are skipped (can't be classified)."""
+    from graphify.extractors.base import _file_stem
+    _r = str(root) if root is not None else None
+    checked = 0
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        nid = node.get("id")
+        sf = node.get("source_file")
+        if not nid or not isinstance(nid, str) or not sf:
+            continue
+        rel = Path(_norm_source_file(str(sf), _r) or str(sf))
+        if rel.is_absolute():
+            continue
+        new_stem = make_id(_file_stem(rel))
+        if not new_stem:
+            continue
+        norm = _normalize_id(nid)
+        if norm == new_stem or norm.startswith(new_stem + "_"):
+            checked += 1
+        else:
+            for old in _old_file_stems(rel):
+                if old != new_stem and (norm == old or norm.startswith(old + "_")):
+                    return True
+            checked += 1
+        if checked >= sample:
+            break
+    return False
+
+
 def build_from_json(extraction: dict, *, directed: bool = False, root: str | Path | None = None) -> nx.Graph:
     """Build a NetworkX graph from an extraction dict.
 
