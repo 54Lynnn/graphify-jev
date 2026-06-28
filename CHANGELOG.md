@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: same-label cross-file imported-type stubs now stay distinct in the six dedicated extractors too — Julia, Fortran, Go, Rust, PowerShell, ObjC (#1515, thanks @TPAteeq). The #1462 disambiguation previously only covered the generic extractor, so e.g. two Go files importing the same `ext.Widget` collapsed into one conflated node; they're now kept distinct (while `source_file` stays empty so the #1402 rewire onto a real definition is unchanged).
+- Fix: Java type parameters no longer emit spurious `references` edges (#1518, thanks @oleksii-tumanov). The generic-parent support (#1511) created a stray edge/stub for the bare `T` in `class Box<T> extends Container<T>`; the extractor now collects in-scope type-parameter names (class/interface/record/method/constructor, incl. bounded/multiple) and skips them, while keeping every real type and the `inherits`/`implements` edge to the base.
 - Fix: the internal `origin_file` disambiguation field (#1462) is no longer serialized into graph.json, where it had shipped (in 0.9.0) as an absolute, machine-specific path — it is dropped once the colliding-id pass consumes it, keeping output portable (#1516, thanks @TPAteeq; cf. #555, #932). `_origin` stays (the incremental watcher needs it, #1116).
 
 ## 0.9.0 (2026-06-28)
