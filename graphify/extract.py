@@ -1,6 +1,7 @@
 """Deterministic structural extraction from source code using tree-sitter. Outputs nodes+edges dicts."""
 from __future__ import annotations
 
+import hashlib
 import importlib
 import json
 import os
@@ -7658,11 +7659,34 @@ def _disambiguate_colliding_node_ids(
         if len(group) < 2 or len(source_keys) < 2:
             continue
         ambiguous_ids.add(old_id)
+        # Salt the colliding id with the *path* it came from. The naive salt is
+        # ``_make_id(source_key, old_id)`` — source_key is the raw repo-relative
+        # path. But _make_id collapses every separator, so two DISTINCT paths
+        # whose only difference is a separator-vs-inner-punctuation swap
+        # (``a/b/c.md`` vs ``a.b/c.md``, ``foo/bar_baz.md`` vs ``foo_bar/baz.md``)
+        # normalize to the SAME salted id and still collide (#1522 — the residual
+        # of #1504 the 0.9.0 full-path stem didn't reach). When that happens,
+        # append a short stable hash of the *raw* source_key, which IS injective
+        # over distinct paths, so the colliders separate. Computed in code from
+        # source_file (never trusted from the LLM), so AST↔semantic parity holds.
+        naive: dict[str, str] = {}  # source_key -> _make_id(source_key, old_id)
+        for source_key in source_keys:
+            if source_key:
+                naive[source_key] = _make_id(source_key, old_id)
+        # source_keys that, after normalization, are not unique among themselves.
+        seen: dict[str, int] = {}
+        for nid in naive.values():
+            seen[nid] = seen.get(nid, 0) + 1
+        needs_hash = {sk for sk, nid in naive.items() if seen.get(nid, 0) > 1}
         for node in group:
             source_key = _node_disambiguation_source_key(node, root)
             if not source_key:
                 continue
-            new_id = _make_id(source_key, old_id)
+            if source_key in needs_hash:
+                salt = hashlib.sha1(source_key.encode("utf-8")).hexdigest()[:6]
+                new_id = _make_id(source_key, old_id, salt)
+            else:
+                new_id = naive.get(source_key) or _make_id(source_key, old_id)
             remap[(old_id, source_key)] = new_id
             if new_id != old_id:
                 node["id"] = new_id

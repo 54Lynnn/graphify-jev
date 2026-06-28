@@ -1548,3 +1548,36 @@ def test_dart_child_node_ids_are_stem_based(tmp_path):
         )
 
 
+
+
+def test_separator_collision_paths_get_distinct_ids(tmp_path):
+    """#1522: two distinct paths whose only difference is a separator-vs-punctuation
+    swap (foo/bar_baz.py vs foo_bar/baz.py) normalize to the same stem; the
+    disambiguation pass now salts the colliders with a stable path hash so they
+    stay distinct instead of silently merging."""
+    a = tmp_path / "foo/bar_baz.py"
+    b = tmp_path / "foo_bar/baz.py"
+    a.parent.mkdir(parents=True)
+    b.parent.mkdir(parents=True)
+    a.write_text("class Widget:\n    pass\n")
+    b.write_text("class Gadget:\n    pass\n")
+
+    result = extract([a, b], cache_root=tmp_path)
+    # file-level nodes are labeled with the filename; both files must survive as
+    # distinct nodes (no silent separator-collision merge)
+    file_nodes = [n for n in result["nodes"] if str(n.get("label", "")).endswith(".py")]
+    assert len(file_nodes) == 2
+    assert len({n["id"] for n in file_nodes}) == 2, [n["id"] for n in file_nodes]
+
+
+def test_non_colliding_path_id_is_not_salted(tmp_path):
+    """The collision hash must touch only actual colliders — a path with no collision
+    keeps its plain full-path stem id (no hash suffix)."""
+    from graphify.extractors.base import _file_stem
+    from graphify.ids import make_id
+    p = tmp_path / "src/auth/session.py"
+    p.parent.mkdir(parents=True)
+    p.write_text("class Session:\n    pass\n")
+    result = extract([p], cache_root=tmp_path)
+    file_id = next(n["id"] for n in result["nodes"] if n.get("source_location") == "L1")
+    assert file_id == make_id(_file_stem(Path("src/auth/session.py"))) == "src_auth_session"
