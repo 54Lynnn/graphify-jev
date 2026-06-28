@@ -524,6 +524,7 @@ graphify install  # overwrites the skill file
 /graphify ./raw --cluster-only     # rerun clustering on existing graph
 /graphify ./raw --no-viz           # skip HTML visualization
 /graphify ./raw --obsidian         # generate Obsidian vault
+/graphify ./raw --obsidian --obsidian-dir ~/vault  # write into an existing vault (never overwrites your own notes or .obsidian config)
 /graphify ./raw --wiki             # build agent-crawlable markdown wiki
 /graphify ./raw --svg              # export graph.svg
 /graphify ./raw --graphml          # export for Gephi / yEd
