@@ -726,13 +726,18 @@ def test_graph_has_legacy_ids_detects_old_scheme():
     """The read-only-consumer nudge (query/serve) flags a pre-#1504 graph and
     leaves a canonical one alone."""
     from graphify.build import graph_has_legacy_ids
-    old = [{"id": "api_readme", "source_file": "docs/v1/api/README.md", "type": "document"}]
-    new = [{"id": "docs_v1_api_readme", "source_file": "docs/v1/api/README.md", "type": "document"}]
+    old = [{"id": "api_readme", "source_file": "docs/v1/api/README.md", "type": "document", "source_location": "L1"}]
+    new = [{"id": "docs_v1_api_readme", "source_file": "docs/v1/api/README.md", "type": "document", "source_location": "L1"}]
     assert graph_has_legacy_ids(old, root=".") is True
     assert graph_has_legacy_ids(new, root=".") is False
-    # sourceless / top-level nodes don't false-positive
-    assert graph_has_legacy_ids([{"id": "setup", "source_file": "setup.py"}], root=".") is False
+    # sourceless / top-level file nodes don't false-positive
+    assert graph_has_legacy_ids([{"id": "setup", "source_file": "setup.py", "source_location": "L1"}], root=".") is False
     assert graph_has_legacy_ids([{"id": "x", "label": "y"}], root=".") is False
+    # package/dir-scoped SYMBOL ids (Go's _make_id(pkg_dir, name) -> "sub_thing") must
+    # NOT false-positive: not file-level (no L1), so ignored even though "sub_thing"
+    # coincides with the old file-stem form of pkg/sub/thing.go.
+    go_symbol = [{"id": "sub_thing", "source_file": "pkg/sub/thing.go", "type": "code", "source_location": "L3"}]
+    assert graph_has_legacy_ids(go_symbol, root=".") is False
 
 
 def test_semantic_rekey_relative_vs_absolute_source_file():

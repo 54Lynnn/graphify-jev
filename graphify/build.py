@@ -201,15 +201,20 @@ def graph_has_legacy_ids(nodes: list, root: str | Path | None = None, sample: in
     stem) rather than the full repo-relative path. Read-only consumers (query,
     serve) use this to nudge the user to rebuild, since they don't re-extract.
 
-    Heuristic and cheap: samples nodes with a relative ``source_file`` and returns
-    True as soon as one ID matches an OLD stem form but NOT the canonical full-path
-    form. Absolute/sourceless nodes are skipped (can't be classified)."""
+    Heuristic and cheap: only **file-level** nodes (source_location ``L1``) are
+    inspected, because their ID is unambiguously the file stem. Symbol nodes are
+    skipped — some extractors scope a symbol by package/directory (Go's
+    ``_make_id(pkg_dir, name)`` → ``sub_thing``), which can coincide with an old
+    file-stem form and would otherwise false-positive. Returns True as soon as one
+    file node's ID matches an OLD stem form but not the canonical full-path form."""
     from graphify.extractors.base import _file_stem
     _r = str(root) if root is not None else None
     checked = 0
     for node in nodes:
         if not isinstance(node, dict):
             continue
+        if str(node.get("source_location") or "") != "L1":
+            continue  # only file-level nodes carry an unambiguous file-stem ID
         nid = node.get("id")
         sf = node.get("source_file")
         if not nid or not isinstance(nid, str) or not sf:
