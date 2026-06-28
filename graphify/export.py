@@ -7,6 +7,7 @@ import math
 import os
 import re
 import shutil
+import sys
 from collections import Counter
 from datetime import date
 from pathlib import Path
@@ -880,6 +881,30 @@ def to_obsidian(
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    # #1506: when the export target is an existing Obsidian vault (a user pointed
+    # --obsidian-dir at one), we must not clobber the user's own notes or their
+    # .obsidian/ config. Track the files graphify owns in a manifest; a pre-existing
+    # file NOT in the manifest is the user's and is never overwritten.
+    _manifest_path = out / ".graphify_obsidian_manifest.json"
+    try:
+        _owned: set[str] = set(json.loads(_manifest_path.read_text(encoding="utf-8")).get("files", []))
+    except (OSError, ValueError):
+        _owned = set()
+    _written: list[str] = []
+    _skipped: list[str] = []
+
+    def _owned_write(rel_name: str, content: str) -> bool:
+        """Write a graphify-owned file, refusing to overwrite a pre-existing file
+        graphify didn't create. Returns True if written."""
+        target = out / rel_name
+        if target.exists() and rel_name not in _owned:
+            _skipped.append(rel_name)
+            return False
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")  # nosec
+        _written.append(rel_name)
+        return True
+
     node_community = _node_community_map(communities)
 
     # Map node_id → safe filename so wikilinks stay consistent.
@@ -917,6 +942,7 @@ def to_obsidian(
     }
 
     # Write one .md file per node
+    node_notes_written = 0
     for node_id, data in G.nodes(data=True):
         label = data.get("label", node_id)
         cid = node_community.get(node_id)
@@ -970,7 +996,8 @@ def to_obsidian(
         lines.append(inline_tags)
 
         fname = node_filename[node_id] + ".md"
-        (out / fname).write_text("\n".join(lines), encoding="utf-8")  # nosec
+        if _owned_write(fname, "\n".join(lines)):
+            node_notes_written += 1
 
     # Write one _COMMUNITY_name.md overview note per community
     # Build inter-community edge counts for "Connections to other communities"
@@ -1107,12 +1134,13 @@ def to_obsidian(
                 )
 
         fname = community_filename[cid] + ".md"
-        (out / fname).write_text("\n".join(lines), encoding="utf-8")  # nosec
-        community_notes_written += 1
+        if _owned_write(fname, "\n".join(lines)):
+            community_notes_written += 1
 
-    # Improvement 4: write .obsidian/graph.json to color nodes by community in graph view
-    obsidian_dir = out / ".obsidian"
-    obsidian_dir.mkdir(exist_ok=True)
+    # Improvement 4: write .obsidian/graph.json to color nodes by community in graph
+    # view — but never clobber an existing .obsidian/graph.json graphify doesn't own
+    # (the user's graph-view settings live there). _owned_write handles that and
+    # creates the .obsidian/ dir only when it actually writes.
     graph_config = {
         "colorGroups": [
             {
@@ -1122,9 +1150,26 @@ def to_obsidian(
             for cid, label in sorted((community_labels or {}).items())
         ]
     }
-    (obsidian_dir / "graph.json").write_text(json.dumps(graph_config, indent=2), encoding="utf-8")  # nosec
+    _owned_write(".obsidian/graph.json", json.dumps(graph_config, indent=2))
 
-    return G.number_of_nodes() + community_notes_written
+    # Persist the manifest of files graphify owns, so a re-run can safely update its
+    # own notes while still refusing to touch the user's. Warn (once, aggregated)
+    # about anything skipped to avoid clobbering a pre-existing file.
+    try:
+        _manifest_path.write_text(json.dumps({"files": sorted(set(_written))}, indent=2), encoding="utf-8")
+    except OSError:
+        pass
+    if _skipped:
+        shown = ", ".join(_skipped[:5]) + (f" (+{len(_skipped) - 5} more)" if len(_skipped) > 5 else "")
+        print(
+            f"[graphify] WARNING: skipped {len(_skipped)} pre-existing file(s) graphify "
+            f"did not create, to avoid overwriting your notes: {shown}. "
+            f"Export into an empty directory (or the default graphify-out/obsidian) "
+            f"to get the full vault.",
+            file=sys.stderr,
+        )
+
+    return node_notes_written + community_notes_written
 
 
 def to_canvas(

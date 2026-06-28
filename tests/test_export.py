@@ -280,6 +280,58 @@ def test_to_canvas_never_emits_punctuation_only_filenames():
         assert not bad, f"punctuation-only canvas filenames: {bad}"
 
 
+# ── Existing-vault safety: graphify must not clobber user notes / .obsidian (#1506) ──
+
+def _two_node_graph():
+    import networkx as nx
+    G = nx.Graph()
+    G.add_node("n1", label="Database", community=0, source_file="app/db.py", type="code")
+    G.add_node("n2", label="Server", community=0, source_file="app/srv.py", type="code")
+    G.add_edge("n1", "n2")
+    return G, {0: ["n1", "n2"]}
+
+
+def test_to_obsidian_preserves_existing_user_notes_and_obsidian_config():
+    """#1506: exporting into an existing vault must not overwrite a user's note that
+    collides with a graphify node name, nor their .obsidian/ graph settings."""
+    G, communities = _two_node_graph()
+    with tempfile.TemporaryDirectory() as tmp:
+        vault = Path(tmp)
+        (vault / "Database.md").write_text("# MY NOTES\nkeep me\n", encoding="utf-8")
+        (vault / ".obsidian").mkdir()
+        (vault / ".obsidian" / "graph.json").write_text('{"USER":"settings"}', encoding="utf-8")
+        to_obsidian(G, communities, str(vault), community_labels={0: "Backend"})
+        # user content untouched
+        assert "MY NOTES" in (vault / "Database.md").read_text()
+        assert json.loads((vault / ".obsidian" / "graph.json").read_text()) == {"USER": "settings"}
+        # non-colliding graphify note still written
+        assert (vault / "Server.md").exists()
+
+
+def test_to_obsidian_empty_dir_writes_full_vault():
+    """No regression: a fresh/empty dir still gets every note + .obsidian/graph.json."""
+    G, communities = _two_node_graph()
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "obsidian"
+        n = to_obsidian(G, communities, str(out), community_labels={0: "Backend"})
+        assert (out / "Database.md").exists() and (out / "Server.md").exists()
+        assert (out / ".obsidian" / "graph.json").exists()
+        assert n == 3  # 2 nodes + 1 community note
+
+
+def test_to_obsidian_rerun_updates_own_notes_but_not_user_files():
+    """A re-run overwrites graphify's own prior notes (via the manifest) but leaves a
+    user-added note in the same dir alone."""
+    G, communities = _two_node_graph()
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "obsidian"
+        to_obsidian(G, communities, str(out), community_labels={0: "Backend"})
+        (out / "UserNote.md").write_text("mine\n", encoding="utf-8")
+        to_obsidian(G, communities, str(out), community_labels={0: "Backend2"})
+        assert (out / "Database.md").exists()  # graphify re-wrote its own
+        assert (out / "UserNote.md").read_text().strip() == "mine"  # user's untouched
+
+
 # ── Case-only-distinct labels must not collide on case-insensitive filesystems ──
 
 def _case_collision_graph():
