@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased
+
+- Feat: `--timing` flag on `graphify extract` and `graphify cluster-only` prints per-stage wall-clock timings to stderr (#1490). Shows how long each pipeline stage takes — `extract`: detect → AST → semantic → build → cluster → analyze → export; `cluster-only`: load → cluster → analyze → label → report → export — plus a final total, so slow stages are visible on large corpora. Off by default (monotonic `perf_counter`, stderr-only); machine-read stdout / `graph.json` are unchanged.
+
 ## 0.8.51 (2026-06-28)
 
 - Fix: the Obsidian export (`--obsidian` / `to_obsidian`) no longer overwrites a user's own notes or `.obsidian/` config when pointed at an existing vault (#1506). It wrote one note per node straight into the target dir and unconditionally replaced `.obsidian/graph.json`, so `--obsidian-dir ~/my-vault` could clobber a same-named note (`Database.md`) and the user's graph-view settings — silently, no backup. graphify now records the files it owns in a `.graphify_obsidian_manifest.json` and refuses to overwrite any pre-existing file it didn't create (skipping it with one aggregated warning); a re-run still updates graphify's own notes. The default `graphify-out/obsidian` output is unchanged.

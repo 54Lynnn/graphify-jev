@@ -74,6 +74,32 @@ def _default_graph_path() -> str:
     return str(Path(_GRAPHIFY_OUT) / "graph.json")
 
 
+class _StageTimer:
+    """Print per-stage wall-clock timings to stderr when --timing is set (#1490).
+
+    Monotonic (perf_counter), diagnostic-only: emits ``[graphify timing] <stage>:
+    N.Ns`` after each stage and a final total. Off by default, so normal output is
+    byte-identical and machine-read stdout is untouched.
+    """
+
+    def __init__(self, enabled: bool) -> None:
+        import time as _time
+        self._now = _time.perf_counter
+        self.enabled = enabled
+        self.start = self._now()
+        self._last = self.start
+
+    def mark(self, stage: str) -> None:
+        now = self._now()
+        if self.enabled:
+            print(f"[graphify timing] {stage}: {now - self._last:.1f}s", file=sys.stderr)
+        self._last = now
+
+    def total(self) -> None:
+        if self.enabled:
+            print(f"[graphify timing] total: {self._now() - self.start:.1f}s", file=sys.stderr)
+
+
 def _enforce_graph_size_cap_or_exit(gp: Path) -> None:
     """Reject oversized graph files before parsing (CLI exit-on-fail flavor).
 
@@ -3320,6 +3346,7 @@ def main() -> None:
         no_viz = "--no-viz" in sys.argv
         no_label = "--no-label" in sys.argv
         missing_only = "--missing-only" in sys.argv
+        co_timing = "--timing" in sys.argv
         _backend_arg = next((a for a in sys.argv if a.startswith("--backend=")), None)
         label_backend = _backend_arg.split("=", 1)[1] if _backend_arg else None
         _model_arg = next((a for a in sys.argv if a.startswith("--model=")), None)
@@ -3390,6 +3417,7 @@ def main() -> None:
         from graphify.report import generate
         from graphify.export import to_json, to_html
 
+        stages = _StageTimer(co_timing)
         print("Loading existing graph...")
         # Solution 3 (#1019): don't hard-exit on an oversized graph.json here.
         # Core outputs (graph.json + GRAPH_REPORT.md) still get written; the
@@ -3414,6 +3442,7 @@ def main() -> None:
         _directed = bool(_raw.get("directed", False))
         G = build_from_json(_raw, directed=_directed)
         print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+        stages.mark("load")
         print("Re-clustering...")
         communities = cluster(G, resolution=co_resolution, exclude_hubs_percentile=co_exclude_hubs)
         # Mirror the watch/update path (#822): map new cids to prior ones by
@@ -3428,9 +3457,11 @@ def main() -> None:
         }
         if previous_node_community:
             communities = remap_communities_to_previous(communities, previous_node_community)
+        stages.mark("cluster")
         cohesion = score_all(G, communities)
         gods = god_nodes(G)
         surprises = surprising_connections(G, communities)
+        stages.mark("analyze")
         out = watch_path / _GRAPHIFY_OUT
         out.mkdir(parents=True, exist_ok=True)
         labels_path = out / ".graphify_labels.json"
@@ -3477,6 +3508,7 @@ def main() -> None:
                 max_concurrency=label_max_concurrency, batch_size=label_batch_size,
             )
             labels.update(generated_labels)
+        stages.mark("label")
         questions = suggest_questions(G, communities, labels)
         tokens = {"input": 0, "output": 0}
         from graphify.export import _git_head as _gh
@@ -3486,6 +3518,7 @@ def main() -> None:
                           tokens, str(watch_path), suggested_questions=questions,
                           min_community_size=min_community_size, built_at_commit=_commit)
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
+        stages.mark("report")
         from graphify.export import backup_if_protected as _backup
         _backup(out)
         to_json(G, communities, str(out / "graph.json"), community_labels=labels)
@@ -3499,6 +3532,7 @@ def main() -> None:
         if no_viz:
             if html_target.exists():
                 html_target.unlink()
+            stages.mark("export"); stages.total()
             print(f"Done - {len(communities)} communities. GRAPH_REPORT.md and graph.json updated (--no-viz; graph.html removed).")
         else:
             try:
@@ -3507,11 +3541,13 @@ def main() -> None:
                 _node_limit = 5000 if _over_cap else None
                 to_html(G, communities, str(html_target), community_labels=labels or None,
                         node_limit=_node_limit)
+                stages.mark("export"); stages.total()
                 print(f"Done - {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
             except ValueError as viz_err:
                 if html_target.exists():
                     html_target.unlink()
                 print(f"Skipped graph.html: {viz_err}")
+                stages.mark("export"); stages.total()
                 print(f"Done - {len(communities)} communities. GRAPH_REPORT.md and graph.json updated.")
 
     elif cmd == "update":
@@ -4170,7 +4206,7 @@ def main() -> None:
                 "Usage: graphify extract <path> [--backend gemini|kimi|claude|openai|deepseek|ollama] "
                 "[--model M] [--mode deep] [--out DIR] [--google-workspace] [--no-cluster] "
                 "[--max-workers N] [--token-budget N] [--max-concurrency N] "
-                "[--api-timeout S] [--postgres DSN] [--cargo]",
+                "[--api-timeout S] [--postgres DSN] [--cargo] [--timing]",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -4205,6 +4241,7 @@ def main() -> None:
         cli_resolution: float = 1.0
         cli_exclude_hubs: float | None = None
         cli_excludes: list[str] = []
+        cli_timing: bool = False
 
         def _parse_int(name: str, raw: str) -> int:
             try:
@@ -4293,6 +4330,8 @@ def main() -> None:
             elif a == "--cargo":
                 cli_cargo = True
                 i += 1
+            elif a == "--timing":
+                cli_timing = True; i += 1
             else:
                 i += 1
 
@@ -4325,6 +4364,8 @@ def main() -> None:
         out_root = (out_dir.resolve() if out_dir else target)
         graphify_out = out_root / _GRAPHIFY_OUT
         graphify_out.mkdir(parents=True, exist_ok=True)
+
+        stages = _StageTimer(cli_timing)
 
         from graphify.detect import (
             detect as _detect,
@@ -4383,6 +4424,7 @@ def main() -> None:
                 f"{len(doc_files)} docs, {len(paper_files)} papers, "
                 f"{len(image_files)} images"
             )
+        stages.mark("detect")
 
         # Resolve the LLM backend only now that we know whether the corpus
         # needs one. A code-only corpus is pure local AST and must not require
@@ -4488,6 +4530,7 @@ def main() -> None:
             except Exception as exc:
                 print(f"[graphify extract] AST extraction failed: {exc}", file=sys.stderr)
                 ast_result = {"nodes": [], "edges": [], "input_tokens": 0, "output_tokens": 0}
+        stages.mark("AST extract")
 
         # Semantic extraction on docs/papers/images. Check cache first.
         from graphify.cache import (
@@ -4582,6 +4625,7 @@ def main() -> None:
                 sem_result["hyperedges"].extend(fresh.get("hyperedges", []))
                 sem_result["input_tokens"] += fresh.get("input_tokens", 0)
                 sem_result["output_tokens"] += fresh.get("output_tokens", 0)
+        stages.mark("semantic extract")
 
         pg_result: dict = {"nodes": [], "edges": []}
         if cli_postgres_dsn is not None:
@@ -4665,6 +4709,7 @@ def main() -> None:
                     _save_manifest(_manifest_files, manifest_path=str(manifest_path), kind="both", root=target)
                 except Exception as exc:
                     print(f"[graphify extract] warning: could not write manifest: {exc}", file=sys.stderr)
+                stages.total()
                 sys.exit(0)
 
             merged["nodes"] = _dedupe_nodes(merged["nodes"])
@@ -4681,6 +4726,7 @@ def main() -> None:
             graph_json_path.write_text(
                 json.dumps(merged, indent=2), encoding="utf-8"
             )
+            stages.mark("write")
             cost = _estimate_cost(
                 backend, merged["input_tokens"], merged["output_tokens"]
             )
@@ -4712,6 +4758,7 @@ def main() -> None:
                               f"(+{result['nodes_added']} nodes, -{result['nodes_removed']} pruned).")
                 except Exception as exc:
                     print(f"[graphify global] warning: failed to merge into global graph: {exc}", file=sys.stderr)
+            stages.total()
             sys.exit(0)
 
         # Build graph + cluster + score + write.
@@ -4735,6 +4782,7 @@ def main() -> None:
             )
         else:
             G = _build([merged], dedup=True, dedup_llm_backend=dedup_backend, root=target)
+        stages.mark("build")
         if G.number_of_nodes() == 0:
             print(
                 "[graphify extract] graph is empty — extraction produced no nodes. "
@@ -4745,6 +4793,7 @@ def main() -> None:
             sys.exit(1)
 
         communities = _cluster(G, resolution=cli_resolution, exclude_hubs_percentile=cli_exclude_hubs)
+        stages.mark("cluster")
         cohesion = _score_all(G, communities)
         try:
             gods = _god_nodes(G)
@@ -4754,10 +4803,12 @@ def main() -> None:
             surprises = _surprising(G, communities)
         except Exception:
             surprises = []
+        stages.mark("analyze")
 
         from graphify.export import backup_if_protected as _backup
         _backup(graphify_out)
         _to_json(G, communities, str(graph_json_path), force=True)
+        stages.mark("export")
         if merged.get("output_tokens", 0) > 0:
             (graphify_out / ".graphify_semantic_marker").write_text(
                 json.dumps({"output_tokens": merged["output_tokens"]}), encoding="utf-8"
@@ -4821,6 +4872,7 @@ def main() -> None:
             f"`graphify cluster-only {graphify_out.parent}` "
             "to generate GRAPH_REPORT.md and name communities"
         )
+        stages.total()
 
     elif cmd == "cache-check":
         # graphify cache-check <files_from> [--root <dir>]
