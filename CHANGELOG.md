@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## Unreleased
+## 0.9.1 (2026-06-28)
 
 - Fix: rate-limited (HTTP 429) extraction chunks are now retried instead of dropped (#1523, thanks @bercedev). The provider SDKs back off and honor `Retry-After`, but the SDK default of 2 retries was too low for strict per-org concurrency/RPM caps (e.g. Moonshot/kimi), so a parallel `extract` 429'd, each chunk logged `chunk N failed`, and was silently lost (incomplete graph + console spam). The OpenAI-compatible, Azure, and Anthropic clients are now built with a higher `max_retries` (default 6, override via `GRAPHIFY_MAX_RETRIES`). For very tight accounts, `--max-concurrency 1` further reduces the concurrency that triggers org-level limits.
 
