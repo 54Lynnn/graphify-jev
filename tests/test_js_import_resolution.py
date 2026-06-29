@@ -636,3 +636,108 @@ def test_ts_type_relationships_and_contexts(tmp_path: Path):
     assert ("run", "Payload", "parameter_type") in reference_contexts
     assert ("run", "Result", "return_type") in reference_contexts
     assert ("run", "Payload", "generic_arg") in reference_contexts
+
+
+# ── #1531: tsconfig path-alias fallback targets ──────────────────────────────
+
+
+def test_tsconfig_alias_resolves_second_target_when_first_missing(tmp_path: Path):
+    # tsc tries each `paths` target in declared order until one resolves on disk.
+    # The file lives only at the SECOND target, so keeping only the first entry
+    # (#1531) dropped the edge.
+    _write(
+        tmp_path / "tsconfig.json",
+        json.dumps({"compilerOptions": {"baseUrl": ".", "paths": {"$lib/*": ["generated/*", "src/lib/*"]}}}),
+    )
+    target = _write(tmp_path / "src/lib/utils.ts", "export const helper = 1\n")
+    importer = _write(
+        tmp_path / "src/routes/page.ts",
+        "import { helper } from '$lib/utils'\nconsole.log(helper)\n",
+    )
+
+    result = _extract_for([target, importer], tmp_path)
+
+    assert _has_edge(result, "src/routes/page.ts", "src/lib/utils.ts")
+
+
+def test_tsconfig_alias_first_target_wins_when_both_exist(tmp_path: Path):
+    # When the file exists at BOTH targets, tsc resolves to the FIRST. The edge
+    # must target the generated/ copy, not src/lib.
+    _write(
+        tmp_path / "tsconfig.json",
+        json.dumps({"compilerOptions": {"baseUrl": ".", "paths": {"$lib/*": ["generated/*", "src/lib/*"]}}}),
+    )
+    first = _write(tmp_path / "generated/utils.ts", "export const helper = 1\n")
+    second = _write(tmp_path / "src/lib/utils.ts", "export const helper = 2\n")
+    importer = _write(
+        tmp_path / "src/routes/page.ts",
+        "import { helper } from '$lib/utils'\nconsole.log(helper)\n",
+    )
+
+    result = _extract_for([first, second, importer], tmp_path)
+
+    assert _has_edge(result, "src/routes/page.ts", "generated/utils.ts")
+    assert not _has_edge(result, "src/routes/page.ts", "src/lib/utils.ts")
+
+
+def test_tsconfig_alias_none_exist_creates_no_false_edge(tmp_path: Path):
+    # The file exists at neither target; no concrete imports_from edge to either
+    # candidate may be fabricated (it stays an external/phantom target).
+    _write(
+        tmp_path / "tsconfig.json",
+        json.dumps({"compilerOptions": {"baseUrl": ".", "paths": {"$lib/*": ["generated/*", "src/lib/*"]}}}),
+    )
+    other = _write(tmp_path / "src/routes/other.ts", "export const x = 1\n")
+    importer = _write(
+        tmp_path / "src/routes/page.ts",
+        "import { helper } from '$lib/utils'\nconsole.log(helper)\n",
+    )
+
+    result = _extract_for([other, importer], tmp_path)
+
+    assert not _has_edge(result, "src/routes/page.ts", "generated/utils.ts")
+    assert not _has_edge(result, "src/routes/page.ts", "src/lib/utils.ts")
+
+
+# ── #1529: alias/workspace import targets orphaned by the full-path migration ──
+
+
+def test_alias_import_edge_resolves_with_relative_input_paths(tmp_path, monkeypatch):
+    # CRUCIAL: pass RELATIVE input paths (chdir into the project). Alias imports
+    # resolve specifiers through .resolve(), so the import-target id is keyed off
+    # the ABSOLUTE path; with relative inputs the id_remap (keyed on the input
+    # form) never rewrote it -> orphan -> dropped edge (#1529). Absolute/tmp_path
+    # inputs hide the bug because the two forms coincide.
+    _write(
+        tmp_path / "tsconfig.json",
+        json.dumps({"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["src/*"]}}}),
+    )
+    _write(tmp_path / "src/lib/utils.ts", "export function formatDate(d) { return d }\n")
+    _write(
+        tmp_path / "src/components/Button.tsx",
+        "import { formatDate } from '@/lib/utils'\nexport function Button() { return formatDate(1) }\n",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    rel_paths = [Path("src/lib/utils.ts"), Path("src/components/Button.tsx")]
+    result = extract(rel_paths, cache_root=Path("."))
+
+    node_ids = {n["id"] for n in result["nodes"]}
+    target_id = _file_node_id(Path("src/lib/utils.ts"))
+
+    # The file-level imports_from edge must target the REAL utils file node (a node
+    # that exists in the graph), not an orphan keyed by an absolute prefix.
+    assert _has_edge(result, "src/components/Button.tsx", "src/lib/utils.ts")
+    assert target_id in node_ids
+    import_targets = {
+        e["target"]
+        for e in result["edges"]
+        if e["relation"] == "imports_from" and e["source"] == _file_node_id(Path("src/components/Button.tsx"))
+    }
+    assert target_id in import_targets
+    # No surviving edge target may carry an absolute-path prefix from tmp_path.
+    abs_prefix = _file_node_id(Path("src/lib/utils.ts").resolve())
+    assert all(not t.startswith(abs_prefix + "_") and t != abs_prefix for t in import_targets)
+
+    # The named-symbol edge to formatDate must resolve to the real symbol node too.
+    assert _has_symbol_edge(result, "src/components/Button.tsx", "src/lib/utils.ts", "formatDate")
