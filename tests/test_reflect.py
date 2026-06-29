@@ -478,6 +478,27 @@ def test_cli_save_result_rejects_bad_outcome(tmp_path):
     assert "great" in (r.stderr + r.stdout)
 
 
+def test_cli_save_result_reads_answer_from_file(tmp_path):
+    """--answer-file lets callers pass a long/multiline answer via a file instead
+    of a fragile inline arg (Windows/PowerShell quoting), #1502."""
+    ans = tmp_path / "answer.txt"
+    ans.write_text("line one\nline two with a \"quote\"\n", encoding="utf-8")
+    r = _run(["save-result", "--question", "how does auth work?",
+              "--answer-file", str(ans), "--outcome", "useful"], tmp_path)
+    assert r.returncode == 0, r.stderr
+    docs = list((tmp_path / "graphify-out" / "memory").glob("*.md"))
+    assert docs, "save-result wrote no memory doc"
+    body = docs[0].read_text(encoding="utf-8")
+    assert "line one" in body and "line two" in body
+
+
+def test_cli_save_result_requires_answer_or_answer_file(tmp_path):
+    """Neither --answer nor --answer-file -> clean argparse error, not a crash."""
+    r = _run(["save-result", "--question", "q", "--outcome", "useful"], tmp_path)
+    assert r.returncode != 0
+    assert "--answer" in (r.stderr + r.stdout)
+
+
 def test_cli_reflect_cold_start_writes_empty_lessons(tmp_path):
     """First run with no graphify-out/memory/ still succeeds and writes a valid doc."""
     r = _run(["reflect"], tmp_path)

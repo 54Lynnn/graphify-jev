@@ -82,6 +82,23 @@ def test_to_graphml_has_community_attribute():
         content = out.read_text()
         assert "community" in content
 
+def test_to_graphml_tolerates_none_attribute_values():
+    """nx.write_graphml raises ValueError on a None attribute value; to_graphml
+    must coerce None -> "" so a node/edge with a null field still exports (#1502)."""
+    G = make_graph()
+    communities = cluster(G)
+    # Inject a None-valued attribute on one node and one edge.
+    a_node = next(iter(G.nodes()))
+    G.nodes[a_node]["nullable_field"] = None
+    if G.number_of_edges():
+        u, v = next(iter(G.edges()))
+        G.edges[u, v]["nullable_field"] = None
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "graph.graphml"
+        to_graphml(G, communities, str(out))  # must not raise
+        content = out.read_text()
+        assert "<graphml" in content
+
 def test_to_html_creates_file():
     G = make_graph()
     communities = cluster(G)
