@@ -1028,3 +1028,62 @@ def test_openai_compat_client_built_with_retries(monkeypatch):
         "user msg", temperature=0, max_completion_tokens=4096, backend="kimi",
     )
     assert ctor_kwargs.get("max_retries", 0) >= 5, ctor_kwargs
+
+
+def test_call_llm_claude_client_built_with_timeout_and_retries(monkeypatch):
+    """The secondary dispatch path (_call_llm, used by the dedup tiebreaker)
+    must build its Anthropic client with both timeout and max_retries, matching
+    the primary extraction path — #1442. Previously _call_llm passed neither
+    (then only max_retries), so GRAPHIFY_API_TIMEOUT was silently ignored here."""
+    import sys
+    import types
+
+    ctor_kwargs = {}
+
+    class _FakeMessages:
+        def create(self, **_):
+            return types.SimpleNamespace(content=[types.SimpleNamespace(text="ok")])
+
+    class _FakeAnthropic:
+        def __init__(self, *_, **kwargs):
+            ctor_kwargs.update(kwargs)
+            self.messages = _FakeMessages()
+
+    fake_module = types.ModuleType("anthropic")
+    fake_module.Anthropic = _FakeAnthropic
+    monkeypatch.setitem(sys.modules, "anthropic", fake_module)
+    monkeypatch.setattr(llm, "_get_backend_api_key", lambda _b: "fake-key")
+    monkeypatch.setenv("GRAPHIFY_API_TIMEOUT", "1")
+    monkeypatch.delenv("GRAPHIFY_MAX_RETRIES", raising=False)
+
+    assert llm._call_llm("hi", backend="claude") == "ok"
+    assert ctor_kwargs.get("timeout") == 1.0, ctor_kwargs
+    assert ctor_kwargs.get("max_retries", 0) >= 5, ctor_kwargs
+
+
+def test_call_llm_openai_compat_client_built_with_timeout_and_retries(monkeypatch):
+    """Same #1442 fix for the OpenAI-compatible branch of _call_llm."""
+    import sys
+    import types
+
+    ctor_kwargs = {}
+
+    class _FakeOpenAI:
+        def __init__(self, *_, **kwargs):
+            ctor_kwargs.update(kwargs)
+            self.chat = self
+            self.completions = self
+
+        def create(self, **_):
+            return _fake_openai_response("ok", finish_reason="stop", completion_tokens=1)
+
+    fake_module = types.ModuleType("openai")
+    fake_module.OpenAI = _FakeOpenAI
+    monkeypatch.setitem(sys.modules, "openai", fake_module)
+    monkeypatch.setattr(llm, "_get_backend_api_key", lambda _b: "fake-key")
+    monkeypatch.setenv("GRAPHIFY_API_TIMEOUT", "1")
+    monkeypatch.delenv("GRAPHIFY_MAX_RETRIES", raising=False)
+
+    llm._call_llm("hi", backend="kimi")
+    assert ctor_kwargs.get("timeout") == 1.0, ctor_kwargs
+    assert ctor_kwargs.get("max_retries", 0) >= 5, ctor_kwargs
