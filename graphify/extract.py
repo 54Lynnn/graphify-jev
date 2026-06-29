@@ -7883,6 +7883,24 @@ def _disambiguate_colliding_node_ids(
         if len(candidates) == 1:
             unambiguous_remaps[old_id] = next(iter(candidates))
 
+    # A C/ObjC/C++ `#include "foo.h"` / `#import "foo.h"` resolves to the header's
+    # file node, but `foo.h` and its sibling `foo.c`/`foo.m`/`foo.cpp` collapse to
+    # the same `foo` file id, so disambiguation salts them apart by path. A
+    # cross-file import edge from a THIRD file carries neither salt's source_key, so
+    # the (target, edge_source_key) lookup misses and the edge dangles on the now
+    # dead `foo` id. Repoint those import edges to the HEADER variant (the include
+    # always targeted the header), keyed by the original colliding id (#1475).
+    _HEADER_SUFFIXES = (".h", ".hpp", ".hh", ".hxx")
+    header_remaps: dict[str, str] = {}
+    for old_id in ambiguous_ids:
+        for node in by_id.get(old_id, []):
+            sk = _node_disambiguation_source_key(node, root)
+            if sk and Path(sk).suffix.lower() in _HEADER_SUFFIXES:
+                new_id = remap.get((old_id, sk))
+                if new_id:
+                    header_remaps[old_id] = new_id
+                    break
+
     for edge in edges:
         edge_source_key = _source_key(str(edge.get("source_file", "")), root)
         source_key = (edge.get("source", ""), edge_source_key)
@@ -7891,7 +7909,15 @@ def _disambiguate_colliding_node_ids(
             edge["source"] = remap[source_key]
         elif edge.get("source") in unambiguous_remaps:
             edge["source"] = unambiguous_remaps[str(edge["source"])]
-        if target_key in remap:
+        # imports/imports_from always target a header file, so they must resolve to
+        # the header variant BEFORE the same-source-file salt is considered. Keying
+        # the import target by the importer's own source file mis-points a `.m`
+        # importing its own `.h` back at itself (self-loop), and is wrong for any
+        # cross-file import whose importer shares the colliding id (#1475).
+        if (edge.get("relation") in ("imports", "imports_from")
+                and edge.get("target") in header_remaps):
+            edge["target"] = header_remaps[str(edge["target"])]
+        elif target_key in remap:
             edge["target"] = remap[target_key]
         elif edge.get("target") in unambiguous_remaps:
             edge["target"] = unambiguous_remaps[str(edge["target"])]
@@ -9673,6 +9699,13 @@ def extract_objc(path: Path) -> dict:
         language = Language(tsobjc.language())
         parser = Parser(language)
         source = path.read_bytes()
+        # tree-sitter-objc cannot expand these argument-less annotation macros (no
+        # trailing ';'), and their presence before @interface makes the parser fail to
+        # emit a class_interface node (#1475). Blank them to equal-length spaces so byte
+        # offsets / line numbers are preserved and the interface parses.
+        _OBJC_BLANK_MACROS = (b"NS_ASSUME_NONNULL_BEGIN", b"NS_ASSUME_NONNULL_END")
+        for _m in _OBJC_BLANK_MACROS:
+            source = source.replace(_m, b" " * len(_m))
         tree = parser.parse(source)
         root = tree.root_node
     except Exception as e:
@@ -9765,10 +9798,18 @@ def extract_objc(path: Path) -> dict:
                     for sub in child.children:
                         if sub.type == "string_content":
                             raw = _read(sub)
-                            module = raw.split("/")[-1].replace(".h", "")
-                            if module:
-                                tgt_nid = _make_id(module)
-                                add_edge(file_nid, tgt_nid, "imports", line, context="import")
+                            # Resolve the quoted include to a real file so the target id
+                            # matches the (possibly disambiguated) node id _make_id gives
+                            # that file; the bare-stem id never survives
+                            # _disambiguate_colliding_node_ids when a .h/.m pair exists,
+                            # so the edge dangled and was dropped (#1475).
+                            resolved = _resolve_c_include_path(raw, str_path)
+                            if resolved is not None:
+                                add_edge(file_nid, _make_id(str(resolved)), "imports", line, context="import")
+                            else:
+                                module = raw.split("/")[-1].replace(".h", "")
+                                if module:
+                                    add_edge(file_nid, _make_id(module), "imports", line, context="import")
             return
 
         if t == "module_import":
@@ -9903,6 +9944,23 @@ def extract_objc(path: Path) -> dict:
     for caller_nid, body_node in method_bodies:
         def walk_calls(n) -> None:
             if n.type == "message_expression":
+                # `[[Foo alloc] init]` is a message_expression whose method is the
+                # identifier `alloc` and whose receiver is the bare class identifier
+                # `Foo`; resolve that class name and emit a `references` edge so the
+                # allocating method links to the allocated type. ensure_named_node
+                # emits a sourceless stub for unknown names, which the corpus rewire
+                # collapses ONLY when exactly one real class of that name exists, so an
+                # unknown/ambiguous class produces no false resolved edge (#1475).
+                meth = n.child_by_field_name("method")
+                recv = n.child_by_field_name("receiver")
+                if (meth is not None and meth.type == "identifier" and _read(meth) == "alloc"
+                        and recv is not None and recv.type == "identifier"):
+                    tname = _read(recv)
+                    ref_line = n.start_point[0] + 1
+                    type_nid = ensure_named_node(tname, ref_line)
+                    if type_nid != caller_nid:
+                        edges.append(_semantic_reference_edge(
+                            caller_nid, type_nid, "type", str_path, ref_line))
                 # [receiver sel] and [receiver kw1:a kw2:b] both parse to a
                 # message_expression whose selector parts carry the field name
                 # "method" (one for a simple selector, several for a compound one);
