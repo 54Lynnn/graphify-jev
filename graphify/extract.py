@@ -9492,9 +9492,10 @@ def _resolve_swift_member_calls(
     (#543/#1219). Swift extractors record the receiver of each member call and a
     per-file ``name -> type`` table (``swift_type_table``); this pass uses them to
     type the receiver, then emits an edge ONLY when that type name resolves to
-    exactly one definition. Everything it adds is INFERRED (type inference, not an
-    explicit import), and the line-12503 drop stays intact: this is purely
-    additive and fires only on receiver-typed Swift calls.
+    exactly one definition. A type-qualified call (``Type.staticMethod()``) is
+    EXTRACTED (the type is named explicitly in source); an instance call typed via
+    local inference (``obj.method()``) is INFERRED. The shared-pass member-call drop
+    stays intact: this is purely additive and fires only on receiver-typed Swift calls.
 
     Must run after id-disambiguation so node ids and caller_nids are final.
     """
@@ -9551,8 +9552,10 @@ def _resolve_swift_member_calls(
         # declaring file's local type table.
         if receiver[:1].isupper():
             type_name = receiver
+            type_qualified = True
         else:
             type_name = type_table_by_file.get(rc.get("source_file", ""), {}).get(receiver)
+            type_qualified = False
         if not type_name:
             continue
         type_defs = type_def_nids.get(_key(type_name), [])
@@ -9568,13 +9571,17 @@ def _resolve_swift_member_calls(
         if target == caller or (caller, target) in existing_pairs:
             continue
         existing_pairs.add((caller, target))
+        # A type-qualified call (`Type.staticMethod()`) names the receiver type
+        # explicitly in source, so it is an exact reference — EXTRACTED, matching
+        # the Python qualified-class-method pass (#1533). An instance call whose
+        # receiver type came from local inference (`obj.method()`) stays INFERRED.
         all_edges.append({
             "source": caller,
             "target": target,
             "relation": relation,
             "context": "call",
-            "confidence": "INFERRED",
-            "confidence_score": 0.8,
+            "confidence": "EXTRACTED" if type_qualified else "INFERRED",
+            "confidence_score": 1.0 if type_qualified else 0.8,
             "source_file": rc.get("source_file", ""),
             "source_location": rc.get("source_location"),
             "weight": 1.0,
