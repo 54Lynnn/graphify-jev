@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## Unreleased
+## 0.9.2 (2026-06-29)
 
 - Feat: type-aware Ruby member-call resolution (#1499, thanks @vamsipavanmahesh). `p.run` is now resolved by the inferred type of the receiver (`p = Processor.new` ⇒ `Processor#run`) instead of by globally-unique method name, so the edge survives name collisions (an unrelated `Worker#run` no longer makes it ambiguous) and never points at the wrong method. Introduces a small resolver-registry framework that the existing Swift (#1356) and Python (#1446) cross-file passes register into. Receiver types are inferred only from unambiguous local `var = ClassName.new` bindings; a call whose receiver type can't be proven resolves to nothing rather than to a guess — a deliberate precision-over-recall change for Ruby member calls.
 - Feat: resolve workspace imports through the package's `exports` map (#1308, thanks @guyoron1). A subpath import like `import { x } from "@scope/pkg/browser"` now resolves through the package.json `exports` map (string values, condition objects, nested conditions, and `./*` wildcard patterns) instead of falling back to a bare path string, falling back to the existing bare-path/index resolution when there's no exports map or no match. `default` is consulted last (Node's catch-all), and an export target that escapes the package directory is rejected.
