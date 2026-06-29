@@ -391,6 +391,42 @@ def _load_workspace_packages(start_dir: Path) -> dict[str, Path]:
     return packages
 
 
+# Condition keys consulted when resolving an `exports` target, in priority
+# order. `default` is Node's catch-all and must be consulted LAST so a more
+# specific condition (source/import/module/etc.) wins when several match.
+_EXPORT_CONDITION_PRIORITY = (
+    "source", "import", "module", "svelte", "types", "require", "default",
+)
+
+
+def _resolve_export_target(value: Any) -> str | None:
+    """Resolve an `exports` map value (string or condition object) to a
+    relative target string, honouring _EXPORT_CONDITION_PRIORITY for objects
+    and recursing into nested condition objects."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, dict):
+        for cond in _EXPORT_CONDITION_PRIORITY:
+            v = value.get(cond)
+            if isinstance(v, str):
+                return v
+            if isinstance(v, dict):
+                nested = _resolve_export_target(v)
+                if nested:
+                    return nested
+    return None
+
+
+def _contained_in_package(resolved: Path, package_dir: Path) -> bool:
+    """Guard against `exports` targets that escape the package directory
+    (e.g. "./evil": "../../../etc/passwd"). Only accept paths that stay
+    within package_dir after resolution."""
+    try:
+        return resolved.resolve().is_relative_to(package_dir.resolve())
+    except ValueError:
+        return False
+
+
 def _package_entry_candidates(package_dir: Path, subpath: str) -> list[Path]:
     manifest = package_dir / "package.json"
     manifest_data: dict[str, Any] = {}
@@ -400,20 +436,39 @@ def _package_entry_candidates(package_dir: Path, subpath: str) -> list[Path]:
         pass
 
     if subpath:
+        # Consult the package's `exports` subpath map before the bare-path
+        # fallback (#1308): "./browser" -> conditions -> file, plus single
+        # wildcard "./*" patterns. Targets that escape the package dir are
+        # rejected; resolution then falls through to the bare path.
+        exports = manifest_data.get("exports")
+        if isinstance(exports, dict):
+            subpath_key = "./" + subpath
+            target = _resolve_export_target(exports.get(subpath_key))
+            if target:
+                candidate = package_dir / target
+                if _contained_in_package(candidate, package_dir):
+                    return [candidate]
+            else:
+                for pattern, pattern_value in exports.items():
+                    if "*" in pattern and pattern.count("*") == 1:
+                        prefix, suffix = pattern.split("*", 1)
+                        if (subpath_key.startswith(prefix)
+                                and (not suffix or subpath_key.endswith(suffix))):
+                            matched = subpath_key[len(prefix):len(subpath_key) - len(suffix) if suffix else None]
+                            resolved = _resolve_export_target(pattern_value)
+                            if resolved and "*" in resolved:
+                                candidate = package_dir / resolved.replace("*", matched)
+                                if _contained_in_package(candidate, package_dir):
+                                    return [candidate]
         return [package_dir / subpath]
 
     exports = manifest_data.get("exports")
     if isinstance(exports, str):
         return [package_dir / exports]
     if isinstance(exports, dict):
-        dot_export = exports.get(".")
-        if isinstance(dot_export, str):
-            return [package_dir / dot_export]
-        if isinstance(dot_export, dict):
-            for key in ("types", "import", "default", "svelte"):
-                value = dot_export.get(key)
-                if isinstance(value, str):
-                    return [package_dir / value]
+        dot_target = _resolve_export_target(exports.get("."))
+        if dot_target:
+            return [package_dir / dot_target]
 
     candidates: list[Path] = []
     for key in ("svelte", "module", "main", "types"):
