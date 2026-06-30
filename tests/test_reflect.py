@@ -710,3 +710,173 @@ def test_dead_ends_and_corrections_dedupe_by_question():
     assert [d["question"] for d in agg["dead_ends"]] == ["ws server?"]
     assert len(agg["corrections"]) == 1
     assert agg["corrections"][0]["correction"] == "SHA-256"  # recency wins
+
+
+# --- work-memory overlay sidecar (.graphify_learning.json) --------------------
+#
+# The sidecar is a DERIVED experiential layer written next to graph.json; the
+# durable structural truth in graph.json is never stamped with learning_* fields.
+# It projects the reflect aggregate (preferred/tentative/contested) into a
+# per-node-id map with a code fingerprint for staleness and a provenance trail.
+
+from graphify.reflect import (  # noqa: E402
+    LEARNING_SIDECAR_NAME,
+    build_learning_overlay,
+    load_learning_overlay,
+    write_learning_sidecar,
+)
+
+
+def _overlay_graph(out: Path, nodes: list[dict]) -> None:
+    """Write a minimal graph.json under ``out`` with the given node dicts."""
+    out.mkdir(parents=True, exist_ok=True)
+    graph = {"directed": True, "multigraph": False, "graph": {},
+             "nodes": nodes, "links": []}
+    (out / "graph.json").write_text(json.dumps(graph), encoding="utf-8")
+
+
+def _overlay_corpus(mem: Path) -> None:
+    """A corpus with: a PREFERRED node (2 useful), a TENTATIVE node (1 useful),
+    a CONTESTED node (useful + dead_end), and a DEAD-END-ONLY node."""
+    _write_raw_doc(mem, "p1.md", "2026-05-01", outcome="useful",
+                   question="how do I auth?", nodes=["login()"])
+    _write_raw_doc(mem, "p2.md", "2026-05-10", outcome="useful",
+                   question="auth again", nodes=["login()"])
+    _write_raw_doc(mem, "t1.md", "2026-05-02", outcome="useful",
+                   question="cache?", nodes=["RedisClient"])
+    _write_raw_doc(mem, "c1.md", "2026-05-03", outcome="useful",
+                   question="contested useful", nodes=["Contested"])
+    _write_raw_doc(mem, "c2.md", "2026-05-04", outcome="dead_end",
+                   question="contested dead", nodes=["Contested"])
+    _write_raw_doc(mem, "d1.md", "2026-05-05", outcome="dead_end",
+                   question="led nowhere", nodes=["DeadEnd"])
+
+
+def test_sidecar_write_classifies_and_keys_by_canonical_id(tmp_path):
+    """reflect with a graph writes .graphify_learning.json next to graph.json with
+    the preferred/tentative/contested nodes keyed by canonical node id; the
+    dead-end-only node is NOT present; score/uses/provenance are carried."""
+    out = tmp_path / "graphify-out"
+    src = tmp_path / "auth.py"
+    src.write_text("def login(): pass\n", encoding="utf-8")
+    _overlay_graph(out, [
+        {"id": "auth_login", "label": "login()", "source_file": str(src), "community": 0},
+        {"id": "redis_client", "label": "RedisClient", "source_file": "", "community": 0},
+        {"id": "contested_node", "label": "Contested", "source_file": "", "community": 0},
+        {"id": "deadend_node", "label": "DeadEnd", "source_file": "", "community": 0},
+    ])
+    mem = out / "memory"
+    _overlay_corpus(mem)
+
+    reflect(mem, out / "reflections" / "LESSONS.md",
+            graph_path=out / "graph.json", now=_NOW)
+    sidecar = json.loads((out / LEARNING_SIDECAR_NAME).read_text(encoding="utf-8"))
+
+    assert sidecar["version"] == 1
+    assert sidecar["generated_at"] == _NOW.isoformat()
+    nodes = sidecar["nodes"]
+    # Keyed by canonical node id, not label.
+    assert nodes["auth_login"]["status"] == "preferred"
+    assert nodes["auth_login"]["uses"] == 2
+    assert nodes["auth_login"]["label"] == "login()"
+    assert isinstance(nodes["auth_login"]["score"], float)
+    assert nodes["auth_login"]["provenance"]  # captured during aggregation
+    assert nodes["redis_client"]["status"] == "tentative"
+    assert nodes["contested_node"]["status"] == "contested"
+    assert nodes["contested_node"]["verdict"] in ("useful", "dead end", "even")
+    # Dead-end-only node stays query-scoped — never in the overlay.
+    assert "deadend_node" not in nodes
+    # And learning_* is NOT stamped into graph.json (durable truth untouched).
+    graph = json.loads((out / "graph.json").read_text(encoding="utf-8"))
+    for n in graph["nodes"]:
+        assert not any(k.startswith("learning") for k in n)
+
+
+def test_sidecar_is_byte_identical_across_runs(tmp_path):
+    """Two reflect runs on identical input + fixed `now` produce a byte-identical
+    sidecar (sorted keys, stable indent)."""
+    out = tmp_path / "graphify-out"
+    src = tmp_path / "auth.py"
+    src.write_text("def login(): pass\n", encoding="utf-8")
+    _overlay_graph(out, [
+        {"id": "auth_login", "label": "login()", "source_file": str(src), "community": 0},
+    ])
+    mem = out / "memory"
+    _write_raw_doc(mem, "a.md", "2026-05-01", outcome="useful", nodes=["login()"])
+    _write_raw_doc(mem, "b.md", "2026-05-10", outcome="useful", nodes=["login()"])
+
+    reflect(mem, out / "reflections" / "LESSONS.md",
+            graph_path=out / "graph.json", now=_NOW)
+    first = (out / LEARNING_SIDECAR_NAME).read_bytes()
+    reflect(mem, out / "reflections" / "LESSONS.md",
+            graph_path=out / "graph.json", now=_NOW)
+    second = (out / LEARNING_SIDECAR_NAME).read_bytes()
+    assert first == second
+
+
+def test_loader_marks_entry_stale_when_source_file_changes(tmp_path):
+    """load_learning_overlay recomputes the file fingerprint: unchanged source =>
+    stale=False; an edit to that source => stale=True."""
+    out = tmp_path / "graphify-out"
+    src = tmp_path / "auth.py"
+    src.write_text("def login(): pass\n", encoding="utf-8")
+    _overlay_graph(out, [
+        {"id": "auth_login", "label": "login()", "source_file": str(src), "community": 0},
+    ])
+    mem = out / "memory"
+    _write_raw_doc(mem, "a.md", "2026-05-01", outcome="useful", nodes=["login()"])
+    _write_raw_doc(mem, "b.md", "2026-05-10", outcome="useful", nodes=["login()"])
+    reflect(mem, out / "reflections" / "LESSONS.md",
+            graph_path=out / "graph.json", now=_NOW)
+
+    fresh = load_learning_overlay(out / "graph.json")
+    assert fresh["auth_login"]["stale"] is False
+
+    src.write_text("def login(): return 1  # changed\n", encoding="utf-8")
+    after = load_learning_overlay(out / "graph.json")
+    assert after["auth_login"]["stale"] is True
+
+
+def test_provenance_capped_to_five_most_recent(tmp_path):
+    """A node cited by >5 useful results keeps exactly the 5 most-recent in
+    provenance (recent-first)."""
+    out = tmp_path / "graphify-out"
+    src = tmp_path / "auth.py"
+    src.write_text("x\n", encoding="utf-8")
+    _overlay_graph(out, [
+        {"id": "auth_login", "label": "login()", "source_file": str(src), "community": 0},
+    ])
+    mem = out / "memory"
+    for i in range(7):
+        _write_raw_doc(mem, f"u{i}.md", f"2026-05-{10 + i:02d}",
+                       outcome="useful", question=f"q{i}", nodes=["login()"])
+    reflect(mem, out / "reflections" / "LESSONS.md",
+            graph_path=out / "graph.json", now=_NOW)
+    sidecar = json.loads((out / LEARNING_SIDECAR_NAME).read_text(encoding="utf-8"))
+    prov = sidecar["nodes"]["auth_login"]["provenance"]
+    assert len(prov) == 5
+    # Most-recent first.
+    assert prov[0]["date"] == "2026-05-16"
+    assert prov[-1]["date"] == "2026-05-12"
+
+
+def test_ambiguous_or_unresolved_citation_is_skipped(tmp_path):
+    """A label shared by >1 node id (ambiguous) or absent from the graph
+    (unresolved) is skipped — it can't be displayed against a single node."""
+    out = tmp_path / "graphify-out"
+    _overlay_graph(out, [
+        {"id": "dup_a", "label": "Dup", "source_file": "", "community": 0},
+        {"id": "dup_b", "label": "Dup", "source_file": "", "community": 0},
+        {"id": "solo", "label": "Solo", "source_file": "", "community": 0},
+    ])
+    mem = out / "memory"
+    _write_raw_doc(mem, "a.md", "2026-05-01", outcome="useful", nodes=["Dup"])
+    _write_raw_doc(mem, "b.md", "2026-05-02", outcome="useful", nodes=["Dup"])
+    _write_raw_doc(mem, "c.md", "2026-05-03", outcome="useful", nodes=["Solo"])
+    _write_raw_doc(mem, "d.md", "2026-05-04", outcome="useful", nodes=["Solo"])
+    reflect(mem, out / "reflections" / "LESSONS.md",
+            graph_path=out / "graph.json", now=_NOW)
+    nodes = json.loads((out / LEARNING_SIDECAR_NAME).read_text(encoding="utf-8"))["nodes"]
+    # Ambiguous "Dup" skipped; only the unambiguous "Solo" survives.
+    assert "dup_a" not in nodes and "dup_b" not in nodes
+    assert "solo" in nodes

@@ -184,6 +184,75 @@ def test_to_html_member_counts_accepted():
         assert out.exists()
 
 
+def _vis_nodes_from_html(content: str) -> list:
+    """Extract the RAW_NODES JSON array embedded in the generated HTML."""
+    m = re.search(r"const RAW_NODES = (\[.*?\]);", content, re.DOTALL)
+    assert m, "RAW_NODES not found in HTML"
+    return json.loads(m.group(1).replace("<\\/", "</"))
+
+
+def test_to_html_annotated_node_gets_learning_status_and_ring():
+    """A node with an overlay entry gets learning_status + learning_stale fields,
+    a status-colored ring (border), and a Lesson line in its hover title."""
+    G = make_graph()
+    communities = cluster(G)
+    overlay = {
+        "n_transformer": {"status": "preferred", "uses": 3, "score": 2.4,
+                          "stale": False, "neg": 0},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "graph.html"
+        to_html(G, communities, str(out), learning_overlay=overlay)
+        content = out.read_text()
+    nodes = {n["id"]: n for n in _vis_nodes_from_html(content)}
+    ann = nodes["n_transformer"]
+    assert ann["learning_status"] == "preferred"
+    assert ann["learning_stale"] is False
+    assert ann["color"]["border"] == "#22c55e"  # green ring for preferred
+    assert ann.get("borderWidth") == 3
+    assert "Lesson: preferred source" in ann["title"]
+    # An un-annotated node carries no learning fields.
+    other = next(n for nid, n in nodes.items() if nid != "n_transformer")
+    assert "learning_status" not in other
+    assert "learning_stale" not in other
+
+
+def test_to_html_contested_stale_node_gets_dashed_desaturated_ring():
+    G = make_graph()
+    communities = cluster(G)
+    overlay = {
+        "n_transformer": {"status": "contested", "uses": 2, "neg": 1,
+                          "verdict": "dead end", "stale": True},
+    }
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "graph.html"
+        to_html(G, communities, str(out), learning_overlay=overlay)
+        content = out.read_text()
+    ann = {n["id"]: n for n in _vis_nodes_from_html(content)}["n_transformer"]
+    assert ann["learning_status"] == "contested"
+    assert ann["learning_stale"] is True
+    assert ann["color"]["border"] == "#9ca3af"  # desaturated when stale
+    assert ann["shapeProperties"]["borderDashes"] == [4, 4]
+    assert "code changed" in ann["title"]
+
+
+def test_to_html_unannotated_identical_to_pre_feature():
+    """With no overlay, the HTML is byte-identical whether learning_overlay is
+    omitted or passed empty — no learning fields leak into the un-annotated render."""
+    G = make_graph()
+    communities = cluster(G)
+    with tempfile.TemporaryDirectory() as tmp:
+        a = Path(tmp) / "a.html"
+        b = Path(tmp) / "b.html"
+        to_html(G, communities, str(a))
+        to_html(G, communities, str(b), learning_overlay={})
+        # Output path appears in the title, so compare with paths normalized out.
+        ca = a.read_text().replace("a.html", "X.html")
+        cb = b.read_text().replace("b.html", "X.html")
+    assert ca == cb
+    assert "learning_status" not in ca
+
+
 def test_to_canvas_file_paths_relative_to_vault():
     """Node file paths in canvas must be vault-root-relative (just fname.md), not hardcoded."""
     G = make_graph()

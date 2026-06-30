@@ -3186,6 +3186,30 @@ def main() -> None:
         )
         print(f"  Type:      {d.get('file_type', '')}")
         print(f"  Community: {d.get('community_name') or d.get('community', '')}")
+        # Work-memory overlay: a derived experiential hint from `graphify reflect`,
+        # merged in display-only from the .graphify_learning.json sidecar next to
+        # graph.json. No line when the node has no overlay entry.
+        try:
+            from graphify.reflect import load_learning_overlay as _llo
+            from graphify.security import sanitize_label as _sl
+            _overlay = _llo(gp)
+            _entry = _overlay.get(str(nid))
+            if _entry:
+                _status = _sl(str(_entry.get("status", "")))
+                if _status == "contested":
+                    _line = (f"  Lesson: contested (useful {_entry.get('uses', 0)} / "
+                             f"dead-end {_entry.get('neg', 0)})")
+                elif _status == "preferred":
+                    _line = (f"  Lesson: preferred source (start here) — "
+                             f"{_entry.get('uses', 0)} useful, score={_entry.get('score', 0)}")
+                else:
+                    _line = (f"  Lesson: {_status or 'tentative'} — "
+                             f"{_entry.get('uses', 0)} useful, score={_entry.get('score', 0)}")
+                if _entry.get("stale"):
+                    _line += " [code changed since — re-verify]"
+                print(_line)
+        except Exception:
+            pass
         print(f"  Degree:    {G.degree(nid)}")
         from graphify.build import edge_data
         connections: list[tuple[str, str, dict]] = []  # (direction, neighbor_id, edge_data)
@@ -3529,10 +3553,12 @@ def main() -> None:
         tokens = {"input": 0, "output": 0}
         from graphify.export import _git_head as _gh
         _commit = _gh()
+        from graphify.report import load_learning_for_report as _llfr
         report = generate(G, communities, cohesion, labels, gods, surprises,
                           {"warning": "cluster-only mode — file stats not available"},
                           tokens, str(watch_path), suggested_questions=questions,
-                          min_community_size=min_community_size, built_at_commit=_commit)
+                          min_community_size=min_community_size, built_at_commit=_commit,
+                          learning=_llfr(out / "graph.json"))
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
         stages.mark("report")
         from graphify.export import backup_if_protected as _backup

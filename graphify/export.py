@@ -636,6 +636,7 @@ def to_html(
     community_labels: dict[int, str] | None = None,
     member_counts: dict[int, int] | None = None,
     node_limit: int | None = None,
+    learning_overlay: dict | None = None,
 ) -> None:
     """Generate an interactive vis.js HTML visualization of the graph.
 
@@ -713,6 +714,21 @@ def to_html(
     max_deg = max(degree.values(), default=1) or 1
     max_mc = (max(member_counts.values(), default=1) or 1) if member_counts else 1
 
+    # Work-memory overlay (derived sidecar). When not passed explicitly, load it
+    # best-effort from the sibling .graphify_learning.json next to the output
+    # graph.html (which lives beside graph.json). Empty/missing => no learning
+    # fields, so the un-annotated render is byte-identical to pre-feature.
+    if learning_overlay is None:
+        learning_overlay = {}
+        try:
+            from graphify.reflect import load_learning_overlay as _llo
+            learning_overlay = _llo(Path(output_path))
+        except Exception:
+            learning_overlay = {}
+    # Status -> ring color. preferred=green, contested=amber. Tentative gets no
+    # ring (it's not yet trustworthy enough to highlight in the map).
+    _RING = {"preferred": "#22c55e", "contested": "#f59e0b"}
+
     # Build nodes list for vis.js
     vis_nodes = []
     for node_id, data in G.nodes(data=True):
@@ -728,7 +744,7 @@ def to_html(
             size = 10 + 30 * (deg / max_deg)
             # Only show label for high-degree nodes by default; others show on hover
             font_size = 12 if deg >= max_deg * 0.15 else 0
-        vis_nodes.append({
+        node = {
             "id": node_id,
             "label": label,
             "color": {"background": color, "border": color, "highlight": {"background": "#ffffff", "border": color}},
@@ -740,7 +756,38 @@ def to_html(
             "source_file": sanitize_label(str(data.get("source_file") or "")),
             "file_type": data.get("file_type", ""),
             "degree": deg,
-        })
+        }
+        # Conditional learning fields — only present for annotated nodes, so
+        # un-annotated output keeps the exact pre-feature node dict shape.
+        entry = learning_overlay.get(str(node_id)) if learning_overlay else None
+        if entry:
+            status = sanitize_label(str(entry.get("status", "")))
+            stale = bool(entry.get("stale"))
+            node["learning_status"] = status
+            node["learning_stale"] = stale
+            ring = _RING.get(status)
+            if ring:
+                # Status-colored ring via the border; stale => desaturated +
+                # dashed (vis.js supports per-node `shapeProperties.borderDashes`).
+                if stale:
+                    ring = "#9ca3af"
+                    node["shapeProperties"] = {"borderDashes": [4, 4]}
+                node["borderWidth"] = 3
+                node["color"] = {
+                    "background": color, "border": ring,
+                    "highlight": {"background": "#ffffff", "border": ring},
+                }
+            # Lesson line appended to the hover title.
+            if status == "contested":
+                lesson = f"Lesson: contested (useful {entry.get('uses', 0)} / dead-end {entry.get('neg', 0)})"
+            elif status == "preferred":
+                lesson = f"Lesson: preferred source ({entry.get('uses', 0)} useful, score={entry.get('score', 0)})"
+            else:
+                lesson = f"Lesson: {status} ({entry.get('uses', 0)} useful)"
+            if stale:
+                lesson += " [code changed — re-verify]"
+            node["title"] = _html.escape(label) + "\n" + _html.escape(sanitize_label(lesson))
+        vis_nodes.append(node)
 
     # Build edges list. Restore original edge direction from _src/_tgt
     # (stashed by build.py for exactly this reason): undirected NetworkX

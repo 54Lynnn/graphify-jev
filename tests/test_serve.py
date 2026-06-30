@@ -379,6 +379,54 @@ def test_subgraph_to_text_includes_edge_context():
     assert "context=call" in text
 
 
+# --- work-memory overlay annotation on NODE lines -----------------------------
+
+def test_subgraph_to_text_annotates_node_with_learning_status():
+    """An annotated node gets a `learning=<status>` suffix inside its NODE
+    bracket; an un-annotated node gets none."""
+    G = _make_graph()
+    G.graph["_learning_overlay"] = {
+        "n1": {"status": "preferred", "stale": False},
+    }
+    text = _subgraph_to_text(G, {"n1", "n2"}, [("n1", "n2")])
+    lines = {l.split()[1]: l for l in text.splitlines() if l.startswith("NODE ")}
+    assert "learning=preferred]" in lines["extract"]
+    assert "learning=" not in lines["cluster"]  # un-annotated node
+
+
+def test_subgraph_to_text_marks_stale_status():
+    G = _make_graph()
+    G.graph["_learning_overlay"] = {"n1": {"status": "contested", "stale": True}}
+    text = _subgraph_to_text(G, {"n1"}, [])
+    assert "learning=contested:stale]" in text
+
+
+def test_subgraph_to_text_learning_suffix_counts_against_budget():
+    """The learning= suffix is part of the NODE line BEFORE the budget cut, so it
+    is included in the char_budget accounting (a budget tight enough to fit the
+    bare line but not the suffixed line forces truncation)."""
+    G = _make_graph()
+    bare = _subgraph_to_text(G, {"n1", "n2", "n3"}, [])
+    # token_budget chosen so the un-annotated render fits without truncation...
+    budget = (len(bare) // 3) + 1
+    assert "truncated" not in _subgraph_to_text(G, {"n1", "n2", "n3"}, [],
+                                                token_budget=budget)
+    # ...but once every node carries a learning= suffix, the same budget overflows.
+    G.graph["_learning_overlay"] = {
+        n: {"status": "preferred", "stale": False} for n in ("n1", "n2", "n3")
+    }
+    annotated = _subgraph_to_text(G, {"n1", "n2", "n3"}, [], token_budget=budget)
+    assert "learning=preferred" in annotated
+    assert "truncated" in annotated
+
+
+def test_subgraph_to_text_no_overlay_is_unchanged():
+    """With no overlay on the graph, NODE lines carry no learning= suffix."""
+    G = _make_graph()
+    text = _subgraph_to_text(G, {"n1", "n2"}, [("n1", "n2")])
+    assert "learning=" not in text
+
+
 def test_query_graph_text_explicit_context_filter_changes_traversal():
     G = _make_graph()
     text = _query_graph_text(G, "extract", mode="bfs", depth=2, token_budget=2000, context_filters=["call"])
