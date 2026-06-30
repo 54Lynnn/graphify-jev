@@ -863,6 +863,56 @@ def test_relative_source_file_not_spuriously_stale_in_graphify_out_layout(tmp_pa
     assert load_learning_overlay(out / "graph.json")["auth_login"]["stale"] is True
 
 
+def test_relative_source_file_resolved_via_graphify_root_marker(tmp_path):
+    """When a committed .graphify_root marker records the project root (e.g. a
+    GRAPHIFY_OUT override pointing the output dir elsewhere), the fingerprint
+    resolves source_file against that root, not graph.json's own dir."""
+    proj = tmp_path / "project"
+    proj.mkdir()
+    (proj / "auth.py").write_text("def login(): pass\n", encoding="utf-8")
+    out = tmp_path / "elsewhere-out"          # output dir NOT under the project
+    _overlay_graph(out, [
+        {"id": "auth_login", "label": "login()", "source_file": "auth.py", "community": 0},
+    ])
+    (out / ".graphify_root").write_text(str(proj), encoding="utf-8")  # the marker
+    mem = out / "memory"
+    _write_raw_doc(mem, "a.md", "2026-05-01", outcome="useful", nodes=["login()"])
+    _write_raw_doc(mem, "b.md", "2026-05-10", outcome="useful", nodes=["login()"])
+    reflect(mem, out / "reflections" / "LESSONS.md",
+            graph_path=out / "graph.json", now=_NOW)
+    assert load_learning_overlay(out / "graph.json")["auth_login"]["stale"] is False
+
+
+def test_flat_layout_does_not_match_same_named_file_one_dir_up(tmp_path):
+    """In a flat layout (graph.json at the project root), the resolver must use the
+    graph's own dir, not its parent — otherwise a same-named file one level up
+    would be fingerprinted instead, producing a wrong staleness verdict."""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / "util.py").write_text("REAL = 1\n", encoding="utf-8")
+    # A decoy same-named file in the parent dir (tmp_path / util.py).
+    (tmp_path / "util.py").write_text("DECOY = 2\n", encoding="utf-8")
+    # Flat layout: graph.json sits directly in proj/ (not a graphify-out subdir).
+    proj.joinpath("graph.json").write_text(json.dumps({
+        "nodes": [{"id": "util", "label": "util.py", "source_file": "util.py",
+                   "source_location": "L1", "community": 0}],
+        "links": [],
+    }), encoding="utf-8")
+    mem = proj / "memory"
+    _write_raw_doc(mem, "a.md", "2026-05-01", outcome="useful", nodes=["util.py"])
+    _write_raw_doc(mem, "b.md", "2026-05-10", outcome="useful", nodes=["util.py"])
+    reflect(mem, proj / "reflections" / "LESSONS.md",
+            graph_path=proj / "graph.json", now=_NOW)
+    # Not stale on a clean build...
+    assert load_learning_overlay(proj / "graph.json")["util"]["stale"] is False
+    # ...and editing the REAL file (proj/util.py) flips it, while editing the
+    # decoy (parent) does not — proving the resolver bound to the right file.
+    (tmp_path / "util.py").write_text("DECOY = 999\n", encoding="utf-8")
+    assert load_learning_overlay(proj / "graph.json")["util"]["stale"] is False
+    (proj / "util.py").write_text("REAL = 999\n", encoding="utf-8")
+    assert load_learning_overlay(proj / "graph.json")["util"]["stale"] is True
+
+
 def test_provenance_capped_to_five_most_recent(tmp_path):
     """A node cited by >5 useful results keeps exactly the 5 most-recent in
     provenance (recent-first)."""

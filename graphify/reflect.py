@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from graphify.ingest import OUTCOMES
+from graphify.paths import GRAPHIFY_OUT_NAME
 
 _UNCATEGORIZED = "Uncategorized"
 
@@ -669,12 +670,17 @@ def _resolve_source_path(src: str, graph_path: Path) -> Path | None:
 
     ``source_file`` is stored relative to the PROJECT root, but graph.json may
     live in ``<root>/graphify-out/`` (so its own dir is not the root) or directly
-    at the root (``extract --out .``). Rather than guess the root from a directory
-    name (brittle: a ``GRAPHIFY_OUT`` override changes it), try the likely roots in
-    order and return the first where the file actually exists. The same candidate
-    search runs at write and read time, so the writer and reader resolve to the
-    same file. Order: the committed ``.graphify_root`` marker (#686), then the
-    graphify-out-parent, then graph.json's own dir, then the cwd.
+    at the root (``extract --out .``). Resolve the root in the most-likely order
+    and return the first candidate where the file actually exists, so a defeated
+    heuristic or a stale marker can never strand the file (every node would then
+    look "changed"). The same search runs at write and read time, so the writer
+    and reader resolve to the same file.
+
+    Order: the committed ``.graphify_root`` marker (#686/#1423 — authoritative for
+    an absolute/elsewhere ``GRAPHIFY_OUT`` override); then the layout-appropriate
+    root *first* — graph.json's parent's parent for the ``graphify-out`` layout,
+    or graph.json's own dir for a flat layout — which avoids matching a same-named
+    file one directory up; then the other of the two; then the cwd.
     """
     if not src:
         return None
@@ -682,14 +688,20 @@ def _resolve_source_path(src: str, graph_path: Path) -> Path | None:
     if p.is_absolute():
         return p if p.is_file() else None
     gp = Path(graph_path)
+    out_dir = gp.parent
     candidates: list[Path] = []
-    marker = gp.parent / ".graphify_root"
     try:
-        if marker.is_file():
-            candidates.append(Path(marker.read_text(encoding="utf-8").strip()))
-    except OSError:
-        pass
-    candidates += [gp.parent.parent, gp.parent, Path(".")]
+        recorded = (out_dir / ".graphify_root").read_text(encoding="utf-8").strip()
+        if recorded:
+            candidates.append(Path(recorded))
+    except (OSError, ValueError):
+        pass  # unreadable/non-UTF-8 marker -> fall through (best-effort)
+    # Layout-appropriate root first (precision), then the other (robustness).
+    if out_dir.name == GRAPHIFY_OUT_NAME:
+        candidates += [out_dir.parent, out_dir]
+    else:
+        candidates += [out_dir, out_dir.parent]
+    candidates.append(Path("."))
     seen: set[str] = set()
     for base in candidates:
         key = str(base)
