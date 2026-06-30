@@ -33,6 +33,7 @@ from graphify.extractors.csharp import _resolve_csharp_type_references
 from graphify.extractors.elixir import extract_elixir  # noqa: F401
 from graphify.extractors.razor import extract_razor  # noqa: F401
 from graphify.extractors.zig import extract_zig  # noqa: F401
+from graphify.paths import disambiguate_ambiguous_candidates
 
 _RECURSION_LIMIT = 10_000
 
@@ -13976,10 +13977,15 @@ def extract(
     # "did the caller's file import the callee's file?"
     # Use relativized paths to match how file node IDs were remapped above (#502).
     nid_to_file_nid: dict[str, str] = {}
+    # nid -> raw source_file string, for the ambiguous-name tie-breakers below
+    # (test/non-test classification + path proximity). Kept separate from the
+    # file-node-id map because tie-breaking compares the actual file paths.
+    nid_to_source_file: dict[str, str] = {}
     for n in all_nodes:
         sf = n.get("source_file")
         if not sf:
             continue
+        nid_to_source_file[n["id"]] = str(sf)
         sf_path = Path(sf)
         try:
             sf_rel = sf_path.relative_to(root) if sf_path.is_absolute() else sf_path
@@ -14031,6 +14037,7 @@ def extract(
             symbol_matches = [c for c in candidates if c in imported_symbols]
             if len(symbol_matches) == 1:
                 tgt = symbol_matches[0]
+                has_import_evidence = True
             else:
                 module_matches = [
                     c for c in candidates
@@ -14038,9 +14045,22 @@ def extract(
                 ]
                 if len(module_matches) == 1:
                     tgt = module_matches[0]
+                    has_import_evidence = True
                 else:
-                    continue
-            has_import_evidence = True
+                    # No unique import evidence. Instead of dropping the edge
+                    # outright (which let a single same-named test mock erase the
+                    # real call graph, #1553), apply the shared god-node
+                    # tie-breakers (non-test preference, then path proximity).
+                    # Resolve only if exactly one candidate survives; otherwise
+                    # the #543/#1219 guard still holds and we skip.
+                    tgt = disambiguate_ambiguous_candidates(
+                        candidates,
+                        {c: nid_to_source_file.get(c, "") for c in candidates},
+                        rc.get("source_file", ""),
+                    )
+                    if tgt is None:
+                        continue
+                    has_import_evidence = False
         if tgt != caller and (caller, tgt) not in existing_pairs:
             existing_pairs.add((caller, tgt))
             # Promote to EXTRACTED when there's a direct import edge from the
