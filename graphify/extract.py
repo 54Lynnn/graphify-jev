@@ -4453,8 +4453,27 @@ def _extract_generic(
                         # 1. shadowing: a param / local binding is not the module fn
                         if ident_name in enclosing_locals:
                             continue
+                        if ident_name in ("self", "cls"):
+                            continue  # never a module-level callable reference
                         ref_nid = label_to_nid.get(ident_name)
-                        if not ref_nid or ref_nid == caller_nid:
+                        if ref_nid is None:
+                            # Callback defined in ANOTHER file (e.g. `from .h import fn;
+                            # pool.submit(fn)`). The in-file label map can't see it, so
+                            # defer to the cross-file resolvers, which apply the same
+                            # single-definition god-node guard plus a callable-target
+                            # check before emitting an INFERRED `indirect_call`. The
+                            # shadowing guard above has already run, so a parameter /
+                            # local binding never reaches here.
+                            raw_calls.append({
+                                "caller_nid": caller_nid,
+                                "callee": ident_name,
+                                "is_member_call": False,
+                                "indirect": True,
+                                "source_file": str_path,
+                                "source_location": f"L{ident.start_point[0] + 1}",
+                            })
+                            continue
+                        if ref_nid == caller_nid:
                             continue
                         # 2. callable target only: never an arbitrary data/same-named node
                         if ref_nid not in callable_def_nids:
@@ -4654,6 +4673,12 @@ def _extract_generic(
             clean_edges.append(edge)
 
     result = {"nodes": nodes, "edges": clean_edges, "raw_calls": raw_calls}
+    if callable_def_nids:
+        # Function / method / class def ids in this file. The cross-file
+        # indirect_call resolvers use the union of these to ensure a callback
+        # passed by name resolves only to a real callable, never a same-named
+        # data symbol (mirrors the in-file `callable_def_nids` guard).
+        result["callable_nids"] = sorted(callable_def_nids)
     if swift_extensions:
         result["swift_extensions"] = swift_extensions
     if type_table:
@@ -14780,10 +14805,15 @@ def extract(
     all_nodes: list[dict] = []
     all_edges: list[dict] = []
     all_raw_calls: list[dict] = []
+    # Union of every file's function / method / class def ids. The cross-file
+    # indirect_call pass resolves a callback passed by name only to one of these,
+    # so a same-named data symbol can never become an indirect-dispatch target.
+    callable_nids: set[str] = set()
     for result in per_file:
         all_nodes.extend(result.get("nodes", []))
         all_edges.extend(result.get("edges", []))
         all_raw_calls.extend(result.get("raw_calls", []))
+        callable_nids.update(result.get("callable_nids", ()))
 
     _augment_symbol_resolution_edges(paths, all_nodes, all_edges, root)
 
@@ -15069,6 +15099,31 @@ def extract(
                         continue
                     has_import_evidence = False
         if tgt != caller and (caller, tgt) not in existing_pairs:
+            if rc.get("indirect"):
+                # Cross-file indirect dispatch: a callback passed BY NAME
+                # (`from .h import fn; pool.submit(fn)`). Resolved through the
+                # same single-definition / import-evidence candidate logic as a
+                # direct call, but emitted as a distinct INFERRED `indirect_call`
+                # and ONLY when the target is a real callable def — never a
+                # same-named data symbol. Stays INFERRED even with import
+                # evidence: the name is referenced as a value here, not invoked.
+                # An existing direct `calls` edge for this pair already pre-empts
+                # it via the existing_pairs guard above.
+                if tgt not in callable_nids:
+                    continue
+                existing_pairs.add((caller, tgt))
+                all_edges.append({
+                    "source": caller,
+                    "target": tgt,
+                    "relation": "indirect_call",
+                    "context": "argument",
+                    "confidence": "INFERRED",
+                    "confidence_score": 0.8,
+                    "source_file": rc.get("source_file", ""),
+                    "source_location": rc.get("source_location"),
+                    "weight": 1.0,
+                })
+                continue
             existing_pairs.add((caller, tgt))
             # Promote to EXTRACTED when there's a direct import edge from the
             # caller's file pointing at either the callee symbol itself or the
