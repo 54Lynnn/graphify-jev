@@ -664,8 +664,57 @@ def _resolve_canonical_id(cited: str, id_set: dict[str, str],
     return None
 
 
-def _code_fingerprint(node: dict[str, Any] | None, root: Path) -> str:
-    """File-level content hash of the node's ``source_file``, or '' if unavailable.
+def _resolve_source_path(src: str, graph_path: Path) -> Path | None:
+    """Locate a node's ``source_file`` on disk, returning an existing file or None.
+
+    ``source_file`` is stored relative to the PROJECT root, but graph.json may
+    live in ``<root>/graphify-out/`` (so its own dir is not the root) or directly
+    at the root (``extract --out .``). Rather than guess the root from a directory
+    name (brittle: a ``GRAPHIFY_OUT`` override changes it), try the likely roots in
+    order and return the first where the file actually exists. The same candidate
+    search runs at write and read time, so the writer and reader resolve to the
+    same file. Order: the committed ``.graphify_root`` marker (#686), then the
+    graphify-out-parent, then graph.json's own dir, then the cwd.
+    """
+    if not src:
+        return None
+    p = Path(src)
+    if p.is_absolute():
+        return p if p.is_file() else None
+    gp = Path(graph_path)
+    candidates: list[Path] = []
+    marker = gp.parent / ".graphify_root"
+    try:
+        if marker.is_file():
+            candidates.append(Path(marker.read_text(encoding="utf-8").strip()))
+    except OSError:
+        pass
+    candidates += [gp.parent.parent, gp.parent, Path(".")]
+    seen: set[str] = set()
+    for base in candidates:
+        key = str(base)
+        if key in seen:
+            continue
+        seen.add(key)
+        cand = base / p
+        if cand.is_file():
+            return cand
+    return None
+
+
+def _content_hash(path: Path) -> str:
+    """SHA256 of file CONTENT only (no path mixed in), so the fingerprint is
+    independent of which root resolved the file — write and read agree, and a
+    committed sidecar stays valid across machines/checkouts."""
+    import hashlib
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+def _code_fingerprint(node: dict[str, Any] | None, graph_path: Path) -> str:
+    """Content hash of the node's ``source_file``, or '' if unavailable.
 
     Coarse on purpose — a file-level hash over-flags (any edit to the file marks
     every node in it stale) rather than under-flags, which is the safe direction
@@ -673,17 +722,8 @@ def _code_fingerprint(node: dict[str, Any] | None, root: Path) -> str:
     """
     if not node:
         return ""
-    src = node.get("source_file")
-    if not src:
-        return ""
-    try:
-        from graphify.cache import file_hash
-        p = Path(src)
-        if not p.is_absolute():
-            p = (Path(root) / p)
-        return file_hash(p, root)
-    except Exception:
-        return ""
+    sp = _resolve_source_path(node.get("source_file") or "", graph_path)
+    return _content_hash(sp) if sp is not None else ""
 
 
 def _provenance_for(node: str, prov_map: dict[str, list],
@@ -718,7 +758,6 @@ def build_learning_overlay(agg: dict[str, Any], graph_path: Path,
         now = now.replace(tzinfo=timezone.utc)
 
     graph_path = Path(graph_path)
-    root = graph_path.parent
     id_set, label_to_ids, node_by_id = _build_id_label_maps(graph_path)
     prov_map = agg.get("_node_provenance", {})
 
@@ -742,7 +781,7 @@ def build_learning_overlay(agg: dict[str, Any], graph_path: Path,
             "last": entry_src.get("last", ""),
             "label": str(node.get("label", cited)) if node else str(cited),
             "source_file": str(node.get("source_file") or "") if node else "",
-            "code_fingerprint": _code_fingerprint(node, root),
+            "code_fingerprint": _code_fingerprint(node, graph_path),
             "provenance": _provenance_for(cited, prov_map, status),
         }
         if status == "contested":
@@ -804,36 +843,28 @@ def load_learning_overlay(graph_path: Path) -> dict[str, dict[str, Any]]:
     nodes = data.get("nodes")
     if not isinstance(nodes, dict):
         return {}
-    root = Path(graph_path).parent
     out: dict[str, dict[str, Any]] = {}
     for nid, entry in nodes.items():
         if not isinstance(entry, dict):
             continue
         merged = dict(entry)
-        merged["stale"] = _is_stale(entry, root)
+        merged["stale"] = _is_stale(entry, graph_path)
         out[str(nid)] = merged
     return out
 
 
-def _is_stale(entry: dict[str, Any], root: Path) -> bool:
+def _is_stale(entry: dict[str, Any], graph_path: Path) -> bool:
     """True if the node's source file changed (or vanished) since the fingerprint
-    was taken."""
-    stored = entry.get("code_fingerprint", "")
+    was taken. Uses the same file resolution + content hash as the writer, so a
+    freshly-written verdict on unchanged code is never spuriously stale."""
     src = entry.get("source_file", "")
     if not src:
-        # No file to track. Stale only if a fingerprint was stored yet there's
-        # nothing to compare against — treat as not stale (nothing to re-verify).
+        # No file to track — nothing to re-verify.
         return False
-    p = Path(src)
-    if not p.is_absolute():
-        p = root / p
-    if not p.exists():
-        return True  # file gone — definitely re-verify
-    try:
-        from graphify.cache import file_hash
-        current = file_hash(p, root)
-    except Exception:
-        return bool(stored)  # couldn't recompute; flag iff we had something to compare
+    sp = _resolve_source_path(src, graph_path)
+    if sp is None:
+        return True  # file gone / unfindable — re-verify
+    stored = entry.get("code_fingerprint", "")
     if not stored:
         return True  # had a file but never fingerprinted it -> can't trust -> stale
-    return current != stored
+    return _content_hash(sp) != stored

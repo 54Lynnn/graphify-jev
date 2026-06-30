@@ -837,6 +837,32 @@ def test_loader_marks_entry_stale_when_source_file_changes(tmp_path):
     assert after["auth_login"]["stale"] is True
 
 
+def test_relative_source_file_not_spuriously_stale_in_graphify_out_layout(tmp_path):
+    """Regression: with a RELATIVE source_file and graph.json under graphify-out/,
+    a freshly-written verdict must NOT be flagged stale. The fingerprint resolves
+    the file relative to the PROJECT root (tmp_path), not graph.json's own dir
+    (graphify-out/) — otherwise every node looked unfindable and was marked stale.
+    The edit case must still flip stale=True."""
+    out = tmp_path / "graphify-out"          # graph.json lives here
+    (tmp_path / "auth.py").write_text("def login(): pass\n", encoding="utf-8")
+    _overlay_graph(out, [
+        # source_file is RELATIVE to the project root (tmp_path), as `extract` writes it
+        {"id": "auth_login", "label": "login()", "source_file": "auth.py", "community": 0},
+    ])
+    mem = out / "memory"
+    _write_raw_doc(mem, "a.md", "2026-05-01", outcome="useful", nodes=["login()"])
+    _write_raw_doc(mem, "b.md", "2026-05-10", outcome="useful", nodes=["login()"])
+    reflect(mem, out / "reflections" / "LESSONS.md",
+            graph_path=out / "graph.json", now=_NOW)
+
+    fresh = load_learning_overlay(out / "graph.json")
+    assert fresh["auth_login"]["status"] == "preferred"
+    assert fresh["auth_login"]["stale"] is False  # the bug: was spuriously True
+
+    (tmp_path / "auth.py").write_text("def login(): return 1  # changed\n", encoding="utf-8")
+    assert load_learning_overlay(out / "graph.json")["auth_login"]["stale"] is True
+
+
 def test_provenance_capped_to_five_most_recent(tmp_path):
     """A node cited by >5 useful results keeps exactly the 5 most-recent in
     provenance (recent-first)."""
