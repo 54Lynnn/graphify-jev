@@ -148,7 +148,41 @@ def _check_skill_version(skill_dst: Path) -> None:
     except OSError:
         return
     if installed != __version__:
-        print(f"  warning: skill is from graphify {installed}, package is {__version__}. Run 'graphify install' to update.", file=sys.stderr)
+        if _version_tuple(installed) > _version_tuple(__version__):
+            # The skill on disk is NEWER than the running package. `graphify install`
+            # writes the package's OWN (older) bundled skill and re-stamps the version,
+            # so following the old "run install" advice would silently DOWNGRADE the
+            # skill. The real fix is to upgrade the package (#1568). Common for a stale
+            # `uv tool` CLI, or a contributor whose dev checkout stamped a newer skill.
+            print(
+                f"  warning: skill is from graphify {installed}, but the package is "
+                f"{__version__} (older). Upgrade the package "
+                f"(e.g. 'uv tool upgrade graphifyy' or 'pip install -U graphifyy'); "
+                f"running 'graphify install' would downgrade the skill.",
+                file=sys.stderr,
+            )
+        else:
+            print(f"  warning: skill is from graphify {installed}, package is {__version__}. Run 'graphify install' to update.", file=sys.stderr)
+
+
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """Parse a version string into a comparable integer tuple (``0.9.2`` -> ``(0, 9, 2)``).
+
+    Reads the leading digits of each dot-segment, so pre/post-release suffixes
+    (``1.0.0rc1``) compare by their numeric core. A non-numeric or empty segment
+    becomes 0, so a malformed stamp degrades to a conservative comparison rather
+    than raising.
+    """
+    parts: list[int] = []
+    for segment in str(version).split("."):
+        digits = ""
+        for ch in segment:
+            if ch.isdigit():
+                digits += ch
+            else:
+                break
+        parts.append(int(digits) if digits else 0)
+    return tuple(parts)
 
 
 def _refresh_all_version_stamps() -> None:
