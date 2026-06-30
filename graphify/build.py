@@ -547,8 +547,15 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
                 ".ts": "js", ".tsx": "js",
                 ".go": "go", ".rs": "rs",
                 ".java": "jvm", ".kt": "jvm", ".scala": "jvm", ".groovy": "jvm",
-                ".c": "c", ".h": "c", ".cc": "cpp", ".cpp": "cpp", ".hpp": "cpp",
-                ".cu": "cpp", ".cuh": "cpp", ".metal": "cpp",
+                # C, C++, and ObjC interoperate within one compilation unit: a method
+                # declared in a shared `.h` is defined/called from a `.c`/`.cpp`/`.m`
+                # sibling, so a cross-file INFERRED call from impl to its header decl
+                # is legitimate, not a phantom name-collision across languages. Treat
+                # the whole C family as one so the receiver-typed C++/ObjC member-call
+                # resolvers' header-targeting edges survive build (#1547/#1556).
+                ".c": "c", ".h": "c", ".cc": "c", ".cpp": "c", ".hpp": "c",
+                ".cxx": "c", ".hh": "c", ".hxx": "c",
+                ".cu": "c", ".cuh": "c", ".metal": "c", ".m": "c", ".mm": "c",
                 ".rb": "rb", ".php": "php", ".cs": "cs", ".swift": "swift", ".lua": "lua",
             }
             src_ext = Path(G.nodes[src].get("source_file") or "").suffix.lower()

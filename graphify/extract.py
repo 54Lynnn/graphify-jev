@@ -1864,6 +1864,100 @@ def _get_cpp_func_name(node, source: bytes) -> str | None:
     return None
 
 
+def _cpp_declarator_name(node, source: bytes) -> str | None:
+    """Return the bare variable name from a C++ declaration declarator, unwrapping
+    pointer/reference/init wrappers (``*f``, ``&r``, ``f = Foo()``). Returns None
+    for anything that isn't a plain named local (arrays, function pointers,
+    structured bindings) so the type table never records a guessed receiver."""
+    t = node.type
+    if t == "identifier":
+        return _read_text(node, source)
+    if t in ("pointer_declarator", "reference_declarator", "init_declarator"):
+        inner = node.child_by_field_name("declarator")
+        if inner is None:
+            for c in node.children:
+                if c.type in ("identifier", "pointer_declarator",
+                              "reference_declarator"):
+                    inner = c
+                    break
+        if inner is not None:
+            return _cpp_declarator_name(inner, source)
+    return None
+
+
+def _cpp_local_var_types(body_node, source: bytes, table: dict[str, str]) -> None:
+    """Collect ``var -> ClassName`` from local variable declarations in a C++
+    function body, for receiver-type inference in the cross-file member-call pass
+    (#1547). Handles ``Foo f;``, ``Foo* f;``, ``Foo *f = ...;``, ``Foo f = Foo();``.
+
+    Only a class-like (``type_identifier``/``qualified_identifier``) type with a
+    single named declarator is recorded — PRECISION over recall: a built-in type
+    (``int x``), an ambiguous multi-declarator line, or an un-nameable declarator
+    contributes nothing rather than a guess. A qualified type ``ns::Foo`` records
+    its simple tail ``Foo`` so it keys to the type's definition node label.
+    """
+    stack = [body_node]
+    while stack:
+        n = stack.pop()
+        if n.type in ("function_definition", "lambda_expression"):
+            # Don't descend into a nested function/lambda: its locals are scoped
+            # away and would pollute this body's table.
+            if n is not body_node:
+                continue
+        if n.type == "declaration":
+            type_node = n.child_by_field_name("type")
+            if type_node is not None and type_node.type in (
+                "type_identifier", "qualified_identifier"
+            ):
+                type_name = _read_text(type_node, source).split("::")[-1].strip()
+                declarators = [
+                    c for c in n.children
+                    if c.type in ("identifier", "pointer_declarator",
+                                  "reference_declarator", "init_declarator")
+                ]
+                # A single declarator only: `Foo a, b;` is ambiguous to attribute
+                # to one receiver name cleanly, so skip multi-declarator lines.
+                if type_name and type_name[:1].isupper() and len(declarators) == 1:
+                    var = _cpp_declarator_name(declarators[0], source)
+                    if var and var not in table:
+                        table[var] = type_name
+        for c in n.children:
+            stack.append(c)
+
+
+def _objc_local_var_types(body_node, source: bytes, table: dict[str, str]) -> None:
+    """Collect ``var -> ClassName`` from ObjC local declarations (``Foo *f = ...;``)
+    in a method body, for receiver typing in the cross-file message-send pass
+    (#1556). Only a capitalized ``type_identifier`` with a single named declarator
+    is recorded; a built-in/lower-cased type or an un-nameable declarator is skipped
+    (precision over recall). Reuses the C++ declarator unwrapper (identical grammar).
+    """
+    stack = [body_node]
+    while stack:
+        n = stack.pop()
+        if n.type == "method_definition" and n is not body_node:
+            continue
+        if n.type == "declaration":
+            type_node = n.child_by_field_name("type")
+            if type_node is None:
+                for c in n.children:
+                    if c.type == "type_identifier":
+                        type_node = c
+                        break
+            if type_node is not None and type_node.type == "type_identifier":
+                type_name = _read_text(type_node, source).strip()
+                declarators = [
+                    c for c in n.children
+                    if c.type in ("identifier", "pointer_declarator", "init_declarator")
+                ]
+                if type_name and type_name[:1].isupper() and len(declarators) == 1:
+                    var = _cpp_declarator_name(declarators[0], source)
+                    if var and var not in table:
+                        table[var] = type_name
+        for c in n.children:
+            stack.append(c)
+
+
 # ── JS/TS extra walk for arrow functions ──────────────────────────────────────
 
 def _find_require_call(value_node):
@@ -3918,11 +4012,31 @@ def _extract_generic(
                 if func_node:
                     if func_node.type == "identifier":
                         callee_name = _read_text(func_node, source)
-                    elif func_node.type in ("field_expression", "qualified_identifier"):
+                    elif func_node.type == "field_expression":
+                        # `f.bar()` / `f->bar()` / `this->bar()`: receiver is the
+                        # `argument` (object) field, callee is the `field` (#1547).
+                        # Capture a simple-identifier (or `this`) receiver so the
+                        # cross-file pass can resolve it through the file's type
+                        # table; chained receivers (`a.b.method()`) are left to bail.
                         is_member_call = True
-                        name = func_node.child_by_field_name("field") or func_node.child_by_field_name("name")
+                        name = func_node.child_by_field_name("field")
                         if name:
                             callee_name = _read_text(name, source)
+                        obj = func_node.child_by_field_name("argument")
+                        if obj is not None and obj.type == "identifier":
+                            member_receiver = _read_text(obj, source)
+                        elif obj is not None and obj.type == "this":
+                            member_receiver = "this"
+                    elif func_node.type == "qualified_identifier":
+                        # `Foo::bar()`: the scope (`Foo`) is the receiver type named
+                        # explicitly in source (EXTRACTED), the name is the callee.
+                        is_member_call = True
+                        name = func_node.child_by_field_name("name")
+                        if name:
+                            callee_name = _read_text(name, source)
+                        scope = func_node.child_by_field_name("scope")
+                        if scope is not None:
+                            member_receiver = _read_text(scope, source)
             elif config.ts_module == "tree_sitter_java" and node.type == "object_creation_expression":
                 # `new Foo(...)` — the constructed type is in the `type` field, not
                 # `name`, so the generic path misses it (#1373). Reduce a qualified
@@ -4023,6 +4137,12 @@ def _extract_generic(
                         rc_entry["receiver_type"] = ruby_var_types.get(
                             caller_nid, {}
                         ).get(member_receiver)
+                    # Tag the C++ raw_call's language so the cross-file C++ resolver
+                    # claims it unambiguously: a `.h` file routes to extract_cpp or
+                    # extract_objc by content, and both resolvers see `.h` in their
+                    # suffix sets, so a source_file suffix alone can't separate them.
+                    if config.ts_module == "tree_sitter_cpp":
+                        rc_entry["lang"] = "cpp"
                     raw_calls.append(rc_entry)
 
             # Helper function calls: config('foo.bar') → uses_config edge to "foo"
@@ -4156,6 +4276,14 @@ def _extract_generic(
         for caller_nid, body_node in function_bodies:
             ruby_var_types[caller_nid] = _ruby_local_class_bindings(body_node, source)
 
+    # C++: build the per-file `var -> ClassName` table from local declarations in
+    # every function body so the cross-file member-call pass can type a receiver
+    # (#1547). File-scoped (not per-body): a later body's `Foo f;` doesn't clobber
+    # an earlier binding (`var not in table`), keeping resolution conservative.
+    if config.ts_module == "tree_sitter_cpp":
+        for _caller_nid, body_node in function_bodies:
+            _cpp_local_var_types(body_node, source, type_table)
+
     for caller_nid, body_node in function_bodies:
         walk_calls(body_node, caller_nid)
 
@@ -4203,6 +4331,8 @@ def _extract_generic(
             result["swift_type_table"] = {"path": str_path, "table": type_table}
         elif config.ts_module in ("tree_sitter_javascript", "tree_sitter_typescript"):
             result["ts_type_table"] = {"path": str_path, "table": type_table}
+        elif config.ts_module == "tree_sitter_cpp":
+            result["cpp_type_table"] = {"path": str_path, "table": type_table}
     return result
 
 
@@ -10055,6 +10185,244 @@ def _resolve_typescript_member_calls(
         })
 
 
+def _resolve_cpp_member_calls(
+    per_file: list[dict],
+    all_nodes: list[dict],
+    all_edges: list[dict],
+) -> None:
+    """Resolve cross-file C++ member calls (``f.bar()``, ``f->bar()``,
+    ``Foo::bar()``, ``this->bar()``) to the real definition of the receiver's type
+    (#1547).
+
+    The shared cross-file pass drops every ``is_member_call`` because a bare method
+    name (``bar``) collides across the corpus and inflates god-nodes (#543/#1219).
+    The C++ extractor records each member call's receiver and a per-file
+    ``var -> ClassName`` table (``cpp_type_table``) built from local declarations.
+    This pass types the receiver, then emits an edge ONLY when that type resolves
+    to exactly ONE definition (the god-node guard).
+
+    Receiver typing, by precision tier:
+      * ``Foo::bar()`` — the scope ``Foo`` names the type explicitly -> EXTRACTED.
+      * ``this->bar()`` — the receiver is the caller's own enclosing class -> EXTRACTED.
+      * ``f.bar()`` / ``f->bar()`` — ``f`` typed via the file's local table -> INFERRED.
+    A receiver whose type can't be inferred locally is SKIPPED (no guess): a false
+    call edge is worse than a missing one. The ``_merge_decl_def_classes`` pass has
+    already folded each header/impl class pair into one node, so a paired class is a
+    single definition and clears the single-definition guard.
+
+    Must run after id-disambiguation so node ids and caller_nids are final.
+    """
+    type_table_by_file: dict[str, dict[str, str]] = {}
+    for result in per_file:
+        tt = result.get("cpp_type_table")
+        if tt and tt.get("path"):
+            type_table_by_file[tt["path"]] = tt.get("table", {})
+
+    def _key(label: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9]+", "", str(label)).lower()
+
+    # A genuine C++ type is the target of a `contains` edge from its file node;
+    # bare-reference shadow nodes (ensure_named_node stubs) are not contained, so
+    # excluding non-contained nodes keeps them from making a real type ambiguous.
+    contained = {e.get("target") for e in all_edges if e.get("relation") == "contains"}
+
+    type_def_nids: dict[str, list[str]] = {}
+    node_by_id: dict[str, dict] = {}
+    for n in all_nodes:
+        node_by_id[n.get("id")] = n
+        if n.get("source_file") and n.get("id") in contained and _is_type_like_definition(n):
+            type_def_nids.setdefault(_key(n.get("label", "")), []).append(n["id"])
+
+    # (type_node_id, method_key) -> method_node_id, and caller -> enclosing type
+    # (the owning class) for `this->` calls. A C++ class owns its members via
+    # `method` edges (out-of-line definitions) AND `defines` edges (in-class
+    # declarations, which the extractor models as fields); index both so a header-
+    # declared `void bar();` resolves. `method` wins when a key has both.
+    method_index: dict[tuple[str, str], str] = {}
+    enclosing_type: dict[str, str] = {}
+    for rel in ("defines", "method"):
+        for e in all_edges:
+            if e.get("relation") != rel:
+                continue
+            src, tgt = e.get("source"), e.get("target")
+            tnode = node_by_id.get(tgt)
+            if tnode is None:
+                continue
+            enclosing_type.setdefault(tgt, src)
+            method_index[(src, _key(tnode.get("label", "")))] = tgt
+
+    all_raw_calls: list[dict] = []
+    for result in per_file:
+        all_raw_calls.extend(result.get("raw_calls", []))
+
+    existing_pairs = {(e.get("source"), e.get("target")) for e in all_edges}
+    for rc in all_raw_calls:
+        if not rc.get("is_member_call"):
+            continue
+        receiver = rc.get("receiver")
+        callee = rc.get("callee")
+        caller = rc.get("caller_nid")
+        if not receiver or not callee or not caller:
+            continue
+        src_file = rc.get("source_file", "")
+        # Only resolve C++ raw_calls (other languages share the raw_calls list;
+        # a `.h` may route to either extract_cpp or extract_objc by content, so the
+        # extractor-stamped `lang` tag — not the suffix — is the unambiguous gate).
+        if rc.get("lang") != "cpp":
+            continue
+        # Determine the receiver's type and the resulting confidence.
+        if receiver == "this":
+            # this->bar(): receiver is the caller's own enclosing class.
+            type_nid = enclosing_type.get(caller)
+            if not type_nid:
+                continue
+            type_qualified = True
+        elif receiver[:1].isupper():
+            # Foo::bar(): the type is named explicitly in source.
+            type_defs = type_def_nids.get(_key(receiver), [])
+            if len(type_defs) != 1:  # ambiguous or absent -> bail (god-node guard)
+                continue
+            type_nid = type_defs[0]
+            type_qualified = True
+        else:
+            # f.bar() / f->bar(): type the receiver via the file's local table.
+            type_name = type_table_by_file.get(src_file, {}).get(receiver)
+            if not type_name:
+                continue
+            type_defs = type_def_nids.get(_key(type_name), [])
+            if len(type_defs) != 1:  # ambiguous or absent -> bail (god-node guard)
+                continue
+            type_nid = type_defs[0]
+            type_qualified = False
+        method_nid = method_index.get((type_nid, _key(callee)))
+        target = method_nid or type_nid
+        relation = "calls" if method_nid else "references"
+        if target == caller or (caller, target) in existing_pairs:
+            continue
+        existing_pairs.add((caller, target))
+        all_edges.append({
+            "source": caller,
+            "target": target,
+            "relation": relation,
+            "context": "call",
+            "confidence": "EXTRACTED" if type_qualified else "INFERRED",
+            "confidence_score": 1.0 if type_qualified else 0.8,
+            "source_file": src_file,
+            "source_location": rc.get("source_location"),
+            "weight": 1.0,
+        })
+
+
+def _resolve_objc_member_calls(
+    per_file: list[dict],
+    all_nodes: list[dict],
+    all_edges: list[dict],
+) -> None:
+    """Resolve cross-file Objective-C message sends (``[recv sel]``) to the real
+    definition of the receiver's type (#1556).
+
+    The ObjC extractor keeps its same-file selector matching (alloc/init refs,
+    dot-syntax accesses, @selector) and additionally emits ``raw_calls`` for every
+    message send, with the receiver and the reconstructed selector as the callee.
+    This pass types the receiver and emits a cross-file ``calls`` edge ONLY when the
+    type resolves to exactly ONE definition (the god-node guard).
+
+    Receiver typing:
+      * ``self`` / ``super`` — the caller's own enclosing class -> EXTRACTED.
+      * Capitalized receiver (``[Foo new]``) — the type named explicitly -> EXTRACTED.
+      * ``[f doThing]`` — ``f`` typed via the file's ``Foo *f`` local table -> INFERRED.
+    An uninferable receiver is SKIPPED (no guess), so an ambiguous selector across
+    classes never fans out. ``_merge_decl_def_classes`` folds each @interface/@impl
+    pair into one node, so a paired class clears the single-definition guard.
+
+    Must run after id-disambiguation so node ids and caller_nids are final.
+    """
+    type_table_by_file: dict[str, dict[str, str]] = {}
+    for result in per_file:
+        tt = result.get("objc_type_table")
+        if tt and tt.get("path"):
+            type_table_by_file[tt["path"]] = tt.get("table", {})
+
+    def _key(label: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9]+", "", str(label)).lower()
+
+    contained = {e.get("target") for e in all_edges if e.get("relation") == "contains"}
+
+    type_def_nids: dict[str, list[str]] = {}
+    node_by_id: dict[str, dict] = {}
+    for n in all_nodes:
+        node_by_id[n.get("id")] = n
+        if n.get("source_file") and n.get("id") in contained and _is_type_like_definition(n):
+            type_def_nids.setdefault(_key(n.get("label", "")), []).append(n["id"])
+
+    method_index: dict[tuple[str, str], str] = {}
+    enclosing_type: dict[str, str] = {}
+    for e in all_edges:
+        if e.get("relation") != "method":
+            continue
+        src, tgt = e.get("source"), e.get("target")
+        enclosing_type.setdefault(tgt, src)
+        tnode = node_by_id.get(tgt)
+        if tnode is not None:
+            # ObjC method labels carry a +/- sigil (`-doThing`); strip it so the
+            # selector `doThing` keys to the method.
+            method_index[(src, _key(tnode.get("label", "")))] = tgt
+
+    all_raw_calls: list[dict] = []
+    for result in per_file:
+        all_raw_calls.extend(result.get("raw_calls", []))
+
+    existing_pairs = {(e.get("source"), e.get("target")) for e in all_edges}
+    for rc in all_raw_calls:
+        if not rc.get("is_member_call"):
+            continue
+        receiver = rc.get("receiver")
+        callee = rc.get("callee")
+        caller = rc.get("caller_nid")
+        if not receiver or not callee or not caller:
+            continue
+        src_file = rc.get("source_file", "")
+        if rc.get("lang") != "objc":
+            continue
+        if receiver in ("self", "super"):
+            type_nid = enclosing_type.get(caller)
+            if not type_nid:
+                continue
+            type_qualified = True
+        elif receiver[:1].isupper():
+            type_defs = type_def_nids.get(_key(receiver), [])
+            if len(type_defs) != 1:  # ambiguous or absent -> bail (god-node guard)
+                continue
+            type_nid = type_defs[0]
+            type_qualified = True
+        else:
+            type_name = type_table_by_file.get(src_file, {}).get(receiver)
+            if not type_name:
+                continue
+            type_defs = type_def_nids.get(_key(type_name), [])
+            if len(type_defs) != 1:  # ambiguous or absent -> bail (god-node guard)
+                continue
+            type_nid = type_defs[0]
+            type_qualified = False
+        method_nid = method_index.get((type_nid, _key(callee)))
+        target = method_nid or type_nid
+        relation = "calls" if method_nid else "references"
+        if target == caller or (caller, target) in existing_pairs:
+            continue
+        existing_pairs.add((caller, target))
+        all_edges.append({
+            "source": caller,
+            "target": target,
+            "relation": relation,
+            "context": "call",
+            "confidence": "EXTRACTED" if type_qualified else "INFERRED",
+            "confidence_score": 1.0 if type_qualified else 0.8,
+            "source_file": src_file,
+            "source_location": rc.get("source_location"),
+            "weight": 1.0,
+        })
+
+
 # Register the cross-file, language-specific member-call resolvers into the shared
 # registry (framework lives in graphify.resolver_registry). A new language plugs in
 # by adding one register() call below — no edits to extract()'s body. Order
@@ -10072,6 +10440,23 @@ register_language_resolver(
 )
 register_language_resolver(
     LanguageResolver("typescript_member_calls", frozenset({".ts", ".tsx", ".js", ".jsx"}), _resolve_typescript_member_calls)
+)
+# C++ (#1547) and ObjC (#1556) receiver-typed member-call resolution. `.h` is in
+# both suffix sets because it routes to extract_cpp or extract_objc by content; the
+# resolvers each claim only their own raw_calls via the extractor-stamped `lang`.
+register_language_resolver(
+    LanguageResolver(
+        "cpp_member_calls",
+        frozenset({".cpp", ".cc", ".cxx", ".hpp", ".cu", ".cuh", ".metal", ".h"}),
+        _resolve_cpp_member_calls,
+    )
+)
+register_language_resolver(
+    LanguageResolver(
+        "objc_member_calls",
+        frozenset({".m", ".mm", ".h"}),
+        _resolve_objc_member_calls,
+    )
 )
 
 
@@ -10105,6 +10490,10 @@ def extract_objc(path: Path) -> dict:
     edges: list[dict] = []
     seen_ids: set[str] = set()
     method_bodies: list[tuple[str, Any, str]] = []
+    # #1556: unresolved message sends saved for the cross-file ObjC resolver, plus a
+    # per-file `var -> ClassName` table from `Foo *f = ...;` local declarations.
+    raw_calls: list[dict] = []
+    objc_type_table: dict[str, str] = {}
 
     def add_node(nid: str, label: str, line: int) -> None:
         if nid not in seen_ids:
@@ -10332,6 +10721,11 @@ def extract_objc(path: Path) -> dict:
     for m_nid, _, container_nid in method_bodies:
         class_method_nids.setdefault(container_nid, set()).add(m_nid)
     seen_calls: set[tuple[str, str]] = set()
+    # #1556: per-file `var -> ClassName` table from local declarations in every
+    # method body, so the cross-file resolver can type a `[f doThing]` receiver.
+    for _m_nid, body_node, _container in method_bodies:
+        _objc_local_var_types(body_node, source, objc_type_table)
+
     for caller_nid, body_node, container_nid in method_bodies:
         sibling_nids = class_method_nids.get(container_nid, set())
 
@@ -10378,6 +10772,21 @@ def extract_objc(path: Path) -> dict:
                                 seen_calls.add(pair)
                                 add_edge(caller_nid, candidate, "calls", n.start_point[0] + 1,
                                          confidence="EXTRACTED", weight=1.0, context="call")
+                    # #1556: also emit a raw_call so the cross-file resolver can type
+                    # the receiver and link to a method in ANOTHER file. A bare
+                    # identifier receiver (`f`, `self`, `Foo`) is captured; a nested
+                    # message send (`[[Foo alloc] init]`) has no simple receiver name
+                    # to type, so it is left to the alloc/init `references` edge above.
+                    if recv is not None and recv.type == "identifier":
+                        raw_calls.append({
+                            "caller_nid": caller_nid,
+                            "callee": method_name,
+                            "is_member_call": True,
+                            "source_file": str_path,
+                            "source_location": f"L{n.start_point[0] + 1}",
+                            "receiver": _read(recv),
+                            "lang": "objc",
+                        })
             elif n.type == "field_expression":
                 # self.name / self.product.name — dot-syntax sugar for [self name].
                 # Resolve to a sibling method of the SAME class, matched by EXACT
@@ -10422,7 +10831,11 @@ def extract_objc(path: Path) -> dict:
                 walk_calls(child)
         walk_calls(body_node)
 
-    return {"nodes": nodes, "edges": edges, "input_tokens": 0, "output_tokens": 0}
+    result = {"nodes": nodes, "edges": edges, "raw_calls": raw_calls,
+              "input_tokens": 0, "output_tokens": 0}
+    if objc_type_table:
+        result["objc_type_table"] = {"path": str_path, "table": objc_type_table}
+    return result
 
 
 
