@@ -1717,6 +1717,154 @@ def test_ts_local_const_does_not_emit_phantom_node(tmp_path):
     assert "topLevel" in labels, f"module-level TS const 'topLevel' missing: {labels}"
 
 
+def test_ts_constructor_injection_calls_edge(tmp_path):
+    """this.repo.findById() in a class with constructor(private repo: IUserRepository)
+    must produce a calls edge from getUser() to findById() (#1316)."""
+    from graphify.extract import extract
+    repo_ts = tmp_path / "repo.ts"
+    repo_ts.write_text(
+        "export interface IUserRepository {\n"
+        "  findById(id: string): Promise<any>;\n"
+        "  save(user: any): Promise<void>;\n"
+        "}\n"
+    )
+    svc_ts = tmp_path / "service.ts"
+    svc_ts.write_text(
+        "import { IUserRepository } from './repo';\n"
+        "\n"
+        "export class UserService {\n"
+        "  constructor(private repo: IUserRepository) {}\n"
+        "\n"
+        "  getUser(id: string) {\n"
+        "    return this.repo.findById(id);\n"
+        "  }\n"
+        "}\n"
+    )
+    r = extract([repo_ts, svc_ts], cache_root=tmp_path / "cache")
+    edge_triples = {
+        (e["source"], e["relation"], e["target"])
+        for e in r["edges"]
+    }
+    labels_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    label_triples = {
+        (labels_by_id.get(s, s), rel, labels_by_id.get(t, t))
+        for s, rel, t in edge_triples
+    }
+    calls_from_get_user = [
+        (s, rel, t) for s, rel, t in label_triples
+        if "getUser" in s and rel == "calls"
+    ]
+    assert any("findById" in t for _, _, t in calls_from_get_user), (
+        f"expected getUser()->findById() calls edge, got: {calls_from_get_user}"
+    )
+
+
+def test_ts_this_field_receiver_not_same_file_collision(tmp_path):
+    """this.db.query() should NOT match an unrelated query() in the same file (#1316)."""
+    f = tmp_path / "collision.ts"
+    f.write_text(
+        "function query() { return 'global'; }\n"
+        "\n"
+        "export class Service {\n"
+        "  constructor(private db: Database) {}\n"
+        "\n"
+        "  run() {\n"
+        "    return this.db.query();\n"
+        "  }\n"
+        "}\n"
+    )
+    r = extract_js(f)
+    calls_edges = [
+        e for e in r["edges"]
+        if e["relation"] == "calls"
+    ]
+    caller_labels = {n["id"]: n["label"] for n in r["nodes"]}
+    run_to_query = [
+        e for e in calls_edges
+        if "run" in caller_labels.get(e["source"], "")
+        and "query" in caller_labels.get(e["target"], "")
+    ]
+    assert len(run_to_query) == 0, (
+        f"this.db.query() should NOT resolve to bare query() in same file: {run_to_query}"
+    )
+
+
+def _ts_label_calls(r, src_sub):
+    labels = {n["id"]: n["label"] for n in r["nodes"]}
+    return [
+        labels.get(e["target"], e["target"])
+        for e in r["edges"]
+        if e["relation"] == "calls" and src_sub in labels.get(e["source"], e["source"])
+    ]
+
+
+def test_ts_injected_field_resolves_to_typed_class_not_same_named_collision(tmp_path):
+    """The decisive #1316 guardrail: two classes each define `query`, but the
+    injected field is typed `Database`, so `this.db.query()` must resolve to
+    Database.query ONLY — never HttpClient.query (no global name-match fan-out)."""
+    from graphify.extract import extract
+    (tmp_path / "database.ts").write_text(
+        "export class Database {\n  query(sql: string) { return sql; }\n}\n"
+    )
+    (tmp_path / "http.ts").write_text(
+        "export class HttpClient {\n  query(url: string) { return url; }\n}\n"
+    )
+    (tmp_path / "service.ts").write_text(
+        "import { Database } from './database';\n"
+        "export class Service {\n"
+        "  constructor(private db: Database) {}\n"
+        "  run() { return this.db.query('x'); }\n"
+        "}\n"
+    )
+    r = extract(
+        [tmp_path / "database.ts", tmp_path / "http.ts", tmp_path / "service.ts"],
+        cache_root=tmp_path / "cache",
+    )
+    labels = {n["id"]: n["label"] for n in r["nodes"]}
+    # Find the run()->query calls edge and confirm its target is owned by Database.
+    method_owner = {
+        e["target"]: e["source"]
+        for e in r["edges"] if e["relation"] == "method"
+    }
+    run_query_targets = [
+        e["target"] for e in r["edges"]
+        if e["relation"] == "calls"
+        and "run" in labels.get(e["source"], "")
+        and "query" in labels.get(e["target"], "")
+    ]
+    assert run_query_targets, "expected this.db.query() to resolve to a query method"
+    for tgt in run_query_targets:
+        owner = method_owner.get(tgt)
+        assert owner is not None and labels.get(owner) == "Database", (
+            f"this.db.query() must resolve to Database.query, got owner {labels.get(owner)}"
+        )
+
+
+def test_ts_injected_field_ambiguous_type_emits_no_edge(tmp_path):
+    """If the injected field's type name is ambiguous (two classes named Database),
+    the god-node guard bails — no calls edge rather than a guess (#1316)."""
+    from graphify.extract import extract
+    (tmp_path / "a" ).mkdir()
+    (tmp_path / "b").mkdir()
+    (tmp_path / "a" / "database.ts").write_text(
+        "export class Database {\n  query(sql: string) { return sql; }\n}\n"
+    )
+    (tmp_path / "b" / "database.ts").write_text(
+        "export class Database {\n  query(sql: string) { return sql; }\n}\n"
+    )
+    (tmp_path / "service.ts").write_text(
+        "export class Service {\n"
+        "  constructor(private db: Database) {}\n"
+        "  run() { return this.db.query('x'); }\n"
+        "}\n"
+    )
+    r = extract(sorted(tmp_path.rglob("*.ts")), cache_root=tmp_path / "cache")
+    # `query` resolution must bail (2 Database defs) -> no run()->query calls edge.
+    assert not [t for t in _ts_label_calls(r, "run") if "query" in t], (
+        "ambiguous Database type must not produce a this.db.query() edge"
+    )
+
+
 # ── Markdown ─────────────────────────────────────────────────────────────────
 
 from graphify.extract import extract_markdown
