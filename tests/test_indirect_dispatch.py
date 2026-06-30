@@ -347,3 +347,133 @@ def test_cross_file_dict_registry_emits_indirect_call(tmp_path):
     indirect = _rels(r, "indirect_call")
     reg_file = next(n["id"] for n in r["nodes"] if n["label"] == "registry.py")
     assert (reg_file, nid["on_event"]) in indirect
+
+
+# ── JS / TS (#1566 slice 5) ───────────────────────────────────────────────────
+# The same model for JS/TS: callbacks passed by name (`arr.map(fn)`,
+# `setTimeout(fn)`, Express `app.get("/", handler)`) and functions listed in
+# object/array dispatch tables. Same INFERRED relation, same guards, plus arrow-
+# const functions (`const cb = () => {}`) count as callables.
+
+def _extract_js_dir(tmp_path, files: dict[str, str]):
+    base = tmp_path / "src"
+    base.mkdir()
+    for name, body in files.items():
+        (base / name).write_text(body)
+    old = os.getcwd()
+    try:
+        os.chdir(tmp_path)
+        r = extract(
+            [Path("src") / name for name in files],
+            cache_root=Path(".cache"), parallel=False,
+        )
+    finally:
+        os.chdir(old)
+    nid = {n["label"].rstrip("()"): n["id"] for n in r["nodes"]}
+    return r, nid
+
+
+def test_js_function_scoped_call_argument(tmp_path):
+    r, nid = _extract_js_dir(tmp_path, {"a.js": (
+        "function handler(x){ return x; }\n"
+        "function via(pool){ pool.submit(handler); }\n"
+    )})
+    indirect = _rels(r, "indirect_call")
+    assert (nid["via"], nid["handler"]) in indirect
+    assert (nid["via"], nid["handler"]) not in _rels(r, "calls")
+
+
+def test_js_module_object_and_array_registry(tmp_path):
+    r, nid = _extract_js_dir(tmp_path, {"a.js": (
+        "function handler(x){ return x; }\n"
+        "const cb = () => {};\n"
+        "const ROUTES = { create: handler, run: cb };\n"
+        "const HOOKS = [handler, cb];\n"
+    )})
+    indirect = _rels(r, "indirect_call")
+    file_nid = next(n["id"] for n in r["nodes"] if n["label"] == "a.js")
+    # both a plain function and an arrow-const resolve, from object and array
+    assert (file_nid, nid["handler"]) in indirect
+    assert (file_nid, nid["cb"]) in indirect
+
+
+def test_js_module_level_callback_registration(tmp_path):
+    """Express routes / event wiring / timers live at module scope in JS."""
+    r, nid = _extract_js_dir(tmp_path, {"r.js": (
+        "function home(req, res){}\n"
+        "const list = () => {};\n"
+        'app.get("/", home);\n'
+        'emitter.on("evt", list);\n'
+        "setTimeout(home, 100);\n"
+    )})
+    indirect = _rels(r, "indirect_call")
+    file_nid = next(n["id"] for n in r["nodes"] if n["label"] == "r.js")
+    assert (file_nid, nid["home"]) in indirect
+    assert (file_nid, nid["list"]) in indirect
+
+
+def test_js_inline_arrow_argument_is_not_a_reference(tmp_path):
+    """An inline arrow / function expression is a direct definition, not a
+    by-name reference — it must not emit an indirect_call."""
+    r, nid = _extract_js_dir(tmp_path, {"i.js": (
+        "function via(arr){ arr.map(x => x * 2); arr.forEach(function(y){}); }\n"
+    )})
+    assert _rels(r, "indirect_call") == set()
+
+
+def test_js_parameter_shadow_emits_no_indirect_call(tmp_path):
+    r, nid = _extract_js_dir(tmp_path, {"s.js": (
+        "function handler(){}\n"
+        "function via(pool, handler){ pool.submit(handler); }\n"
+    )})
+    indirect = _rels(r, "indirect_call")
+    assert all(t != nid["handler"] for _s, t in indirect)
+
+
+def test_js_object_keys_and_data_values_excluded(tmp_path):
+    r, nid = _extract_js_dir(tmp_path, {"k.js": (
+        "function keyfn(){}\n"
+        "function valfn(){}\n"
+        "const T = { [keyfn]: valfn, timeout: 30 };\n"
+    )})
+    indirect = _rels(r, "indirect_call")
+    assert all(t != nid["keyfn"] for _s, t in indirect)   # computed key, not a ref
+    file_nid = next(n["id"] for n in r["nodes"] if n["label"] == "k.js")
+    assert (file_nid, nid["valfn"]) in indirect
+
+
+def test_js_shorthand_property_reference(tmp_path):
+    r, nid = _extract_js_dir(tmp_path, {"sh.js": (
+        "function handler(){}\n"
+        "const obj = { handler };\n"
+    )})
+    file_nid = next(n["id"] for n in r["nodes"] if n["label"] == "sh.js")
+    assert (file_nid, nid["handler"]) in _rels(r, "indirect_call")
+
+
+def test_js_cross_file_imported_callback_in_object(tmp_path):
+    r, nid = _extract_js_dir(tmp_path, {
+        "h.js": "export function onEvent(x){ return x; }\n",
+        "reg.js": (
+            'import { onEvent } from "./h.js";\n'
+            "const ROUTES = { e: onEvent };\n"
+        ),
+    })
+    indirect = _rels(r, "indirect_call")
+    reg_file = next(n["id"] for n in r["nodes"] if n["label"] == "reg.js")
+    # the imports edge to onEvent must NOT suppress the indirect_call
+    assert (reg_file, nid["onEvent"]) in indirect
+
+
+def test_typescript_typed_params_and_arrow_consts(tmp_path):
+    r, nid = _extract_js_dir(tmp_path, {"t.ts": (
+        "function handler(x: number): number { return x; }\n"
+        "const cb = (): void => {};\n"
+        "function via(pool: Pool): void { pool.submit(handler); }\n"
+        "const ROUTES: Record<string, unknown> = { create: handler, run: cb };\n"
+    )})
+    indirect = _rels(r, "indirect_call")
+    file_nid = next(n["id"] for n in r["nodes"] if n["label"] == "t.ts")
+    assert (nid["via"], nid["handler"]) in indirect
+    assert (file_nid, nid["handler"]) in indirect
+    assert (file_nid, nid["cb"]) in indirect
