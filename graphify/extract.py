@@ -1548,6 +1548,39 @@ def _python_local_bound_names(func_def_node, source: bytes) -> set[str]:
     return bound
 
 
+def _python_module_bound_names(root, source: bytes) -> set[str]:
+    """Names rebound by assignment at MODULE scope (top-level `x = ...`, `for`, walrus).
+
+    The module-scope analogue of the per-function shadow set: a dispatch-table value
+    whose name is reassigned to data at module level (`handler = build()`) names that
+    value, not a same-named function, so it must not manufacture an indirect edge.
+    Function and class bodies are not descended into — their bindings are local.
+    """
+    bound: set[str] = set()
+
+    def walk(n) -> None:
+        for child in n.children:
+            t = child.type
+            if t in ("function_definition", "class_definition", "lambda"):
+                continue  # inner scope — not a module-level binding
+            if t == "assignment":
+                _python_collect_assignment_targets(
+                    child.child_by_field_name("left"), source, bound
+                )
+            elif t in ("for_statement", "for_in_clause"):
+                _python_collect_assignment_targets(
+                    child.child_by_field_name("left"), source, bound
+                )
+            elif t == "named_expression":  # walrus :=
+                _python_collect_assignment_targets(
+                    child.child_by_field_name("name"), source, bound
+                )
+            walk(child)
+
+    walk(root)
+    return bound
+
+
 def _resolve_name(node, source: bytes, config: LanguageConfig) -> str | None:
     """Get the name from a node using config.name_field, falling back to child types."""
     if config.resolve_function_name_fn is not None:
@@ -4169,6 +4202,69 @@ def _extract_generic(
     # receiver_type so the cross-file pass resolves `var.method` by type (#ruby).
     ruby_var_types: dict[str, dict[str, str | None]] = {}
 
+    def _emit_python_indirect_ref(ident, scope_nid: str, enclosing_locals, context: str) -> None:
+        """A function referenced BY NAME — passed as a call argument, or listed as a
+        value in a dispatch table — is an indirect dependency of ``scope_nid``. Emit
+        it as a distinct INFERRED ``indirect_call`` (kept out of the precise ``calls``
+        relation) only when the name resolves to a real callable and is NOT shadowed
+        by a parameter / local binding. A callback defined in another file is deferred
+        to the cross-file resolver via an ``indirect`` raw_call carrying its context.
+        Shared by the call-argument and dispatch-table (#1565, #1566) capture paths.
+        """
+        if ident is None or ident.type != "identifier":
+            return
+        ident_name = _read_text(ident, source)
+        # shadowing: a param / local binding names a local value, not the module fn
+        if ident_name in enclosing_locals or ident_name in ("self", "cls"):
+            return
+        ref_nid = label_to_nid.get(ident_name)
+        if ref_nid is None:
+            # Defined in another file (`from .h import fn`): defer to the cross-file
+            # resolver, which applies the same single-definition god-node guard plus
+            # the callable-target check before emitting an INFERRED indirect_call.
+            raw_calls.append({
+                "caller_nid": scope_nid,
+                "callee": ident_name,
+                "is_member_call": False,
+                "indirect": True,
+                "context": context,
+                "source_file": str_path,
+                "source_location": f"L{ident.start_point[0] + 1}",
+            })
+            return
+        if ref_nid == scope_nid or ref_nid not in callable_def_nids:
+            return  # self-ref, or a same-named non-callable data node — never an edge
+        if (scope_nid, ref_nid) in seen_call_pairs:
+            return  # already a direct call to this target
+        if (scope_nid, ref_nid) in seen_indirect_pairs:
+            return
+        seen_indirect_pairs.add((scope_nid, ref_nid))
+        edges.append({
+            "source": scope_nid,
+            "target": ref_nid,
+            "relation": "indirect_call",
+            "context": context,
+            "confidence": "INFERRED",
+            "source_file": str_path,
+            "source_location": f"L{ident.start_point[0] + 1}",
+            "weight": 1.0,
+        })
+
+    def _python_dispatch_value_idents(coll_node):
+        """Yield the identifier value-nodes of a dict/list/set/tuple literal that are
+        function-reference candidates: dict VALUES (never keys), and the elements of a
+        list/set/tuple. Nested collections are reached by the caller's own recursion."""
+        if coll_node.type == "dictionary":
+            for pair in coll_node.children:
+                if pair.type == "pair":
+                    val = pair.child_by_field_name("value")
+                    if val is not None and val.type == "identifier":
+                        yield val
+        else:  # list / set / tuple
+            for el in coll_node.children:
+                if el.type == "identifier":
+                    yield el
+
     def _php_class_const_scope(n) -> str | None:
         scope = n.child_by_field_name("scope")
         if scope is None:
@@ -4442,57 +4538,11 @@ def _extract_generic(
                     enclosing_locals = local_bound_names.get(caller_nid, frozenset())
                     for arg in args_node.children:
                         if arg.type == "identifier":
-                            ident = arg
+                            _emit_python_indirect_ref(arg, caller_nid, enclosing_locals, "argument")
                         elif arg.type == "keyword_argument":
-                            ident = arg.child_by_field_name("value")
-                        else:
-                            continue
-                        if ident is None or ident.type != "identifier":
-                            continue
-                        ident_name = _read_text(ident, source)
-                        # 1. shadowing: a param / local binding is not the module fn
-                        if ident_name in enclosing_locals:
-                            continue
-                        if ident_name in ("self", "cls"):
-                            continue  # never a module-level callable reference
-                        ref_nid = label_to_nid.get(ident_name)
-                        if ref_nid is None:
-                            # Callback defined in ANOTHER file (e.g. `from .h import fn;
-                            # pool.submit(fn)`). The in-file label map can't see it, so
-                            # defer to the cross-file resolvers, which apply the same
-                            # single-definition god-node guard plus a callable-target
-                            # check before emitting an INFERRED `indirect_call`. The
-                            # shadowing guard above has already run, so a parameter /
-                            # local binding never reaches here.
-                            raw_calls.append({
-                                "caller_nid": caller_nid,
-                                "callee": ident_name,
-                                "is_member_call": False,
-                                "indirect": True,
-                                "source_file": str_path,
-                                "source_location": f"L{ident.start_point[0] + 1}",
-                            })
-                            continue
-                        if ref_nid == caller_nid:
-                            continue
-                        # 2. callable target only: never an arbitrary data/same-named node
-                        if ref_nid not in callable_def_nids:
-                            continue
-                        if (caller_nid, ref_nid) in seen_call_pairs:
-                            continue  # already a direct call to this target
-                        if (caller_nid, ref_nid) in seen_indirect_pairs:
-                            continue
-                        seen_indirect_pairs.add((caller_nid, ref_nid))
-                        edges.append({
-                            "source": caller_nid,
-                            "target": ref_nid,
-                            "relation": "indirect_call",
-                            "context": "argument",
-                            "confidence": "INFERRED",
-                            "source_file": str_path,
-                            "source_location": f"L{ident.start_point[0] + 1}",
-                            "weight": 1.0,
-                        })
+                            _emit_python_indirect_ref(
+                                arg.child_by_field_name("value"),
+                                caller_nid, enclosing_locals, "argument")
 
             # Helper function calls: config('foo.bar') → uses_config edge to "foo"
             if (callee_name and callee_name in config.helper_fn_names):
@@ -4618,6 +4668,17 @@ def _extract_generic(
                             "weight": 1.0,
                         })
 
+        # Dispatch tables (#1566): a function listed as a value in a dict/list/set/
+        # tuple literal inside this body is an indirect dependency of the enclosing
+        # function. Reuses the shared resolve-and-emit guard (callable-target-only,
+        # not shadowed by a param/local, cross-file deferral).
+        if config.ts_module == "tree_sitter_python" and node.type in (
+            "dictionary", "list", "set", "tuple"
+        ):
+            enclosing_locals = local_bound_names.get(caller_nid, frozenset())
+            for ident in _python_dispatch_value_idents(node):
+                _emit_python_indirect_ref(ident, caller_nid, enclosing_locals, "collection")
+
         for child in node.children:
             walk_calls(child, caller_nid)
 
@@ -4663,6 +4724,26 @@ def _extract_generic(
             "source_location": f"L{line}",
             "weight": 1.0,
         })
+
+    # ── Module-level dispatch tables (#1566) ──────────────────────────────────
+    # A function listed as a value in a TOP-LEVEL dict/list/set/tuple literal (a
+    # route / handler registry) is an indirect dependency of the file. Attributed
+    # to the file node. Function and class bodies are walked above, so this scan
+    # stops at their boundaries — it must not re-attribute a method's local table
+    # to the file, and class-attribute tables are a later refinement.
+    if config.ts_module == "tree_sitter_python":
+        module_bound = _python_module_bound_names(root, source)
+
+        def _scan_module_dispatch(n) -> None:
+            if n.type in ("function_definition", "class_definition"):
+                return
+            if n.type in ("dictionary", "list", "set", "tuple"):
+                for ident in _python_dispatch_value_idents(n):
+                    _emit_python_indirect_ref(ident, file_nid, module_bound, "collection")
+            for c in n.children:
+                _scan_module_dispatch(c)
+
+        _scan_module_dispatch(root)
 
     # ── Clean edges ───────────────────────────────────────────────────────────
     valid_ids = seen_ids
@@ -15116,7 +15197,7 @@ def extract(
                     "source": caller,
                     "target": tgt,
                     "relation": "indirect_call",
-                    "context": "argument",
+                    "context": rc.get("context", "argument"),
                     "confidence": "INFERRED",
                     "confidence_score": 0.8,
                     "source_file": rc.get("source_file", ""),

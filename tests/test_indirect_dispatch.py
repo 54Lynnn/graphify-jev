@@ -254,3 +254,96 @@ def test_cross_file_param_shadow_emits_no_indirect_call(tmp_path):
     })
     indirect = _rels(r, "indirect_call")
     assert (nid["schedule"], nid["on_event"]) not in indirect
+
+
+# ── Dispatch tables (#1566 slice 1): functions referenced as collection values ─
+# A function listed as a VALUE in a dict/list/set/tuple literal (a route/handler
+# registry) is an indirect dependency. Same INFERRED relation, same guards:
+# callable-target-only, not shadowed, dict keys excluded.
+
+def test_module_level_dict_registry_emits_indirect_call(tmp_path):
+    r, nid = _extract(tmp_path, (
+        "def create(x):\n    return x\n\n\n"
+        "def delete(x):\n    return x\n\n\n"
+        'ROUTES = {"create": create, "delete": delete}\n'
+    ))
+    indirect = _rels(r, "indirect_call")
+    file_nid = next(n["id"] for n in r["nodes"] if n["label"] == "m.py")
+    # the module references both handlers through the table
+    assert (file_nid, nid["create"]) in indirect
+    assert (file_nid, nid["delete"]) in indirect
+    # not leaked into precise `calls`
+    assert (file_nid, nid["create"]) not in _rels(r, "calls")
+
+
+def test_module_level_list_registry_emits_indirect_call(tmp_path):
+    r, nid = _extract(tmp_path, (
+        "def on_start():\n    pass\n\n\n"
+        "def on_stop():\n    pass\n\n\n"
+        "HOOKS = [on_start, on_stop]\n"
+    ))
+    indirect = _rels(r, "indirect_call")
+    file_nid = next(n["id"] for n in r["nodes"] if n["label"] == "m.py")
+    assert (file_nid, nid["on_start"]) in indirect
+    assert (file_nid, nid["on_stop"]) in indirect
+
+
+def test_function_scoped_dispatch_table_attributes_to_function(tmp_path):
+    r, nid = _extract(tmp_path, (
+        "def cb(x):\n    return x\n\n\n"
+        "def build():\n    return {\"k\": cb}\n"
+    ))
+    assert (nid["build"], nid["cb"]) in _rels(r, "indirect_call")
+
+
+def test_dict_keys_are_not_dispatch_targets(tmp_path):
+    """Only VALUES are references; a function used as a dict KEY is not invoked
+    through the table and must not produce an edge."""
+    r, nid = _extract(tmp_path, (
+        "def keyfn():\n    pass\n\n\n"
+        "def valfn():\n    pass\n\n\n"
+        "T = {keyfn: valfn}\n"
+    ))
+    indirect = _rels(r, "indirect_call")
+    assert all(t != nid["keyfn"] for _s, t in indirect)
+    file_nid = next(n["id"] for n in r["nodes"] if n["label"] == "m.py")
+    assert (file_nid, nid["valfn"]) in indirect   # the value still resolves
+
+
+def test_non_callable_collection_value_emits_no_indirect_call(tmp_path):
+    """A data value in the table (a number, a string) is not a callable and must
+    never become a dispatch target."""
+    r, nid = _extract(tmp_path, (
+        "def use():\n    pass\n\n\n"
+        'CONF = {"timeout": 30, "name": use}\n'
+    ))
+    indirect = _rels(r, "indirect_call")
+    file_nid = next(n["id"] for n in r["nodes"] if n["label"] == "m.py")
+    # only the genuine callable resolves; the int value contributes nothing
+    assert (file_nid, nid["use"]) in indirect
+    assert len(indirect) == 1
+
+
+def test_module_level_reassigned_name_shadows_dispatch_value(tmp_path):
+    """If the name is rebound to data at module scope, the table value is that
+    data, not the same-named function — no edge."""
+    r, nid = _extract(tmp_path, (
+        "def handler():\n    pass\n\n\n"
+        "handler = object()\n"
+        'T = {"h": handler}\n'
+    ))
+    indirect = _rels(r, "indirect_call")
+    assert all(t != nid["handler"] for _s, t in indirect)
+
+
+def test_cross_file_dict_registry_emits_indirect_call(tmp_path):
+    r, nid = _extract_dir(tmp_path, {
+        "handlers.py": "def on_event(x):\n    return x\n",
+        "registry.py": (
+            "from handlers import on_event\n\n\n"
+            'ROUTES = {"event": on_event}\n'
+        ),
+    })
+    indirect = _rels(r, "indirect_call")
+    reg_file = next(n["id"] for n in r["nodes"] if n["label"] == "registry.py")
+    assert (reg_file, nid["on_event"]) in indirect
