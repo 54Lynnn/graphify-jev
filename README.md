@@ -550,7 +550,9 @@ graphify save-result --question "Q" --answer "A" --nodes Foo Bar --outcome usefu
 graphify reflect                   # aggregate graphify-out/memory/ outcomes into reflections/LESSONS.md
 graphify reflect --if-stale        # no-op when LESSONS.md is already newer than every input (cheap to run each session)
 graphify reflect --out docs/LESSONS.md    # write the lessons doc somewhere else
-graphify reflect --graph graphify-out/graph.json  # also group lessons by community
+graphify reflect --graph graphify-out/graph.json  # group lessons by community + write the work-memory overlay (.graphify_learning.json)
+                                   # the overlay tags nodes preferred/tentative/contested (recency-weighted, with provenance);
+                                   # graphify explain / query then show a "Lesson:" hint, flagged "code changed — re-verify" when the source moved on
 
 graphify uninstall                 # remove from all platforms in one shot
 graphify uninstall --purge         # also delete graphify-out/
