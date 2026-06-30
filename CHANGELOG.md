@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased
+
+- Feat: capture indirect dispatch as `indirect_call` edges so `graphify affected` (blast radius) catches callers that pass a function by name as a call argument — `executor.submit(fn)`, `Thread(target=fn)`, `map(fn, xs)`, callbacks (#1565, thanks @sheik-hiiobd). Kept as a distinct INFERRED relation separate from `calls` (strict call-graph queries stay precise) and added to the affected relation set. Hardened against false edges: the argument name must resolve to a callable definition and must NOT be shadowed by a parameter or local binding in the enclosing function — so the idiomatic `def via(pool, handler): pool.submit(handler)` (handler is the param) and a data variable sharing a function's name produce no edge. Python only for now.
+
 ## 0.9.3 (2026-06-30)
 
 - Feat: cross-file member-call resolution for C++ and Objective-C (#1547, #1556). A class declared in a header and defined in its `.cpp`/`.m` no longer fragments into two nodes (a decl/def merge pass collapses the sibling header/impl pair, gated to same-directory same-name so unrelated classes never merge), and a member call now resolves across files by the receiver's inferred type: C++ `Foo f; f.bar()` / `Foo::bar()` / `this->bar()` and ObjC `Foo *f = [[Foo alloc] init]; [f doThing]` / `[self render]` link to the owning class's method. Resolution is by receiver type, never bare name, with the single-definition god-node guard — an uninferable or ambiguous receiver produces no edge (high precision over recall, grounded in how compiler-free indexers like ctags/Doxygen mis-resolve by name). Also routes C++ headers to the C++ extractor and ObjC `#import` bridging headers to the ObjC extractor. Reported by @c0dezer019 and @JabberYQ. (Residual cross-file `#include` edge resolution under symlinked roots and ObjC dynamic-dispatch receivers remain follow-ups.)

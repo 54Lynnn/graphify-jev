@@ -1456,6 +1456,98 @@ def _python_collect_param_refs(params_node, source: bytes) -> list[tuple[str, st
     return out
 
 
+def _python_param_names(params_node, source: bytes) -> set[str]:
+    """Plain parameter identifiers declared on a Python `parameters` node.
+
+    Covers positional/keyword params plus `*args` / `**kwargs` and typed or
+    default forms — anything that binds a local name the function body can shadow
+    a module-level definition with.
+    """
+    out: set[str] = set()
+    if params_node is None:
+        return out
+    for child in params_node.children:
+        if child.type == "identifier":
+            out.add(_read_text(child, source))
+        elif child.type in (
+            "typed_parameter",
+            "default_parameter",
+            "typed_default_parameter",
+            "list_splat_pattern",
+            "dictionary_splat_pattern",
+        ):
+            # The bound name is the first identifier child (the rest is type/default).
+            name_n = child.child_by_field_name("name")
+            if name_n is None:
+                name_n = next(
+                    (c for c in child.children if c.type == "identifier"), None
+                )
+            if name_n is not None:
+                out.add(_read_text(name_n, source))
+    return out
+
+
+def _python_collect_assignment_targets(node, source: bytes, out: set[str]) -> None:
+    """Identifiers bound as `pattern` targets under a Python AST subtree.
+
+    Recurses through `pattern_list` / `tuple_pattern` / `list_pattern` so tuple
+    unpacking (`a, b = ...`, `for a, b in ...`) contributes every bound name.
+    """
+    if node is None:
+        return
+    if node.type == "identifier":
+        out.add(_read_text(node, source))
+        return
+    if node.type in ("pattern_list", "tuple_pattern", "list_pattern"):
+        for c in node.children:
+            _python_collect_assignment_targets(c, source, out)
+
+
+def _python_local_bound_names(func_def_node, source: bytes) -> set[str]:
+    """Names bound LOCALLY inside a Python function: parameters plus assignment,
+    `for`, `with ... as`, and comprehension targets.
+
+    Used by the indirect-dispatch guard to reject a call-argument identifier that
+    is a parameter or a local binding — it names a local value, not the module-
+    level function/class that happens to share the name. Nested `function_definition`
+    and `class_definition` subtrees are NOT descended into: their bindings belong
+    to a different scope.
+    """
+    bound: set[str] = set()
+    bound |= _python_param_names(func_def_node.child_by_field_name("parameters"), source)
+
+    def walk(n) -> None:
+        for child in n.children:
+            t = child.type
+            if t in ("function_definition", "class_definition", "lambda"):
+                continue  # inner scope — its bindings are not this function's locals
+            if t == "assignment":
+                _python_collect_assignment_targets(
+                    child.child_by_field_name("left"), source, bound
+                )
+            elif t in ("for_statement", "for_in_clause"):
+                _python_collect_assignment_targets(
+                    child.child_by_field_name("left"), source, bound
+                )
+            elif t == "with_statement":
+                for item in child.children:
+                    if item.type == "with_clause":
+                        for wi in item.children:
+                            if wi.type == "with_item":
+                                alias = wi.child_by_field_name("alias")
+                                _python_collect_assignment_targets(alias, source, bound)
+            elif t == "named_expression":  # walrus :=
+                _python_collect_assignment_targets(
+                    child.child_by_field_name("name"), source, bound
+                )
+            walk(child)
+
+    body = func_def_node.child_by_field_name("body")
+    if body is not None:
+        walk(body)
+    return bound
+
+
 def _resolve_name(node, source: bytes, config: LanguageConfig) -> str | None:
     """Get the name from a node using config.name_field, falling back to child types."""
     if config.resolve_function_name_fn is not None:
@@ -2843,6 +2935,16 @@ def _extract_generic(
     namespace_stack: list[str] = []
     scope_stack: list[str] = []
     function_bodies: list[tuple[str, object]] = []
+    # nids of function / method / class definitions in this file. The indirect-
+    # dispatch guard (Python) resolves a call-argument identifier to an edge only
+    # when it names one of these callable defs — never an arbitrary same-named
+    # node — so `process(config)` can't manufacture an edge to a non-callable.
+    callable_def_nids: set[str] = set()
+    # Python only: per-function set of locally-bound names (params + local
+    # assignment / for / with-as / comprehension targets). The indirect-dispatch
+    # guard skips any call-argument identifier in the enclosing function's set,
+    # so a param/local that shadows a module function name yields no edge.
+    local_bound_names: dict[str, set[str]] = {}
     pending_listen_edges: list[tuple[str, str, int]] = []
     # tree-sitter-swift parses both `class Foo` and `extension Foo` as
     # `class_declaration`. Same-file pairs collapse via seen_ids, but cross-file
@@ -2992,6 +3094,7 @@ def _extract_generic(
             if config.ts_module == "tree_sitter_c_sharp" and parent_class_nid:
                 metadata = {"is_nested_type": True}
             add_node(class_nid, class_name, line, metadata=metadata)
+            callable_def_nids.add(class_nid)  # a class is callable (constructor)
             add_edge(file_nid, class_nid, "contains", line)
 
             if config.ts_module == "tree_sitter_swift" and any(
@@ -3671,6 +3774,9 @@ def _extract_generic(
                 func_nid = _make_id(stem, func_name)
                 add_node(func_nid, f"{func_name}()", line)
                 add_edge(file_nid, func_nid, "contains", line)
+            callable_def_nids.add(func_nid)  # function / method def is callable
+            if config.ts_module == "tree_sitter_python":
+                local_bound_names[func_nid] = _python_local_bound_names(node, source)
 
             if config.ts_module == "tree_sitter_python":
                 params_node = node.child_by_field_name("parameters")
@@ -4052,6 +4158,7 @@ def _extract_generic(
         label_to_nid_ci[normalised.lower()] = n["id"]
 
     seen_call_pairs: set[tuple[str, str]] = set()
+    seen_indirect_pairs: set[tuple[str, str]] = set()  # Python indirect_call dedup
     seen_dyn_import_pairs: set[tuple[str, str]] = set()
     seen_static_ref_pairs: set[tuple[str, str, str]] = set()
     seen_helper_ref_pairs: set[tuple[str, str, str]] = set()
@@ -4313,6 +4420,60 @@ def _extract_generic(
                     if config.ts_module == "tree_sitter_cpp":
                         rc_entry["lang"] = "cpp"
                     raw_calls.append(rc_entry)
+
+            # Indirect dispatch: a function passed BY NAME as a call argument
+            # (executor.submit(fn), Thread(target=fn), map(fn, xs)) is a real dependency
+            # the callee-only scan above can't see. Emit it as a distinct `indirect_call`
+            # relation so strict `calls` queries stay precise while affected/blast-radius
+            # picks up the edge. Python only for now; dispatch via dict literals, getattr
+            # or decorators lives in other AST nodes and is left to a follow-up.
+            #
+            # Emission is general across call targets (no submit/map/Thread allow-list):
+            # the value is catching a callback passed to ANY function. Two guards keep
+            # it sound — without them an identifier merely matching a node label produced
+            # false edges for the idiomatic shadow case and for plain data variables:
+            #   1. SHADOWING — skip an argument that is a parameter or local binding of
+            #      the enclosing function; it names a local value, not the module fn.
+            #   2. CALLABLE TARGET — resolve only to a function / method / class def, so
+            #      `process(config)` can't point at a same-named non-callable node.
+            if config.ts_module == "tree_sitter_python":
+                args_node = node.child_by_field_name("arguments")
+                if args_node is not None:
+                    enclosing_locals = local_bound_names.get(caller_nid, frozenset())
+                    for arg in args_node.children:
+                        if arg.type == "identifier":
+                            ident = arg
+                        elif arg.type == "keyword_argument":
+                            ident = arg.child_by_field_name("value")
+                        else:
+                            continue
+                        if ident is None or ident.type != "identifier":
+                            continue
+                        ident_name = _read_text(ident, source)
+                        # 1. shadowing: a param / local binding is not the module fn
+                        if ident_name in enclosing_locals:
+                            continue
+                        ref_nid = label_to_nid.get(ident_name)
+                        if not ref_nid or ref_nid == caller_nid:
+                            continue
+                        # 2. callable target only: never an arbitrary data/same-named node
+                        if ref_nid not in callable_def_nids:
+                            continue
+                        if (caller_nid, ref_nid) in seen_call_pairs:
+                            continue  # already a direct call to this target
+                        if (caller_nid, ref_nid) in seen_indirect_pairs:
+                            continue
+                        seen_indirect_pairs.add((caller_nid, ref_nid))
+                        edges.append({
+                            "source": caller_nid,
+                            "target": ref_nid,
+                            "relation": "indirect_call",
+                            "context": "argument",
+                            "confidence": "INFERRED",
+                            "source_file": str_path,
+                            "source_location": f"L{ident.start_point[0] + 1}",
+                            "weight": 1.0,
+                        })
 
             # Helper function calls: config('foo.bar') → uses_config edge to "foo"
             if (callee_name and callee_name in config.helper_fn_names):
