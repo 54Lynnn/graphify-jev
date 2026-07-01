@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## Unreleased
+## 0.9.4 (2026-07-01)
 
 - Fix: Ruby class inheritance now emits an `inherits` edge (#1535, thanks @Synvoya). `class Dog < Animal` produced `contains`/method/call edges but no `inherits` edge — the inheritance handler had branches for Java/Kotlin/C#/Scala/C++/PHP/Swift/Python but none for Ruby, so the `superclass` field was never read. Handles both bare (`< Animal`) and qualified (`< M::Base`) superclasses.
 - Fix: Groovy `extends`/`implements` now emit `inherits`/`implements` edges (#1534, thanks @Synvoya). tree-sitter-groovy exposes inheritance through the same grammar shape as tree-sitter-java, but the handler was gated to Java only, so every Groovy inheritance relationship was dropped.
