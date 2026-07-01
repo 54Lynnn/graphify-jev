@@ -5051,11 +5051,15 @@ def _extract_generic(
 
     result = {"nodes": nodes, "edges": clean_edges, "raw_calls": raw_calls}
     if callable_def_nids:
-        # Function / method / class def ids in this file. The cross-file
-        # indirect_call resolvers use the union of these to ensure a callback
-        # passed by name resolves only to a real callable, never a same-named
-        # data symbol (mirrors the in-file `callable_def_nids` guard).
-        result["callable_nids"] = sorted(callable_def_nids)
+        # Mark function / method / class defs with a `_callable` attribute so the
+        # cross-file indirect_call pass can resolve a by-name callback only to a real
+        # callable (never a same-named data symbol). A marker rides on the node dict
+        # and survives the id-remap / disambiguation passes in extract(); a pre-remap
+        # id set would go stale and silently drop every cross-file indirect edge when
+        # ids are relativized (#1566 regression). Stripped before output, like origin_file.
+        for n in nodes:
+            if n["id"] in callable_def_nids:
+                n["_callable"] = True
     if swift_extensions:
         result["swift_extensions"] = swift_extensions
     if type_table:
@@ -15182,15 +15186,15 @@ def extract(
     all_nodes: list[dict] = []
     all_edges: list[dict] = []
     all_raw_calls: list[dict] = []
-    # Union of every file's function / method / class def ids. The cross-file
-    # indirect_call pass resolves a callback passed by name only to one of these,
-    # so a same-named data symbol can never become an indirect-dispatch target.
-    callable_nids: set[str] = set()
     for result in per_file:
         all_nodes.extend(result.get("nodes", []))
         all_edges.extend(result.get("edges", []))
         all_raw_calls.extend(result.get("raw_calls", []))
-        callable_nids.update(result.get("callable_nids", ()))
+    # Function / method / class def ids for the cross-file indirect_call callable
+    # guard. Built from the `_callable` node marker AFTER the id-remap / disambiguation
+    # passes below (which rewrite node ids), so it can never go stale — see the
+    # marker set in the per-file extractor. Populated just before the pass that uses it.
+    callable_nids: set[str] = set()
 
     _augment_symbol_resolution_edges(paths, all_nodes, all_edges, root)
 
@@ -15372,6 +15376,12 @@ def extract(
         if normalised:
             key = normalised.lower()
             global_label_to_nids.setdefault(key, []).append(n["id"])
+
+    # Callable-def ids for the indirect_call callable guard, read from the `_callable`
+    # marker on the FINAL (post-remap) nodes — so a callback resolves only to a real
+    # function/method/class, never a same-named data symbol, and the guard never goes
+    # stale when node ids were relativized/disambiguated above (#1566).
+    callable_nids = {n["id"] for n in all_nodes if n.get("_callable")}
 
     # Build evidence index from import edges so cross-file calls backed by an
     # explicit import statement can be promoted from INFERRED to EXTRACTED.
@@ -15557,6 +15567,7 @@ def extract(
     # cache keeps its own copy, which is what the colliding-id pass reads on a cache hit.
     for n in all_nodes:
         n.pop("origin_file", None)
+        n.pop("_callable", None)  # internal indirect_call marker — never ships to graph.json
 
     # Tag AST provenance so the incremental watch rebuild can distinguish
     # AST-extracted nodes from semantic/LLM nodes. On a full re-extraction

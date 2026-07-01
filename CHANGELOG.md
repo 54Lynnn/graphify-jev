@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased
+
+- Fix: cross-file `indirect_call` edges were dropped by `graphify extract` on the CLI (a 0.9.4 regression). The callable-target guard for cross-file indirect dispatch was keyed on node ids collected before the id-relativization/disambiguation passes; when the scan root relativizes ids (the CLI's default, `cache_root == project root`), those ids went stale and every cross-file indirect edge was silently dropped — only same-file ones survived. Callable-ness is now read from a node marker that rides through the remaps, so `submit(imported_fn)`, imported dispatch tables, assignment/getattr aliases across files resolve on the CLI as they already did via the `extract()` API.
+
 ## 0.9.4 (2026-07-01)
 
 - Fix: Ruby class inheritance now emits an `inherits` edge (#1535, thanks @Synvoya). `class Dog < Animal` produced `contains`/method/call edges but no `inherits` edge — the inheritance handler had branches for Java/Kotlin/C#/Scala/C++/PHP/Swift/Python but none for Ruby, so the `superclass` field was never read. Handles both bare (`< Animal`) and qualified (`< M::Base`) superclasses.

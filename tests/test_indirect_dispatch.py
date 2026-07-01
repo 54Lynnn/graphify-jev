@@ -201,6 +201,33 @@ def _extract_dir(tmp_path, files: dict[str, str]):
     return r, nid
 
 
+def test_cross_file_indirect_survives_id_relativization(tmp_path):
+    """Regression: when the scan root relativizes node ids (cache_root == project
+    root, as the `graphify extract` CLI passes), the id-remap rewrites node ids
+    AFTER per-file extraction. The cross-file indirect callable guard must read
+    callable-ness from a node marker that survives the remap, not a stale pre-remap
+    id set — otherwise every cross-file indirect_call is silently dropped (only
+    in-file ones survive). This is the exact shape the CLI hit."""
+    base = tmp_path / "proj"
+    (base / "handlers").mkdir(parents=True)
+    (base / "handlers" / "__init__.py").write_text("def on_event(x):\n    return x\n")
+    (base / "scheduler.py").write_text(
+        "from handlers import on_event\n\n\ndef schedule(pool):\n    pool.submit(on_event)\n"
+    )
+    old = os.getcwd()
+    try:
+        os.chdir(base)
+        # cache_root == project root triggers source_file relativization + id-remap
+        r = extract([Path("handlers/__init__.py"), Path("scheduler.py")],
+                    cache_root=base, parallel=False)
+    finally:
+        os.chdir(old)
+    nid = {n["label"].rstrip("()"): n["id"] for n in r["nodes"]}
+    assert (nid["schedule"], nid["on_event"]) in _rels(r, "indirect_call")
+    # the internal callable marker must never ship to graph.json
+    assert not any("_callable" in n for n in r["nodes"])
+
+
 def test_cross_file_imported_callback_emits_indirect_call(tmp_path):
     r, nid = _extract_dir(tmp_path, {
         "handlers.py": "def on_event(x):\n    return x\n",
