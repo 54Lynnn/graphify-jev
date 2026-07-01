@@ -117,7 +117,16 @@ def _norm_source_file(p: str | None, root: str | None = None) -> str | None:
         try:
             p = Path(p).relative_to(root).as_posix()
         except ValueError:
-            pass
+            # Lexical relative_to failed. Retry with both sides fully resolved:
+            # a symlinked scan root (macOS /var -> /private/var, or a symlinked
+            # home/worktree) makes the raw prefixes differ even though they point
+            # at the same dir, which otherwise silently defeats prune/replace
+            # matching. Only the slow path resolves, so the common lexical match
+            # stays filesystem-free.
+            try:
+                p = Path(p).resolve().relative_to(Path(root).resolve()).as_posix()
+            except (ValueError, OSError):
+                pass
     return p
 
 

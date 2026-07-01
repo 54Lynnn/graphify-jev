@@ -13,7 +13,10 @@ build_merge backs `graphify --update`. Two regressions covered here:
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+
+import pytest
 
 from graphify.build import build_merge, _infer_merge_root
 
@@ -124,3 +127,25 @@ def test_prune_without_root_uses_graphify_root_marker(tmp_path):
     assert _infer_merge_root(graph_path) == str(real_root.resolve())
     G = build_merge([], graph_path, prune_sources=[str(real_root / "HANDOFF.md")], dedup=False)
     assert "handoff" not in {d["label"] for _, d in G.nodes(data=True)}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX symlink semantics")
+def test_prune_matches_across_symlinked_root(tmp_path):
+    """A symlinked scan root (macOS /var -> /private/var, symlinked home/worktree)
+    makes the absolute prune path and the resolved root differ by prefix. The prune
+    must still match — lexical relative_to fails, so normalization resolves both
+    sides. Regression for the edge case a canonical-tmp unit test can't reach."""
+    real = tmp_path / "real"
+    (real / "graphify-out").mkdir(parents=True)
+    link = tmp_path / "link"
+    os.symlink(real, link)
+    graph_path = real / "graphify-out" / "graph.json"
+    _write_graph(graph_path, [
+        {"id": "h1", "label": "handoff", "file_type": "document", "source_file": "HANDOFF.md"},
+        {"id": "k1", "label": "keep", "file_type": "document", "source_file": "KEEP.md"},
+    ], [], [])
+    # prune path addressed via the SYMLINK, root resolved to the real dir
+    G = build_merge([], graph_path=graph_path,
+                    prune_sources=[str(link / "HANDOFF.md")], root=str(real), dedup=False)
+    labels = {d["label"] for _, d in G.nodes(data=True)}
+    assert "handoff" not in labels and "keep" in labels
