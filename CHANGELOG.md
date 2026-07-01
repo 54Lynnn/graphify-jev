@@ -4,6 +4,14 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: type-reference / inheritance edge gaps closed across seven languages (all thanks @Synvoya):
+  - Scala: `var` field declarations now emit type `references` like `val` (#1587).
+  - PowerShell: class base types after `:` now emit `inherits` (first) / `implements` (rest), matching the C# convention (#1588).
+  - Objective-C: protocol-to-protocol adoption (`@protocol Derived <Base>`) now emits an `implements` edge (#1589).
+  - PHP: promoted constructor properties (`__construct(private Repo $r)`) now emit type `references` (method + class field) (#1590).
+  - C#: auto-properties (`public Widget Main { get; set; }`) now emit type `references` like fields, including generic args (#1591).
+  - C++: base-class template arguments (`class Car : Base<Dep>`) now emit `generic_arg` references, matching the Java behavior (#1592).
+  - Swift: enum associated-value types (`case started(Session)`) now emit `references` (#1593).
 - Fix: cross-file name resolution now respects case in case-sensitive languages (#1581, thanks @sheik-hiiobd). Resolution matched identifiers case-insensitively for every language, so in Python/Rust/Go/Java/etc. `from pathlib import Path` resolved to an unrelated shell-script `export PATH=...` node — a single variable becoming the corpus's #1 god-node (266 false incoming edges on one real repo), inflating god-node rankings, `affected` blast-radius, and community assignment. Both the cross-file call resolver and the type-reference stub-rewire now match by exact case; only genuinely case-insensitive languages (PHP functions/classes, SQL, Nim) still fold. For case-sensitive languages this only ever removes false edges.
 - Fix: Julia qualified / relative / scoped-selected imports now emit edges (#1580, thanks @Synvoya). Only bare `using Foo` was handled; `using Base.Threads` (scoped), `using ..Parent` (relative import_path), and the scoped package of `import Base.Threads: nthreads` were dropped.
 - Fix: Rust tuple-struct field types now emit `references` edges (#1582, thanks @Synvoya). `struct Wrapper(Logger, Vec<Config>);` referenced nothing — positional fields nest under `ordered_field_declaration_list` with no `field_declaration` wrapper, the same shape as tuple enum variants (#1579); that path wasn't traversed for structs.
