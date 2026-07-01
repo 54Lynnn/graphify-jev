@@ -110,6 +110,27 @@ def label_communities_by_hub(
     return labels
 
 
+def community_member_sigs(communities: dict[int, list[str]]) -> dict[int, str]:
+    """Per-community membership fingerprints: ``{cid: sha256(sorted member ids)}``.
+
+    Persisted next to ``.graphify_labels.json`` so a later ``cluster-only`` can tell
+    which communities actually changed since labeling. A cid whose members no longer
+    hash the same is a different community — reusing its old (LLM) label there is the
+    "stale label after re-scoping" bug this guards against. Deterministic; independent
+    of cid index, node order, and machine.
+    """
+    import hashlib
+
+    sigs: dict[int, str] = {}
+    for cid, members in communities.items():
+        h = hashlib.sha256()
+        for nid in sorted(str(n) for n in members):
+            h.update(nid.encode("utf-8", "replace"))
+            h.update(b"\x00")
+        sigs[cid] = h.hexdigest()[:16]
+    return sigs
+
+
 def cluster(
     G: nx.Graph,
     resolution: float = 1.0,

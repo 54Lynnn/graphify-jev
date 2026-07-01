@@ -3550,10 +3550,59 @@ def main() -> None:
             except Exception:
                 existing_labels = {}
         if labels_path.exists() and not force_relabel:
-            try:
-                labels = existing_labels
-            except Exception:
-                labels = {cid: f"Community {cid}" for cid in communities}
+            # Reuse saved labels, but don't blindly trust them: the graph may have
+            # been re-scoped/re-clustered since labeling, in which case a cid now
+            # covers a DIFFERENT community and its old (LLM) name is wrong (#label-stale).
+            # Validate each community against the membership signature saved beside the
+            # labels; any community that changed (or has no saved label) is renamed by
+            # its current hub — deterministic and correct-by-construction — and the user
+            # is told to `graphify label` for fresh LLM names. Unchanged communities keep
+            # their saved label. When no signature sidecar exists (labels predate this),
+            # fall back to hub-filling only the communities missing a label.
+            from graphify.cluster import community_member_sigs, label_communities_by_hub
+            sig_path = labels_path.parent / (labels_path.name + ".sig")
+            saved_sigs: dict[int, str] = {}
+            if sig_path.exists():
+                try:
+                    saved_sigs = {
+                        int(k): v for k, v in
+                        json.loads(sig_path.read_text(encoding="utf-8")).items()
+                        if isinstance(v, str)
+                    }
+                except Exception:
+                    saved_sigs = {}
+            cur_sigs = community_member_sigs(communities)
+            count_mismatch = len(existing_labels) != len(communities)
+            labels = {}
+            hub_labels: dict[int, str] | None = None
+            changed = 0
+            for cid in communities:
+                have_label = cid in existing_labels
+                if saved_sigs:
+                    # Precise: the membership signature tells us if this exact
+                    # community changed since it was labeled.
+                    fresh = have_label and saved_sigs.get(cid) == cur_sigs.get(cid)
+                else:
+                    # No signature sidecar (labels predate it). A differing community
+                    # COUNT means the labels describe a different clustering, so a cid's
+                    # old label can't be trusted; equal count is the best "same" signal.
+                    fresh = have_label and not count_mismatch
+                if fresh:
+                    labels[cid] = existing_labels[cid]
+                else:
+                    if hub_labels is None:
+                        hub_labels = label_communities_by_hub(G, communities)
+                    labels[cid] = hub_labels[cid]
+                    if have_label:
+                        changed += 1
+            if changed:
+                print(
+                    f"[graphify] community set changed since labeling "
+                    f"({len(existing_labels)} saved labels, {len(communities)} communities now; "
+                    f"renamed {changed} community(ies) by their hub). "
+                    f"Run `graphify label` to refresh names with the LLM.",
+                    file=sys.stderr,
+                )
         elif no_label and not force_relabel:
             labels = {cid: f"Community {cid}" for cid in communities}
         else:
@@ -3608,6 +3657,11 @@ def main() -> None:
         _backup(out)
         to_json(G, communities, str(out / "graph.json"), community_labels=labels)
         labels_path.write_text(json.dumps({str(k): v for k, v in labels.items()}, ensure_ascii=False), encoding="utf-8")
+        # Membership signatures beside the labels so a later cluster-only can detect
+        # which communities changed and avoid reusing a stale label (see reuse above).
+        from graphify.cluster import community_member_sigs as _cms
+        (labels_path.parent / (labels_path.name + ".sig")).write_text(
+            json.dumps({str(k): v for k, v in _cms(communities).items()}), encoding="utf-8")
 
         # Mirror watch.py pattern: gate to_html so core outputs (graph.json +
         # GRAPH_REPORT.md) always land. Honor --no-viz explicitly; otherwise

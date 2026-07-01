@@ -64,3 +64,20 @@ def test_multiple_communities_each_get_their_own_hub():
     )
     labels = label_communities_by_hub(g, {0: ["h1", "a1", "a2"], 1: ["h2", "b1", "b2"]})
     assert labels[0] == "auth" and labels[1] == "billing"
+
+
+# ── community membership signatures (stale-label detection, cluster-only) ──────
+
+def test_community_member_sigs_are_deterministic_and_order_independent():
+    from graphify.cluster import community_member_sigs
+    a = community_member_sigs({0: ["x", "y", "z"], 1: ["a"]})
+    b = community_member_sigs({0: ["z", "x", "y"], 1: ["a"]})  # member order shuffled
+    assert a == b
+    assert a[0] != a[1]
+
+
+def test_community_member_sigs_change_when_membership_changes():
+    from graphify.cluster import community_member_sigs
+    before = community_member_sigs({0: ["x", "y", "z"]})
+    after = community_member_sigs({0: ["x", "y"]})  # a node left the community
+    assert before[0] != after[0], "signature must change when a community's members change"

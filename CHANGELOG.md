@@ -4,6 +4,7 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: `graphify cluster-only` no longer reuses stale community labels after the graph changed. When a repo was re-scoped/re-clustered, the saved `.graphify_labels.json` was applied wholesale to the new community set — so a community id that now covered a different community wore the old (LLM) name, silently. cluster-only now writes a per-community membership signature beside the labels and, on reuse, keeps a saved label only for communities whose membership is unchanged; any community that changed (or, for pre-signature label files, when the community count no longer matches) is renamed by its deterministic hub, with a warning to run `graphify label` for fresh LLM names.
 - Fix: cross-file `indirect_call` edges were dropped by `graphify extract` on the CLI (a 0.9.4 regression). The callable-target guard for cross-file indirect dispatch was keyed on node ids collected before the id-relativization/disambiguation passes; when the scan root relativizes ids (the CLI's default, `cache_root == project root`), those ids went stale and every cross-file indirect edge was silently dropped — only same-file ones survived. Callable-ness is now read from a node marker that rides through the remaps, so `submit(imported_fn)`, imported dispatch tables, assignment/getattr aliases across files resolve on the CLI as they already did via the `extract()` API.
 
 ## 0.9.4 (2026-07-01)
