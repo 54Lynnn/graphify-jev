@@ -9032,9 +9032,27 @@ def _canonicalize_csharp_namespace_nodes(all_nodes: list[dict], all_edges: list[
         all_nodes[:] = [node for node in all_nodes if id(node) not in drop_node_ids]
 
 
-def _node_label_key(node: dict) -> str:
+# Languages whose identifiers are case-insensitive, so cross-file name resolution
+# may fold case. Everywhere else, case is semantic (`Path` the class vs `PATH` the
+# env var are distinct) and folding manufactures false edges / super-hubs (#1581).
+_CASE_INSENSITIVE_EXTS = frozenset({
+    ".php", ".phtml", ".php3", ".php4", ".php5", ".php7", ".phps",  # PHP fns/classes
+    ".sql",                                                          # SQL identifiers
+    ".nim", ".nims", ".nimble",                                      # Nim (style-insensitive)
+})
+
+
+def _lang_is_case_insensitive(source_file: object) -> bool:
+    """True when the file's language resolves identifiers case-insensitively (#1581)."""
+    if not source_file:
+        return False
+    return Path(str(source_file)).suffix.lower() in _CASE_INSENSITIVE_EXTS
+
+
+def _node_label_key(node: dict, fold: bool = False) -> str:
     label = str(node.get("label", "")).strip()
-    return re.sub(r"[^a-zA-Z0-9]+", "", label).lower()
+    key = re.sub(r"[^a-zA-Z0-9]+", "", label)
+    return key.lower() if fold else key
 
 
 def _is_type_like_definition(node: dict) -> bool:
@@ -9052,7 +9070,8 @@ def _is_type_like_definition(node: dict) -> bool:
 
 def _rewire_unique_stub_nodes(nodes: list[dict], edges: list[dict]) -> None:
     """Map unresolved no-source stubs to a unique real definition with the same label."""
-    real_by_label: dict[str, list[dict]] = {}
+    real_by_label: dict[str, list[dict]] = {}       # exact-case (all languages)
+    real_by_label_ci: dict[str, list[dict]] = {}    # case-INSENSITIVE-language reals only
     stubs: list[dict] = []
 
     for node in nodes:
@@ -9061,7 +9080,13 @@ def _rewire_unique_stub_nodes(nodes: list[dict], edges: list[dict]) -> None:
             continue
         if node.get("source_file"):
             if _is_type_like_definition(node):
+                # Match stubs case-SENSITIVELY: a `Path` reference must not rewire to a
+                # `PATH` env var (#1581). Fold only for genuinely case-insensitive
+                # languages, where `foo` legitimately resolves to `Foo`.
                 real_by_label.setdefault(key, []).append(node)
+                if _lang_is_case_insensitive(node.get("source_file")):
+                    real_by_label_ci.setdefault(
+                        _node_label_key(node, fold=True), []).append(node)
             continue
         stubs.append(node)
 
@@ -9072,7 +9097,12 @@ def _rewire_unique_stub_nodes(nodes: list[dict], edges: list[dict]) -> None:
             continue
         candidates = real_by_label.get(_node_label_key(stub), [])
         if len(candidates) != 1:
-            continue
+            # No unique exact match — fall back to a case-insensitive match, but
+            # only against case-insensitive-language definitions (so a case-sensitive
+            # `PATH` can never absorb a `Path` reference).
+            candidates = real_by_label_ci.get(_node_label_key(stub, fold=True), [])
+            if len(candidates) != 1:
+                continue
         target_id = candidates[0].get("id")
         if isinstance(target_id, str) and target_id and target_id != stub_id:
             remap[stub_id] = target_id
@@ -15464,15 +15494,21 @@ def extract(
     # Build label -> node_id index for cross-file call resolution.
     # Skip rationale nodes (their labels are docstring text, not callable
     # identifiers, and they were polluting matches for short names — #563).
-    global_label_to_nids: dict[str, list[str]] = {}
+    global_label_to_nids: dict[str, list[str]] = {}      # exact-case (all languages)
+    global_label_to_nids_ci: dict[str, list[str]] = {}   # case-INSENSITIVE-language nodes
     for n in all_nodes:
         if n.get("file_type") == "rationale" or n.get("type") == "namespace":
             continue
         raw = n.get("label", "")
         normalised = raw.strip("()").lstrip(".")
         if normalised:
-            key = normalised.lower()
-            global_label_to_nids.setdefault(key, []).append(n["id"])
+            # Case is semantic in most languages, so index (and match, below) by exact
+            # case — folding collapses `Path` (class) into `PATH` (env var) and makes a
+            # single shell variable the #1 god-node (#1581). Only case-insensitive
+            # languages (PHP/SQL/Nim) also get a folded key for legitimate fold-matching.
+            global_label_to_nids.setdefault(normalised, []).append(n["id"])
+            if _lang_is_case_insensitive(n.get("source_file")):
+                global_label_to_nids_ci.setdefault(normalised.lower(), []).append(n["id"])
 
     # Callable-def ids for the indirect_call callable guard, read from the `_callable`
     # marker on the FINAL (post-remap) nodes — so a callback resolves only to a real
@@ -15532,7 +15568,13 @@ def extract(
         # and collides with any top-level function named "log" in the corpus.
         if rc.get("is_member_call"):
             continue
-        candidates = global_label_to_nids.get(callee.lower(), [])
+        # Exact-case match first (case is semantic). Fold only when the CALLING
+        # file's language is case-insensitive, and only against the folded index of
+        # case-insensitive-language definitions — so a Python `Path()` call can never
+        # resolve to a shell `PATH` node (#1581).
+        candidates = global_label_to_nids.get(callee, [])
+        if not candidates and _lang_is_case_insensitive(rc.get("source_file")):
+            candidates = global_label_to_nids_ci.get(callee.lower(), [])
         if not candidates:
             continue
         caller = rc["caller_nid"]
