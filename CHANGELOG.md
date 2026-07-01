@@ -4,6 +4,9 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: Julia qualified / relative / scoped-selected imports now emit edges (#1580, thanks @Synvoya). Only bare `using Foo` was handled; `using Base.Threads` (scoped), `using ..Parent` (relative import_path), and the scoped package of `import Base.Threads: nthreads` were dropped.
+- Fix: Rust tuple-struct field types now emit `references` edges (#1582, thanks @Synvoya). `struct Wrapper(Logger, Vec<Config>);` referenced nothing — positional fields nest under `ordered_field_declaration_list` with no `field_declaration` wrapper, the same shape as tuple enum variants (#1579); that path wasn't traversed for structs.
+- Fix: SystemVerilog class properties with leading qualifiers now emit field `references` (#1583, thanks @Synvoya). The field regex only matched unqualified `<type> <name>;`, so `rand Config x;` / `protected Base b;` (qualifier + type + name) failed to match and their type references were dropped.
 - Fix: Elixir multi-alias brace form now emits imports edges (#1577, thanks @Synvoya). `alias Foo.{Bar, Baz}` produced no imports (the handler only matched a bare single alias); it now expands to one edge per member module. Single `alias`/`import`/`require`/`use` unchanged.
 - Fix: Fortran function invocations now emit `calls` edges (#1578, thanks @Synvoya). Only `call sub(...)` (subroutine) calls were captured; `y = f(x)` function calls (a `call_expression`) were dropped. Resolved against procedures defined in the file so array indexing (`arr(i)`, same `name(...)` syntax) can't fabricate a spurious call.
 - Fix: Rust enum variant payload types now emit `references` edges (#1579, thanks @Synvoya). `Click(Logger)` / `Resize { size: Dim }` referenced nothing — `enum_item` had no type-reference handler (struct/trait did). Both tuple and struct variant field types now resolve.
