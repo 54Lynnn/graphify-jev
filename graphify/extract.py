@@ -2270,6 +2270,76 @@ def _swift_local_var_types(body_node, source: bytes, table: dict[str, str]) -> N
             stack.append(c)
 
 
+def _csharp_member_type_table(root, source: bytes) -> dict[str, str]:
+    """Collect ``name -> TypeName`` for C# receiver typing (#1609): class fields,
+    properties, method parameters, and local variable declarations.
+
+    File-scoped, first-binding-wins (like the C++ table): a field declared once at
+    class scope is visible to every method's `field.Method()`, and a param/local
+    shadowing the same name is a conservative approximation graphify already accepts
+    for receiver typing. Only a resolvable, non-`var` type name is recorded; `var`
+    without a `new T()` initializer, and predefined/lower-cased primitives, are
+    skipped (precision over recall — an untypable receiver is left for the resolver
+    to drop rather than guess). `var v = new T()` is typed from the object-creation.
+    """
+    table: dict[str, str] = {}
+
+    def _typed(type_node) -> str | None:
+        info = _read_csharp_type_name(type_node, source)
+        if not info:
+            return None
+        name = info[0]
+        # A genuine C# class name is Pascal-cased; skip predefined primitives
+        # (int/bool/string) which never own a resolvable method definition here.
+        return name if name and name[:1].isupper() else None
+
+    def _decl_names(var_decl):
+        for c in var_decl.children:
+            if c.type == "variable_declarator":
+                nm = c.child_by_field_name("name") or next(
+                    (g for g in c.children if g.type == "identifier"), None)
+                if nm is not None:
+                    yield _read_text(nm, source), c
+
+    def _new_type(declarator) -> str | None:
+        # `var v = new Server()` — recover the type from the object_creation_expression.
+        for g in declarator.children:
+            if g.type == "object_creation_expression":
+                return _typed(g.child_by_field_name("type"))
+        return None
+
+    stack = [root]
+    while stack:
+        n = stack.pop()
+        t = n.type
+        if t in ("field_declaration", "local_declaration_statement"):
+            vd = next((c for c in n.children if c.type == "variable_declaration"), None)
+            if vd is not None:
+                type_node = vd.child_by_field_name("type")
+                declared = _typed(type_node)
+                for name, decl in _decl_names(vd):
+                    resolved = declared or _new_type(decl)
+                    if name and resolved and name not in table:
+                        table[name] = resolved
+        elif t == "property_declaration":
+            nm = n.child_by_field_name("name")
+            resolved = _typed(n.child_by_field_name("type"))
+            if nm is not None and resolved:
+                pname = _read_text(nm, source)
+                if pname not in table:
+                    table[pname] = resolved
+        elif t == "parameter":
+            nm = n.child_by_field_name("name")
+            resolved = _typed(n.child_by_field_name("type"))
+            if nm is not None and resolved:
+                pname = _read_text(nm, source)
+                if pname not in table:
+                    table[pname] = resolved
+        for c in n.children:
+            stack.append(c)
+    return table
+
+
 def _objc_local_var_types(body_node, source: bytes, table: dict[str, str]) -> None:
     """Collect ``var -> ClassName`` from ObjC local declarations (``Foo *f = ...;``)
     in a method body, for receiver typing in the cross-file message-send pass
@@ -4776,20 +4846,45 @@ def _extract_generic(
                                     callee_name = _read_text(child, source)
                                     break
             elif config.ts_module == "tree_sitter_c_sharp" and node.type == "invocation_expression":
-                # C#: try name field, then first named child
-                name_node = node.child_by_field_name("name")
-                if name_node:
-                    callee_name = _read_text(name_node, source)
+                # C#: the invoked function is the `function` field. A member call
+                # `recv.Method(...)` is a member_access_expression (receiver in its
+                # `expression` field, method in `name`). Capture a simple-identifier
+                # or `this` receiver + set is_member_call so the receiver-typed
+                # resolver (_resolve_csharp_member_calls) can bind it to the
+                # receiver's declared type. Without this the bare method name matched
+                # any same-named method in the corpus, silently mis-resolving
+                # `_server.Save()` to an unrelated `Cache.Save()` (#1609).
+                fn_node = node.child_by_field_name("function")
+                if fn_node is not None and fn_node.type == "member_access_expression":
+                    mname = fn_node.child_by_field_name("name")
+                    recv = fn_node.child_by_field_name("expression")
+                    if mname is not None:
+                        callee_name = _read_text(mname, source)
+                        is_member_call = True
+                        if recv is not None and recv.type == "identifier":
+                            member_receiver = _read_text(recv, source)
+                        elif recv is not None and recv.type == "this_expression":
+                            member_receiver = "this"
+                elif fn_node is not None and fn_node.type == "identifier":
+                    callee_name = _read_text(fn_node, source)
                 else:
-                    for child in node.children:
-                        if child.is_named:
-                            raw = _read_text(child, source)
-                            if "." in raw:
-                                callee_name = raw.split(".")[-1]
-                                is_member_call = True
-                            else:
-                                callee_name = raw
-                            break
+                    # Fallback: original name-field / first-named-child scan.
+                    name_node = node.child_by_field_name("name")
+                    if name_node:
+                        callee_name = _read_text(name_node, source)
+                    else:
+                        for child in node.children:
+                            if child.is_named:
+                                raw = _read_text(child, source)
+                                if "." in raw:
+                                    callee_name = raw.split(".")[-1]
+                                    is_member_call = True
+                                    parts = raw.split(".")
+                                    if len(parts) == 2 and parts[0]:
+                                        member_receiver = parts[0]
+                                else:
+                                    callee_name = raw
+                                break
             elif config.ts_module == "tree_sitter_php":
                 # PHP: distinguish call expression subtypes
                 if node.type == "function_call_expression":
@@ -4903,7 +4998,18 @@ def _extract_generic(
                 # viewset action delegates to a same-named service action — which would
                 # match `tgt_nid == caller_nid` and silently drop the call (#1446). The
                 # captured receiver is resolved later in _resolve_python_member_calls.
-                if is_member_call and member_receiver and (member_receiver[:1].isupper() or is_this_field_call):
+                # C#: ANY member call with a captured receiver defers to the
+                # receiver-typed resolver — a bare method-name match ignores the
+                # receiver's declared type and mis-binds to an unrelated same-named
+                # method (#1609). The receiver may be lowercase (`_server.Save()`),
+                # so this is broader than the capitalized/this-field Python rule.
+                _csharp_defer = (
+                    config.ts_module == "tree_sitter_c_sharp"
+                    and is_member_call and member_receiver
+                )
+                if is_member_call and member_receiver and (
+                    member_receiver[:1].isupper() or is_this_field_call or _csharp_defer
+                ):
                     tgt_nid = None
                 else:
                     tgt_nid = label_to_nid.get(callee_name)
@@ -4944,6 +5050,11 @@ def _extract_generic(
                     # suffix sets, so a source_file suffix alone can't separate them.
                     if config.ts_module == "tree_sitter_cpp":
                         rc_entry["lang"] = "cpp"
+                    # C#: tag the raw_call so _resolve_csharp_member_calls claims it
+                    # and types the receiver against the file's field/param/local
+                    # type table (#1609).
+                    if config.ts_module == "tree_sitter_c_sharp":
+                        rc_entry["lang"] = "csharp"
                     raw_calls.append(rc_entry)
 
             # Indirect dispatch: a function passed BY NAME as a call argument
@@ -5284,6 +5395,13 @@ def _extract_generic(
             result["ts_type_table"] = {"path": str_path, "table": type_table}
         elif config.ts_module == "tree_sitter_cpp":
             result["cpp_type_table"] = {"path": str_path, "table": type_table}
+    # C#: a file-wide receiver type table (field/property/param/local -> Type) for
+    # _resolve_csharp_member_calls (#1609). Built from the whole tree, not just
+    # function bodies, so class-level fields/properties are in scope for every method.
+    if config.ts_module == "tree_sitter_c_sharp":
+        cs_table = _csharp_member_type_table(root, source)
+        if cs_table:
+            result["csharp_type_table"] = {"path": str_path, "table": cs_table}
     return result
 
 
@@ -11589,6 +11707,120 @@ def _resolve_cpp_member_calls(
         })
 
 
+def _resolve_csharp_member_calls(
+    per_file: list[dict],
+    all_nodes: list[dict],
+    all_edges: list[dict],
+) -> None:
+    """Resolve C# member calls (``recv.Method()``) to the receiver's declared type
+    (#1609).
+
+    The shared cross-file pass drops every ``is_member_call`` because a bare method
+    name collides across the corpus — and for C# an in-file bare match silently
+    mis-bound ``_server.Save()`` to an unrelated ``Cache.Save()``. The C# extractor
+    now records each member call's receiver plus a per-file ``name -> Type`` table
+    (``csharp_type_table``) of fields/properties/params/locals. This pass types the
+    receiver, then emits an edge ONLY when that type resolves to exactly ONE
+    definition (the god-node guard); an untypable receiver is skipped (no guess).
+
+    Receiver typing, by precision tier:
+      * ``this.M()`` — receiver is the caller's own enclosing class -> EXTRACTED.
+      * ``Type.M()`` (capitalized) — the type is named explicitly in source -> EXTRACTED.
+      * ``recv.M()`` — ``recv`` typed via the file's field/param/local table -> INFERRED.
+
+    Must run after id-disambiguation so node ids and caller_nids are final.
+    """
+    type_table_by_file: dict[str, dict[str, str]] = {}
+    for result in per_file:
+        tt = result.get("csharp_type_table")
+        if tt and tt.get("path"):
+            type_table_by_file[tt["path"]] = tt.get("table", {})
+
+    def _key(label: str) -> str:
+        return re.sub(r"[^a-zA-Z0-9]+", "", str(label)).lower()
+
+    contained = {e.get("target") for e in all_edges if e.get("relation") == "contains"}
+
+    type_def_nids: dict[str, list[str]] = {}
+    node_by_id: dict[str, dict] = {}
+    for n in all_nodes:
+        node_by_id[n.get("id")] = n
+        if n.get("source_file") and n.get("id") in contained and _is_type_like_definition(n):
+            type_def_nids.setdefault(_key(n.get("label", "")), []).append(n["id"])
+
+    # (type_node_id, method_key) -> method_node_id, and caller -> enclosing type.
+    # C# owns its methods via `method` edges.
+    method_index: dict[tuple[str, str], str] = {}
+    enclosing_type: dict[str, str] = {}
+    for e in all_edges:
+        if e.get("relation") != "method":
+            continue
+        src, tgt = e.get("source"), e.get("target")
+        tnode = node_by_id.get(tgt)
+        if tnode is None:
+            continue
+        enclosing_type.setdefault(tgt, src)
+        method_index[(src, _key(tnode.get("label", "")))] = tgt
+
+    all_raw_calls: list[dict] = []
+    for result in per_file:
+        all_raw_calls.extend(result.get("raw_calls", []))
+
+    existing_pairs = {(e.get("source"), e.get("target")) for e in all_edges}
+    for rc in all_raw_calls:
+        if rc.get("lang") != "csharp" or not rc.get("is_member_call"):
+            continue
+        receiver = rc.get("receiver")
+        callee = rc.get("callee")
+        caller = rc.get("caller_nid")
+        if not receiver or not callee or not caller:
+            continue
+        src_file = rc.get("source_file", "")
+        if receiver == "this":
+            type_nid = enclosing_type.get(caller)
+            if not type_nid:
+                continue
+            type_qualified = True
+        elif receiver[:1].isupper():
+            # Type.M() — the type is named explicitly (also covers a Pascal-cased
+            # local whose name equals its type, resolved via the table below if the
+            # explicit-type lookup misses).
+            type_defs = type_def_nids.get(_key(receiver), [])
+            if len(type_defs) != 1:
+                type_name = type_table_by_file.get(src_file, {}).get(receiver)
+                type_defs = type_def_nids.get(_key(type_name), []) if type_name else []
+                if len(type_defs) != 1:
+                    continue
+            type_nid = type_defs[0]
+            type_qualified = True
+        else:
+            type_name = type_table_by_file.get(src_file, {}).get(receiver)
+            if not type_name:
+                continue
+            type_defs = type_def_nids.get(_key(type_name), [])
+            if len(type_defs) != 1:  # ambiguous or absent -> bail (god-node guard)
+                continue
+            type_nid = type_defs[0]
+            type_qualified = False
+        method_nid = method_index.get((type_nid, _key(callee)))
+        if not method_nid:
+            continue  # receiver typed, but the type has no such method — skip
+        if method_nid == caller or (caller, method_nid) in existing_pairs:
+            continue
+        existing_pairs.add((caller, method_nid))
+        all_edges.append({
+            "source": caller,
+            "target": method_nid,
+            "relation": "calls",
+            "context": "call",
+            "confidence": "EXTRACTED" if type_qualified else "INFERRED",
+            "confidence_score": 1.0 if type_qualified else 0.8,
+            "source_file": src_file,
+            "source_location": rc.get("source_location"),
+            "weight": 1.0,
+        })
+
+
 def _resolve_objc_member_calls(
     per_file: list[dict],
     all_nodes: list[dict],
@@ -11733,6 +11965,11 @@ register_language_resolver(
         frozenset({".m", ".mm", ".h"}),
         _resolve_objc_member_calls,
     )
+)
+# C# receiver-typed member-call resolution (#1609): `field/param/local.Method()`
+# bound to the receiver's declared type instead of a bare same-named match.
+register_language_resolver(
+    LanguageResolver("csharp_member_calls", frozenset({".cs"}), _resolve_csharp_member_calls)
 )
 
 
