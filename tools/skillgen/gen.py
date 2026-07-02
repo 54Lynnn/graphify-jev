@@ -864,6 +864,19 @@ def _is_no_api_key_fix_line(line: str) -> bool:
     return "graphify needs no API key" in line
 
 
+def _is_shebang_allowlist_fix_line(line: str) -> bool:
+    """Whether a line is part of the Homebrew ``python@`` shebang allowlist fix (#1586).
+
+    The interpreter-detection guard rejected any shebang containing a character
+    outside ``[!a-zA-Z0-9/_.-]``, but Homebrew installs versioned Python under
+    ``python@3.13``, so a valid interpreter path legitimately contains ``@`` and
+    detection fell through to a bare ``python3`` that lacked graphify. ``@`` is now
+    allowed, matching the #473 hooks.py fix; injection chars are still rejected.
+    Both the old (removed) and new (added) allowlist forms match here.
+    """
+    return "[!a-zA-Z0-9/_." in line
+
+
 # Every line that may differ between a rendered monolith and its pristine v8
 # baseline. Each predicate documents one sanctioned change-class; a blank line is
 # allowed because the multi-line fix blocks insert spacing. Anything else failing
@@ -878,6 +891,7 @@ _SANCTIONED_MONOLITH_DIFFS = (
     _is_zero_node_guard_fix_line,
     _is_manifest_root_fix_line,
     _is_no_api_key_fix_line,
+    _is_shebang_allowlist_fix_line,
 )
 
 

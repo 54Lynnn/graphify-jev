@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: the skill's Python-interpreter detection now accepts Homebrew `python@3.x` paths (#1586, thanks @SUDARSHANCHAUDHARI). The shebang allowlist rejected any path with a character outside `[a-zA-Z0-9/_.-]`, but Homebrew installs versioned Python under `python@3.13`, so a valid interpreter containing `@` was skipped and detection fell through to a bare `python3` that lacked graphify (every step then failed with `ModuleNotFoundError`). `@` is now allowed across all skill variants (matching the #473 hooks.py fix); injection characters are still rejected.
+- Fix: `graphify merge-graphs` no longer crashes on inputs that disagree on graph type (#1606, thanks @AdrianRusan). Per-repo `graph.json` files don't always share the same `directed` / `multigraph` flags, and `compose` requires one uniform type, so a mixed set raised an unhandled `NetworkXError`. All inputs are now normalized to a plain undirected graph (which the cross-repo merged view already is) before composing.
 - Fix: type-reference / inheritance edge gaps closed across seven languages (all thanks @Synvoya):
   - Scala: `var` field declarations now emit type `references` like `val` (#1587).
   - PowerShell: class base types after `:` now emit `inherits` (first) / `implements` (rest), matching the C# convention (#1588).

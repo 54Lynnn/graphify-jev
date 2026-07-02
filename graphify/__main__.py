@@ -3912,7 +3912,14 @@ def main() -> None:
         # may be a MultiGraph and another a Graph.  Normalise everything to Graph
         # (the graphify default) by converting MultiGraphs with nx.Graph().
         def _to_simple(g: "_nx.Graph") -> "_nx.Graph":
-            if isinstance(g, _nx.MultiGraph):
+            # nx.compose requires every graph to be the same type. Inputs may
+            # disagree on BOTH axes — directed vs undirected, and multi vs simple
+            # — because per-repo graph.json files are written by different extract
+            # paths at different times. Normalise everything to a plain undirected
+            # Graph (the merged cross-repo view is undirected anyway), which covers
+            # DiGraph / MultiGraph / MultiDiGraph. Without this a directed input
+            # crashed compose with "All graphs must be directed or undirected" (#1606).
+            if type(g) is not _nx.Graph:
                 return _nx.Graph(g)
             return g
         merged = _nx.Graph()
