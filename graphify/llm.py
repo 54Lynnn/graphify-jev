@@ -449,6 +449,17 @@ def _file_to_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
 
 
+def _resolve_under_root(path: Path, root: Path) -> Path | None:
+    """Return the resolved path only when it stays inside ``root``."""
+    try:
+        resolved_root = root.resolve()
+        resolved_path = path.resolve()
+        resolved_path.relative_to(resolved_root)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return resolved_path
+
+
 # Known prompt-injection / chat-template sentinels that a hostile source file
 # might embed to try to break out of the untrusted_source block or impersonate a
 # system/role turn. Neutralised (not deleted — we keep byte offsets stable enough
@@ -505,6 +516,10 @@ def _read_files(units: "list[Path | FileSlice]", root: Path) -> str:
     parts: list[str] = []
     for u in units:
         p = unit_path(u)
+        safe_path = _resolve_under_root(p, root)
+        if safe_path is None:
+            print(f"[graphify] skipping {p}: symlink target outside corpus root", file=sys.stderr)
+            continue
         try:
             rel = str(p.relative_to(root))
         except ValueError:
@@ -513,7 +528,7 @@ def _read_files(units: "list[Path | FileSlice]", root: Path) -> str:
             if isinstance(u, FileSlice):
                 content = read_slice_text(u)
             else:
-                content = _file_to_text(p)
+                content = _file_to_text(safe_path)
         except OSError:
             continue
         # Whole files are still capped (covers non-splittable large files like
@@ -611,6 +626,10 @@ def _build_image_refs(image_files: list[Path], root: Path, *, read_bytes: bool =
     """
     refs: list[_ImageRef] = []
     for p in image_files:
+        abs_path = _resolve_under_root(p, root)
+        if abs_path is None:
+            print(f"[graphify] skipping image {p}: symlink target outside corpus root", file=sys.stderr)
+            continue
         try:
             rel = str(p.relative_to(root))
         except ValueError:
@@ -619,7 +638,7 @@ def _build_image_refs(image_files: list[Path], root: Path, *, read_bytes: bool =
         raw: bytes | None = None
         if read_bytes:
             try:
-                raw = p.read_bytes()
+                raw = abs_path.read_bytes()
             except OSError as exc:
                 print(f"[graphify] could not read image {rel}: {exc}", file=sys.stderr)
                 raw = None
@@ -631,10 +650,6 @@ def _build_image_refs(image_files: list[Path], root: Path, *, read_bytes: bool =
                     file=sys.stderr,
                 )
                 raw = None
-        try:
-            abs_path = p.resolve()
-        except OSError:
-            abs_path = p
         refs.append(_ImageRef(abs_path, rel, media, raw))
     return refs
 
