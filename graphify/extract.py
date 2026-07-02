@@ -2221,6 +2221,45 @@ def _cpp_local_var_types(body_node, source: bytes, table: dict[str, str]) -> Non
             stack.append(c)
 
 
+def _swift_local_var_types(body_node, source: bytes, table: dict[str, str]) -> None:
+    """Collect ``var -> Type`` from local ``let``/``var`` bindings in a Swift
+    function body, so a member call on the local (``x.method()``) resolves to Type
+    in the cross-file member-call pass (#1604).
+
+    Two initializer shapes are recorded, PRECISION over recall:
+      - a constructor call ``let x = Type()`` (``_swift_constructor_type``);
+      - a static-member access ``let x = Type.shared`` (a navigation_expression
+        with an upper-cased head) — the singleton-cached-into-a-local idiom, one
+        of the most common Swift call patterns and previously resolved to nothing.
+    Nested function declarations are not descended into (their locals are scoped
+    away); the first binding for a name wins, so a class property of the same name
+    already in the table is not overwritten.
+    """
+    stack = [body_node]
+    while stack:
+        n = stack.pop()
+        if n.type == "function_declaration" and n is not body_node:
+            continue
+        if n.type == "property_declaration":
+            prop_type: str | None = None
+            for child in n.children:
+                if child.type == "call_expression":
+                    prop_type = _swift_constructor_type(child, source)
+                    break
+                if child.type == "navigation_expression":
+                    head = child.children[0] if child.children else None
+                    if head is not None and head.type == "simple_identifier":
+                        htext = _read_text(head, source)
+                        if htext and htext[:1].isupper():
+                            prop_type = htext
+                    break
+            name = _swift_property_name(n, source)
+            if name and prop_type and name not in table:
+                table[name] = prop_type
+        for c in n.children:
+            stack.append(c)
+
+
 def _objc_local_var_types(body_node, source: bytes, table: dict[str, str]) -> None:
     """Collect ``var -> ClassName`` from ObjC local declarations (``Foo *f = ...;``)
     in a method body, for receiver typing in the cross-file message-send pass
@@ -3932,6 +3971,18 @@ def _extract_generic(
                         ctor = _swift_constructor_type(child, source)
                         if ctor is not None:
                             prop_type = ctor
+                # #1604 Stage 2b: `let x = Type.shared` (or any `Type.staticProp`)
+                # binds x to Type via a static-member access, which is a
+                # navigation_expression, not a constructor call. Infer x's type from
+                # the uppercase head so later `x.method()` calls resolve to Type. This
+                # is the singleton idiom (`Type.shared`) cached into a local var and
+                # called on a subsequent line — extremely common in Swift.
+                elif child.type == "navigation_expression" and prop_type is None:
+                    head = child.children[0] if child.children else None
+                    if head is not None and head.type == "simple_identifier":
+                        htext = _read_text(head, source)
+                        if htext and htext[:1].isupper():
+                            prop_type = htext
             prop_name = _swift_property_name(node, source)
             if prop_name and prop_type:
                 type_table[prop_name] = prop_type
@@ -5039,6 +5090,13 @@ def _extract_generic(
     if config.ts_module == "tree_sitter_cpp":
         for _caller_nid, body_node in function_bodies:
             _cpp_local_var_types(body_node, source, type_table)
+
+    # Swift: type local `let x = Type()` / `let x = Type.shared` bindings inside
+    # method bodies so `x.method()` on a later line resolves — class-level
+    # properties are typed in the walk, but method-body locals were not (#1604).
+    if config.ts_module == "tree_sitter_swift":
+        for _caller_nid, body_node in function_bodies:
+            _swift_local_var_types(body_node, source, type_table)
 
     for caller_nid, body_node in function_bodies:
         walk_calls(body_node, caller_nid)
