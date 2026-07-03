@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Fix: `graphify export obsidian` no longer crashes in `to_canvas` on a dangling community member (#1236 follow-up, thanks @swells808). The original #1236 fix guarded `to_obsidian` but not `to_canvas`, so a community member id with no backing node in the graph still raised `KeyError` while writing `graph.canvas` — after the notes had exported, leaving a partial mirror. `to_canvas` now applies the same dangling-member filter (`m in G and m in node_filenames`) in both the box-sizing and card-layout loops.
+
 - Feat: TS/JS member calls on a local `new` binding or a type-annotated parameter now resolve (#1630, thanks @DanielC000). `const s = new Svc(); s.doThing()` and a call on a typed param — including inside a returned closure (`(svc: Svc) => () => svc.doThing()`) — now emit `calls` edges to the receiver type's method, so `affected` no longer silently under-reports. Extends the #1316 `this.field` resolver: the per-file type table now also learns local `new` bindings and bare-typed parameters, and `walk_calls` descends into inline/returned closures (attributing their calls to the enclosing function) instead of stopping at the arrow boundary. Resolution keeps the single-definition guard; an untyped or non-bare-typed (array/union/generic) receiver produces no edge.
 
 - Fix: the `query` reference doc's inline vocab/fallback snippets now read and write files with `encoding="utf-8"` (#1619 A2, thanks @edtrackai). On Windows (default cp1252) the bare `read_text()`/`write_text()` calls crashed on exactly the cross-language corpora the doc demonstrates (e.g. Cyrillic labels like `обработчик`). Fixed across all generated skill variants.
