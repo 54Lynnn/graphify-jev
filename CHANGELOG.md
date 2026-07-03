@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## Unreleased
 
+- Feat: TS/JS member calls on a local `new` binding or a type-annotated parameter now resolve (#1630, thanks @DanielC000). `const s = new Svc(); s.doThing()` and a call on a typed param — including inside a returned closure (`(svc: Svc) => () => svc.doThing()`) — now emit `calls` edges to the receiver type's method, so `affected` no longer silently under-reports. Extends the #1316 `this.field` resolver: the per-file type table now also learns local `new` bindings and bare-typed parameters, and `walk_calls` descends into inline/returned closures (attributing their calls to the enclosing function) instead of stopping at the arrow boundary. Resolution keeps the single-definition guard; an untyped or non-bare-typed (array/union/generic) receiver produces no edge.
+
 - Fix: the `query` reference doc's inline vocab/fallback snippets now read and write files with `encoding="utf-8"` (#1619 A2, thanks @edtrackai). On Windows (default cp1252) the bare `read_text()`/`write_text()` calls crashed on exactly the cross-language corpora the doc demonstrates (e.g. Cyrillic labels like `обработчик`). Fixed across all generated skill variants.
 
 - Fix: `graphify update`/`watch` no longer leaves stale sources after a deletion or a destination-only rename (#1623 / #1622, thanks @oleksii-tumanov). When the last supported file was deleted, or a rename reported only its destination in `changed_paths`, the removed source's nodes lingered in `graph.json`. The rebuild now reconciles extractor-backed sources against the files still present (code and document sources, subdirectory roots, legacy markers, symlinks, hyperedges) while preserving semantic and out-of-scope records.
