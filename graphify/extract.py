@@ -2993,7 +2993,12 @@ _CPP_CONFIG = LanguageConfig(
 
 _RUBY_CONFIG = LanguageConfig(
     ts_module="tree_sitter_ruby",
-    class_types=frozenset({"class"}),
+    # `module Foo` is a container node just like `class Foo` in tree-sitter's
+    # Ruby grammar (name in a `constant` child, body in `body_statement`), so it
+    # gets a node and its methods attach via `method` (#1640). Without it, plain
+    # utility/`module_function` modules produced no node and their methods hung
+    # off the file via `contains` with dot-less labels.
+    class_types=frozenset({"class", "module"}),
     function_types=frozenset({"method", "singleton_method"}),
     import_types=frozenset(),
     call_types=frozenset({"call"}),
@@ -3281,6 +3286,92 @@ def _ruby_local_class_bindings(body_node, source: bytes) -> dict[str, str | None
 
     visit(body_node)
     return bindings
+
+
+def _ruby_const_last_name(node, source: bytes) -> str:
+    """Last constant of a ``constant`` or ``scope_resolution`` (``A::B::C`` -> ``C``)."""
+    if node is None:
+        return ""
+    if node.type == "constant":
+        return _read_text(node, source)
+    if node.type == "scope_resolution":
+        consts = [c for c in node.children if c.type == "constant"]
+        if consts:
+            return _read_text(consts[-1], source)
+    return ""
+
+
+# `Const = <factory>(...)` shapes that define a lightweight class named after the
+# constant. tree-sitter parses each as an `assignment`, not a `class`, so the
+# generic class branch never saw them (#1640).
+_RUBY_CLASS_FACTORIES = frozenset({("Struct", "new"), ("Class", "new"), ("Data", "define")})
+
+
+def _ruby_extra_walk(node, source: bytes, file_nid: str, stem: str, str_path: str,
+                     nodes: list, edges: list, seen_ids: set, function_bodies: list,
+                     parent_class_nid: str | None, add_node, add_edge, walk,
+                     callable_def_nids: set) -> bool:
+    """Ruby: a constant assignment whose RHS is ``Struct.new(...)``,
+    ``Class.new(Super)`` or ``Data.define(...)`` defines a class named after the
+    constant (#1640). Synthesize the class node, attach block-defined methods via
+    ``method`` (by recursing the block with the new node as parent), and emit an
+    ``inherits`` edge for ``Class.new(Super)``. Returns True if handled.
+    """
+    if node.type != "assignment":
+        return False
+    left = node.child_by_field_name("left")
+    right = node.child_by_field_name("right")
+    if left is None or right is None or left.type != "constant" or right.type != "call":
+        return False
+    recv = right.child_by_field_name("receiver")
+    meth = right.child_by_field_name("method")
+    if recv is None or meth is None or recv.type != "constant":
+        return False
+    if (_read_text(recv, source), _read_text(meth, source)) not in _RUBY_CLASS_FACTORIES:
+        return False
+
+    const_name = _read_text(left, source)
+    if not const_name:
+        return False
+    line = node.start_point[0] + 1
+    class_nid = _make_id(stem, const_name)
+    add_node(class_nid, const_name, line)
+    callable_def_nids.add(class_nid)  # a class is callable (its constructor)
+    # Mirror the generic class branch: containment always hangs off the file node.
+    add_edge(file_nid, class_nid, "contains", line)
+
+    # `Class.new(Super)` — the first positional constant argument is the superclass.
+    if _read_text(recv, source) == "Class":
+        args = next((c for c in right.children if c.type == "argument_list"), None)
+        if args is not None:
+            for arg in args.children:
+                if arg.type in ("constant", "scope_resolution"):
+                    base = _ruby_const_last_name(arg, source)
+                    if base:
+                        base_nid = _make_id(stem, base)
+                        if base_nid not in seen_ids:
+                            base_nid = _make_id(base)
+                            if base_nid not in seen_ids:
+                                nodes.append({
+                                    "id": base_nid, "label": base,
+                                    "file_type": "code", "source_file": "",
+                                    "source_location": "",
+                                })
+                                seen_ids.add(base_nid)
+                        add_edge(class_nid, base_nid, "inherits", line)
+                    break
+
+    # Recurse the do/brace block so block-defined methods attach to the class.
+    # The block wraps its statements in a `body_statement` (like a class body);
+    # descend into it so the method handler sees parent_class_nid — otherwise the
+    # default recurse resets the parent to None and the method hangs off the file
+    # with a dot-less label.
+    block = next((c for c in right.children if c.type in ("do_block", "block")), None)
+    if block is not None:
+        body = next((c for c in block.children if c.type == "body_statement"), block)
+        for child in body.children:
+            walk(child, parent_class_nid=class_nid)
+    return True
 
 
 # ── Generic extractor ─────────────────────────────────────────────────────────
@@ -4658,6 +4749,13 @@ def _extract_generic(
                                   ensure_named_node):
                 return
 
+        if config.ts_module == "tree_sitter_ruby":
+            if _ruby_extra_walk(node, source, file_nid, stem, str_path,
+                                nodes, edges, seen_ids, function_bodies,
+                                parent_class_nid, add_node, add_edge, walk,
+                                callable_def_nids):
+                return
+
         # Python's `@property` / `@staticmethod` / `@classmethod` wrap the
         # inner function_definition in a `decorated_definition` node. The
         # default recurse below clears parent_class_nid, which would cause the
@@ -5042,6 +5140,11 @@ def _extract_generic(
                     is_member_call = True
                     if recv.type in ("identifier", "constant"):
                         member_receiver = _read_text(recv, source)
+                    elif recv.type == "scope_resolution":
+                        # Namespaced receiver `Billing::Processor.call` — capture the
+                        # last constant so cross-file resolution can bind it by the
+                        # bare class name (the god-node guard bails if ambiguous).
+                        member_receiver = _ruby_const_last_name(recv, source) or None
             else:
                 # Generic: get callee from call_function_field
                 func_node = node.child_by_field_name(config.call_function_field) if config.call_function_field else None

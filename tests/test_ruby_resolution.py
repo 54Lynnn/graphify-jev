@@ -193,3 +193,100 @@ def test_class_new_creates_instantiation_edge(tmp_path: Path) -> None:
     edge = _has_call_edge(graph, "process_all", "Processor")
     assert edge is not None, "Processor.new should resolve a call to the Processor class"
     assert edge["confidence"] == "EXTRACTED"
+
+
+# ── #1640 node extraction + #1634 constant-receiver resolution ───────────────
+
+
+def _node_labels(result: dict) -> set[str]:
+    return {str(n.get("label", "")) for n in result["nodes"]}
+
+
+def _method_edges(result: dict) -> set[tuple[str, str]]:
+    labels = _labels(result["nodes"])
+    return {
+        (labels.get(e["source"], ""), labels.get(e["target"], ""))
+        for e in result["edges"] if e.get("relation") == "method"
+    }
+
+
+def test_plain_module_gets_a_node_with_methods(tmp_path: Path) -> None:
+    """#1640 shape 1: `module Foo` must get a node and own its methods."""
+    r = extract_ruby(_write(tmp_path, "tax.rb",
+        "module TaxCalculator\n  module_function\n  def rate_for(order)\n    0.2\n  end\nend\n"))
+    assert "TaxCalculator" in _node_labels(r)
+    # method attaches to the module (dot label), not the file (dot-less).
+    assert ("TaxCalculator", ".rate_for()") in _method_edges(r)
+
+
+def test_nested_modules_each_get_a_node(tmp_path: Path) -> None:
+    """#1640 shape 1, nested."""
+    r = extract_ruby(_write(tmp_path, "n.rb",
+        "module Billing\n  module Rounding\n    def round(x)\n      x.round(2)\n    end\n  end\nend\n"))
+    labels = _node_labels(r)
+    assert "Billing" in labels and "Rounding" in labels
+    assert ("Rounding", ".round()") in _method_edges(r)
+
+
+def test_struct_new_constant_creates_class_with_methods(tmp_path: Path) -> None:
+    """#1640 shape 2: `Foo = Struct.new(...) do ... end`."""
+    r = extract_ruby(_write(tmp_path, "invoice.rb",
+        "Invoice = Struct.new(:total, :tax) do\n  def grand_total\n    total + tax\n  end\nend\n"))
+    assert "Invoice" in _node_labels(r)
+    assert ("Invoice", ".grand_total()") in _method_edges(r)
+
+
+def test_class_new_constant_creates_class_and_inherits(tmp_path: Path) -> None:
+    """#1640 shape 3: `Foo = Class.new(Super)` — node + inherits edge."""
+    r = extract_ruby(_write(tmp_path, "err.rb", "ApiError = Class.new(StandardError)\n"))
+    assert "ApiError" in _node_labels(r)
+    labels = _labels(r["nodes"])
+    inh = {(labels.get(e["source"], ""), labels.get(e["target"], ""))
+           for e in r["edges"] if e.get("relation") == "inherits"}
+    assert ("ApiError", "StandardError") in inh
+
+
+def test_data_define_constant_creates_class(tmp_path: Path) -> None:
+    r = extract_ruby(_write(tmp_path, "res.rb", "Result = Data.define(:ok, :value)\n"))
+    assert "Result" in _node_labels(r)
+
+
+def test_constant_receiver_singleton_call_resolves(tmp_path: Path) -> None:
+    """#1634: `Processor.call` (def self.call) resolves to the singleton method."""
+    _write(tmp_path, "processor.rb", "class Processor\n  def self.call; end\nend\n")
+    runner = _write(tmp_path, "runner.rb",
+        "class Runner\n  def run\n    Processor.call\n  end\nend\n")
+    graph = extract([runner, tmp_path / "processor.rb"], cache_root=tmp_path, parallel=False)
+    assert _has_call_edge(graph, "run", "call") is not None
+
+
+def test_constant_receiver_module_function_call_resolves(tmp_path: Path) -> None:
+    """#1634 + #1640: `TaxCalculator.rate_for` resolves across files to a
+    module_function — needs both the module node (#1640) and the resolver (#1634)."""
+    _write(tmp_path, "tax.rb",
+        "module TaxCalculator\n  module_function\n  def rate_for(o)\n    0.2\n  end\nend\n")
+    pp = _write(tmp_path, "pp.rb",
+        "class PaymentProcessor\n  def process(order)\n    TaxCalculator.rate_for(order)\n  end\nend\n")
+    graph = extract([pp, tmp_path / "tax.rb"], cache_root=tmp_path, parallel=False)
+    assert _has_call_edge(graph, "process", "rate_for") is not None
+
+
+def test_constant_receiver_unknown_class_method_falls_back_to_class(tmp_path: Path) -> None:
+    """#1634: `Model.where` (no `where` def, e.g. ActiveRecord) still links to the
+    class node for blast-radius, rather than dropping the edge."""
+    _write(tmp_path, "model.rb", "class Model\n  def self.create; end\nend\n")
+    caller = _write(tmp_path, "svc.rb",
+        "class Svc\n  def run\n    Model.where(id: 1)\n  end\nend\n")
+    graph = extract([caller, tmp_path / "model.rb"], cache_root=tmp_path, parallel=False)
+    # No `where` method node exists, so the edge lands on the class node itself.
+    assert _has_call_edge(graph, "run", "Model") is not None
+
+
+def test_ambiguous_constant_receiver_emits_no_edge(tmp_path: Path) -> None:
+    """Two classes named `Processor` => ambiguous receiver => bail (no wrong edge)."""
+    _write(tmp_path, "a.rb", "module A\n  class Processor\n    def self.call; end\n  end\nend\n")
+    _write(tmp_path, "b.rb", "module B\n  class Processor\n    def self.call; end\n  end\nend\n")
+    caller = _write(tmp_path, "c.rb",
+        "class Runner\n  def run\n    Processor.call\n  end\nend\n")
+    graph = extract([caller, tmp_path / "a.rb", tmp_path / "b.rb"], cache_root=tmp_path, parallel=False)
+    assert _has_call_edge(graph, "run", "call") is None
