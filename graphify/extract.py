@@ -1771,7 +1771,17 @@ def _resolve_js_import_target(raw: str, str_path: str) -> "tuple[str, Path | Non
     module_name = raw.split("/")[-1]
     if not module_name:
         return None
-    return _make_id(module_name), None
+    # Unresolved: relative/absolute, tsconfig-alias and workspace resolution have
+    # all run and failed, so this is an external package (or a dangling local
+    # path). Namespace the id with the "ref" prefix — the J-4 convention already
+    # used for tsconfig `extends`/`$ref` externals — so it can NEVER collapse to
+    # the same _make_id as a local file/symbol node. Without it, the bare
+    # last-segment id (e.g. "tailwindcss/colors" -> "colors") collides with any
+    # unrelated local file of that stem via build.py's pre-migration alias index,
+    # producing a confident (EXTRACTED) cross-language phantom imports_from edge
+    # (#1638). The ref-namespaced target has no node, so build drops it as an
+    # external reference — the correct outcome for a third-party import.
+    return _make_id("ref", raw), None
 
 
 def _import_js(node, source: bytes, file_nid: str, stem: str, edges: list, str_path: str, scope_stack: list[str] | None = None) -> None:
