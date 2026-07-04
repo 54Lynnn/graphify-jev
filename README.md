@@ -49,6 +49,14 @@ graphify export callflow-html
 
 ---
 
+## Benchmarks
+
+On an open harness where every system uses the same model, the same budgets, and a judge blind-validated against a second judge (90.6% agreement, Cohen's kappa 0.81), graphify has the **best retrieval recall of any memory system tested on LOCOMO** (about 10x mem0), **ties for best on LongMemEval-S** (76%), and builds its graph with **zero LLM credits**. It also beats a grep+read baseline on real code-intelligence tasks (ERPNext, ~1M LOC) at a fraction of the token cost.
+
+Full methodology, per-system tables, judge validation, and reproduction commands: **[BENCHMARKS.md](./BENCHMARKS.md)**.
+
+---
+
 ## Prerequisites
 
 | Requirement | Minimum | Check | Install |
