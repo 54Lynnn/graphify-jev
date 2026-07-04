@@ -16344,9 +16344,20 @@ def extract(
         elif e.get("relation") == "imports_from":
             file_to_module_imports.setdefault(e["source"], set()).add(e["target"])
 
-    # Map each node back to its containing file_id so we can ask
+    # Map each node back to its containing file node id so we can ask
     # "did the caller's file import the callee's file?"
-    # Use relativized paths to match how file node IDs were remapped above (#502).
+    # A node and its file node share the exact same ``source_file`` string, and a
+    # file node is the one whose label is the basename (``add_node(file_nid,
+    # path.name)``). Resolving file membership by that shared string is robust
+    # against the path-resolution/symlink mismatch that makes
+    # ``relative_to(root.resolve())`` throw and fall back to a non-matching
+    # absolute-derived id — which would spuriously fail import evidence and (with
+    # the #1659 JS/TS gate below) drop a legitimately-imported call.
+    sf_to_file_nid: dict[str, str] = {}
+    for n in all_nodes:
+        sf = n.get("source_file")
+        if sf and n.get("label") == Path(str(sf)).name:
+            sf_to_file_nid.setdefault(str(sf), n["id"])
     nid_to_file_nid: dict[str, str] = {}
     # nid -> raw source_file string, for the ambiguous-name tie-breakers below
     # (test/non-test classification + path proximity). Kept separate from the
@@ -16357,6 +16368,12 @@ def extract(
         if not sf:
             continue
         nid_to_source_file[n["id"]] = str(sf)
+        fnid = sf_to_file_nid.get(str(sf))
+        if fnid is not None:
+            nid_to_file_nid[n["id"]] = fnid
+            continue
+        # Fallback (no file node found for this source_file): derive it the old
+        # way from the relativized path.
         sf_path = Path(sf)
         try:
             sf_rel = sf_path.relative_to(root) if sf_path.is_absolute() else sf_path
@@ -16372,6 +16389,10 @@ def extract(
         (e["source"], e["target"]) for e in all_edges
         if e.get("relation") in ("calls", "indirect_call")
     }
+    # JS/TS/JSX modules have no implicit cross-module scope: a call into another
+    # file is real ONLY if the caller imported it. So a cross-file call from one
+    # of these files with no import evidence is gated below (#1659).
+    _JS_TS_CALL_SUFFIXES = (".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs")
     for rc in all_raw_calls:
         callee = rc.get("callee", "")
         if not callee:
@@ -16392,7 +16413,15 @@ def extract(
         if not candidates:
             continue
         caller = rc["caller_nid"]
-        caller_file_nid = nid_to_file_nid.get(caller)
+        # Resolve the caller's file via the raw_call's own source_file string,
+        # which is stable regardless of any caller_nid remap. An indirect
+        # callback's caller_nid is the file node, whose id may have been
+        # relativized after the raw_call was recorded, so a caller_nid lookup can
+        # miss and (with the #1659 gate) drop a legitimately-imported callback.
+        caller_file_nid = (
+            sf_to_file_nid.get(str(rc.get("source_file", "")))
+            or nid_to_file_nid.get(caller)
+        )
         imported_symbols = file_to_symbol_imports.get(caller_file_nid, set())
         imported_modules = file_to_module_imports.get(caller_file_nid, set())
 
@@ -16468,6 +16497,19 @@ def extract(
                     "source_location": rc.get("source_location"),
                     "weight": 1.0,
                 })
+            continue
+        # #1659: a JS/TS DIRECT call with no import evidence is almost always an
+        # unrelated same-named export in a package that was never imported — a
+        # phantom cross-package edge (a 14-package monorepo had `platform` and
+        # `sidecar` shown as depending on `registry-protocol` purely because it
+        # exported generically-named symbols). JS/TS modules have no implicit
+        # cross-module scope, so leave it unresolved rather than binding by name
+        # alone. Other languages keep the #1553 single-candidate resolution:
+        # C/C++ headers, Ruby autoload, and same-package implicit scope
+        # legitimately call across files without an explicit import. Scoped to
+        # direct calls: the indirect_call path above is already conservative
+        # (INFERRED, callable-target-gated) and independent of import evidence.
+        if not has_import_evidence and str(rc.get("source_file", "")).endswith(_JS_TS_CALL_SUFFIXES):
             continue
         if tgt != caller and (caller, tgt) not in existing_pairs:
             existing_pairs.add((caller, tgt))
