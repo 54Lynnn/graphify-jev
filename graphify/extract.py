@@ -3450,6 +3450,10 @@ def _extract_generic(
     # `let vm = VM()`) live outside function bodies, so the call-walk never
     # reaches them. Collect (owner_nid, call_node) here and walk them too.
     initializer_nodes: list[tuple[str, object]] = []
+    # Ruby include/extend/prepend mixins collected during the node walk (#1668),
+    # merged into raw_calls after the call-walk populates it (raw_calls does not
+    # exist yet while walk() runs). Resolved cross-file by the Ruby resolver.
+    _ruby_mixin_calls: list[dict] = []
     # #1356: per-file map of local name -> declared type (properties + params),
     # threaded out as `swift_type_table` so member calls (`vm.update()`) can be
     # resolved to the receiver's real definition in _resolve_swift_member_calls.
@@ -3818,6 +3822,36 @@ def _extract_generic(
                                 })
                                 seen_ids.add(base_nid)
                         add_edge(class_nid, base_nid, "inherits", line)
+
+                # `include`/`extend`/`prepend <Const>` in the class/module body ->
+                # a `mixes_in` edge to the module (#1668). The module usually lives
+                # in another file, so defer resolution to the cross-file Ruby
+                # resolver (reusing the #1634 candidate logic and the #1640 module
+                # nodes as targets). Only bare/namespaced constant arguments count;
+                # `extend self`, `include some_var`, etc. are skipped.
+                _rb_body = _find_body(node, config)
+                if _rb_body is not None:
+                    for _stmt in _rb_body.children:
+                        if _stmt.type != "call" or _stmt.child_by_field_name("receiver") is not None:
+                            continue
+                        _m = _stmt.child_by_field_name("method")
+                        if _m is None or _read_text(_m, source) not in ("include", "extend", "prepend"):
+                            continue
+                        _args = _stmt.child_by_field_name("arguments")
+                        if _args is None:
+                            continue
+                        for _arg in _args.children:
+                            if _arg.type not in ("constant", "scope_resolution"):
+                                continue
+                            _mod = _ruby_const_last_name(_arg, source)
+                            if _mod:
+                                _ruby_mixin_calls.append({
+                                    "caller_nid": class_nid,
+                                    "callee": _mod,
+                                    "is_mixin": True,
+                                    "source_file": str_path,
+                                    "source_location": f"L{_stmt.start_point[0] + 1}",
+                                })
 
             # C#-specific: inheritance / interface implementation via base_list
             if config.ts_module == "tree_sitter_c_sharp":
@@ -5576,6 +5610,10 @@ def _extract_generic(
         if src in valid_ids and (tgt in valid_ids or edge["relation"] in ("imports", "imports_from", "re_exports")):
             clean_edges.append(edge)
 
+    # Ruby mixins were collected during the node walk (before raw_calls existed);
+    # fold them in so the cross-file resolver sees them (#1668).
+    if _ruby_mixin_calls:
+        raw_calls.extend(_ruby_mixin_calls)
     result = {"nodes": nodes, "edges": clean_edges, "raw_calls": raw_calls}
     if callable_def_nids:
         # Mark function / method / class defs with a `_callable` attribute so the
@@ -16437,6 +16475,12 @@ def extract(
         # Skip member-call callees: obj.log() → "log" has no import evidence
         # and collides with any top-level function named "log" in the corpus.
         if rc.get("is_member_call"):
+            continue
+        # Skip Ruby include/extend/prepend mixin markers: they carry a module
+        # name as `callee` but are not calls — the Ruby resolver turns them into
+        # `mixes_in` edges. Letting the shared pass emit a `calls` edge here would
+        # both mislabel the relation and block the mixes_in emit as a dup (#1668).
+        if rc.get("is_mixin"):
             continue
         # Exact-case match first (case is semantic). Fold only when the CALLING
         # file's language is case-insensitive, and only against the folded index of

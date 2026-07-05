@@ -94,7 +94,8 @@ def resolve_ruby_member_calls(
         nids = class_def_nids.get(_key(name), [])
         return nids[0] if len(nids) == 1 else None
 
-    def _emit(caller: str, target: str, rc: dict[str, Any]) -> None:
+    def _emit(caller: str, target: str, rc: dict[str, Any],
+              relation: str = "calls", context: str = "call") -> None:
         if not caller or not target or caller == target:
             return
         if (caller, target) in existing_pairs:
@@ -103,14 +104,29 @@ def resolve_ruby_member_calls(
         all_edges.append({
             "source": caller,
             "target": target,
-            "relation": "calls",
-            "context": "call",
+            "relation": relation,
+            "context": context,
             "confidence": "EXTRACTED",
             "confidence_score": 1.0,
             "source_file": rc.get("source_file", ""),
             "source_location": rc.get("source_location"),
             "weight": 1.0,
         })
+
+    # `include`/`extend`/`prepend <Const>` mixins (#1668): resolve the module by
+    # its constant name to the single owning module/class node and emit a
+    # `mixes_in` edge, under the same single-definition god-node guard. An
+    # ambiguous or unresolved constant produces no edge.
+    for rc in _ruby_raw_calls(per_file):
+        if not rc.get("is_mixin"):
+            continue
+        caller = str(rc.get("caller_nid", ""))
+        module_name = rc.get("callee")
+        if not caller or not module_name:
+            continue
+        target = _unique_class(str(module_name))
+        if target is not None:
+            _emit(caller, target, rc, relation="mixes_in", context="mixin")
 
     for rc in _ruby_raw_calls(per_file):
         if not rc.get("is_member_call"):

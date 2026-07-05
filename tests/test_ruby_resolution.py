@@ -290,3 +290,61 @@ def test_ambiguous_constant_receiver_emits_no_edge(tmp_path: Path) -> None:
         "class Runner\n  def run\n    Processor.call\n  end\nend\n")
     graph = extract([caller, tmp_path / "a.rb", tmp_path / "b.rb"], cache_root=tmp_path, parallel=False)
     assert _has_call_edge(graph, "run", "call") is None
+
+
+# ── #1668 include/extend/prepend -> mixes_in ─────────────────────────────────
+
+
+def _mixes_in(graph: dict) -> set[tuple[str, str]]:
+    labels = _labels(graph["nodes"])
+    return {
+        (labels.get(e["source"], ""), labels.get(e["target"], ""))
+        for e in graph["edges"] if e.get("relation") == "mixes_in"
+    }
+
+
+def test_include_emits_mixes_in_edge(tmp_path: Path) -> None:
+    _write(tmp_path, "concern.rb", "module SealedProtection\n  def sealed?; true; end\nend\n")
+    _write(tmp_path, "model.rb",
+           "class Roster < ApplicationRecord\n  include SealedProtection\nend\n")
+    g = extract([tmp_path / "model.rb", tmp_path / "concern.rb"], cache_root=tmp_path, parallel=False)
+    assert ("Roster", "SealedProtection") in _mixes_in(g)
+
+
+def test_extend_and_prepend_emit_mixes_in(tmp_path: Path) -> None:
+    _write(tmp_path, "helpers.rb", "module Helpers\n  def h; end\nend\n")
+    _write(tmp_path, "audit.rb", "module Audit\n  def a; end\nend\n")
+    _write(tmp_path, "svc.rb",
+           "class Svc\n  extend Helpers\n  prepend Audit\nend\n")
+    mix = _mixes_in(extract(sorted(tmp_path.glob("*.rb")), cache_root=tmp_path, parallel=False))
+    assert ("Svc", "Helpers") in mix
+    assert ("Svc", "Audit") in mix
+
+
+def test_extend_self_and_nonconstant_args_emit_no_mixin(tmp_path: Path) -> None:
+    # `extend self` and `include some_var` are not constant module references.
+    _write(tmp_path, "m.rb",
+           "module M\n  extend self\n  def go; end\nend\n")
+    mix = _mixes_in(extract([tmp_path / "m.rb"], cache_root=tmp_path, parallel=False))
+    assert not any(t == "self" for _s, t in mix)
+    assert not mix
+
+
+def test_include_of_undefined_or_ambiguous_module_emits_no_edge(tmp_path: Path) -> None:
+    # Undefined module (no node) -> no edge, under the single-owner guard.
+    _write(tmp_path, "x.rb", "class X\n  include NotDefinedAnywhere\nend\n")
+    mix = _mixes_in(extract([tmp_path / "x.rb"], cache_root=tmp_path, parallel=False))
+    assert not any(t == "NotDefinedAnywhere" for _s, t in mix)
+
+
+def test_mixin_is_not_emitted_as_calls_edge(tmp_path: Path) -> None:
+    # Regression: the shared cross-file call pass must not turn a mixin into a
+    # `calls` edge (which would mislabel it and block the mixes_in emit).
+    _write(tmp_path, "concern.rb", "module C\n  def m; end\nend\n")
+    _write(tmp_path, "k.rb", "class K\n  include C\nend\n")
+    g = extract([tmp_path / "k.rb", tmp_path / "concern.rb"], cache_root=tmp_path, parallel=False)
+    labels = _labels(g["nodes"])
+    calls = {(labels.get(e["source"], ""), labels.get(e["target"], ""))
+             for e in g["edges"] if e.get("relation") == "calls"}
+    assert ("K", "C") not in calls
+    assert ("K", "C") in _mixes_in(g)
