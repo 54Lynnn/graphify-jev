@@ -20,6 +20,13 @@
 
 Type `/graphify` in your AI coding assistant and it maps your entire project — code, docs, PDFs, images, videos — into a knowledge graph you can query instead of grepping through files.
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Graphify-Labs/graphify/v8/docs/graph-hero.png" alt="graphify's interactive graph.html showing the FastAPI codebase as a force-directed knowledge graph with a legend of detected communities" width="900">
+</p>
+<p align="center">
+  <em>The FastAPI codebase mapped by graphify. Every node is a concept, colors are detected communities, and the whole thing is clickable in graph.html.</em>
+</p>
+
 Works in Claude Code, Codex, OpenCode, Kilo Code, Cursor, Gemini CLI, GitHub Copilot CLI, VS Code Copilot Chat, Aider, Amp, OpenClaw, Factory Droid, Trae, Hermes, Kimi Code, Kiro, Pi, Devin CLI, and Google Antigravity.
 
 ```
@@ -45,9 +52,14 @@ graphify export callflow-html
 
 ## Benchmarks
 
-On an open harness where every system uses the same model, the same budgets, and a judge blind-validated against a second judge (90.6% agreement, Cohen's kappa 0.81), graphify has the **best retrieval recall of any memory system tested on LOCOMO** (about 10x mem0), **ties for best on LongMemEval-S** (76%), and builds its graph with **zero LLM credits**. It also beats a grep+read baseline on real code-intelligence tasks (ERPNext, ~1M LOC) at a fraction of the token cost.
+| Benchmark | Metric | graphify | Field |
+|---|---|---|---|
+| LOCOMO (n=300) | recall@10 | **0.497** | mem0 0.048, supermemory 0.149 |
+| LOCOMO (n=300) | QA accuracy | **45.3%** | supermemory 49.7%, mem0 27.3% |
+| LongMemEval-S (n=50) | QA accuracy | **76%** | tied best |
+| Graph build | LLM credits | **0** | per-token for most systems |
 
-Full methodology, per-system tables, judge validation, and reproduction commands: **[BENCHMARKS.md](./BENCHMARKS.md)**.
+Every system ran on the same harness with the same model and budgets, scored by a judge blind-validated against a second judge (90.6% agreement, Cohen's kappa 0.81). Full per-system tables, the code-intelligence result, and reproduction commands: **[BENCHMARKS.md](./BENCHMARKS.md)**.
 
 ---
 
