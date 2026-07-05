@@ -138,7 +138,8 @@ for example `graphify claude install --project` or `graphify codex install --pro
 
 > **Git hooks and uv tool / pipx:** `graphify hook install` embeds the current interpreter path directly into the hook scripts at install time, so the post-commit hook fires correctly even in GUI git clients and CI runners where `~/.local/bin` is not on PATH. If you reinstall or upgrade graphify, re-run `graphify hook install` to refresh the embedded path.
 
-### Pick your platform
+<details>
+<summary><b>Pick your platform</b> (20+ assistants, click to expand)</summary>
 
 | Platform | Install command |
 |----------|----------------|
@@ -172,9 +173,10 @@ Codex users also need `multi_agent = true` under `[features]` in `~/.codex/confi
 
 > Codex uses `$graphify` instead of `/graphify`.
 
-### Optional extras
+</details>
 
-Install only what you need:
+<details>
+<summary><b>Optional extras</b> (install only what you need)</summary>
 
 | Extra | What it adds | Install |
 |---|---|---|
@@ -199,6 +201,8 @@ Install only what you need:
 | `terraform` | Terraform / HCL `.tf`/`.tfvars`/`.hcl` AST extraction | `uv tool install "graphifyy[terraform]"` |
 | `chinese` | Chinese query segmentation (jieba) | `uv tool install "graphifyy[chinese]"` |
 | `all` | Everything above | `uv tool install "graphifyy[all]"` |
+
+</details>
 
 ---
 
