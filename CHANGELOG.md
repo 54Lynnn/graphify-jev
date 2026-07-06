@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## Unreleased
+## 0.9.7 (2026-07-06)
 
 - Fix: Java standard-library types are no longer emitted as `references` noise (#1603, thanks @NydiaChung). A `_JAVA_BUILTIN_TYPES` skip list now suppresses ubiquitous `java.lang`/`java.util`/`java.io`/`java.time`/`java.math`/`java.nio.file` type names (`String`, `List`, `Map`, `Optional`, `Integer`, `Exception`, ...) at the type-ref walker; they never resolve to a project node, so edges to them were pure noise (mirrors `_GO_PREDECLARED_TYPES`/`_PYTHON_ANNOTATION_NOISE`). Nested user-type generic arguments still resolve: `List<Item>` drops the `List` edge but keeps `Item`.
 - Feat: added a `pascal` optional extra for AST-quality Pascal/Delphi extraction (#1616, thanks @vinicius-l-machado). `extract_pascal` already used tree-sitter-pascal when present (with a regex fallback), but the grammar was never declared in the package metadata, so the AST path never ran out of the box. `uv tool install "graphifyy[pascal]"` now opts into it (also included in `[all]`); tree-sitter-pascal ships prebuilt wheels for every platform, so no C toolchain is needed. On a mid-size Delphi codebase the AST path yields notably more accurate `calls`/`inherits` edges than the regex fallback.
