@@ -131,8 +131,10 @@ BACKENDS: dict[str, dict] = {
         "env_key": "DEEPSEEK_API_KEY",
         "model_env_key": "GRAPHIFY_DEEPSEEK_MODEL",
         "pricing": {"input": 0.14, "output": 0.28},  # USD per 1M tokens (v4-flash)
-        # deepseek-reasoner / thinking-mode models silently ignore temperature;
-        # deepseek-chat / v4-flash (non-thinking) accept 0-2. Safe to send 0.
+        # deepseek-reasoner silently ignores temperature; deepseek-chat / v4-flash
+        # accept 0-2, so sending 0 is safe. Note: deepseek-v4-flash (and v4-pro) have
+        # thinking ENABLED by default (verified against the live API, #1621) — set
+        # GRAPHIFY_DISABLE_THINKING=1 to turn it off (tradeoff documented on the flag).
         "temperature": 0,
         "max_tokens": 16384,
     },
@@ -387,6 +389,22 @@ def _resolve_max_retries(default: int = 6) -> int:
         except ValueError:
             pass
     return default
+
+
+def _thinking_disabled_via_env() -> bool:
+    """Opt-in (GRAPHIFY_DISABLE_THINKING) to send ``{"thinking": {"type": "disabled"}}``
+    to reasoning-capable OpenAI-compatible models such as ``deepseek-v4-flash``.
+
+    Off by default and deliberately so (#1621): a thinking-on model can occasionally
+    leak reasoning prose instead of JSON, but that response is caught and re-tried by
+    the adaptive extraction/labeling retry, so it is a rare, recoverable failure.
+    Disabling thinking removes that failure mode but, measured on real corpora, trades
+    it for far more frequent (benign) truncation AND measurably lower extraction
+    quality and file coverage. So this stays a user choice for those who value
+    run-to-run stability over extraction quality, not a forced default. The moonshot
+    (kimi) branch keeps disabling thinking unconditionally because that model returns
+    empty content otherwise."""
+    return os.environ.get("GRAPHIFY_DISABLE_THINKING", "").strip().lower() in ("1", "true", "yes", "on")
 
 _EXTRACTION_SYSTEM = """\
 You are a graphify semantic extraction agent. Extract a knowledge graph fragment from the files provided.
@@ -995,6 +1013,10 @@ def _call_openai_compat(
         kwargs["extra_body"] = extra_body
     # Kimi-k2.6 is a reasoning model — disable thinking so content isn't empty
     elif "moonshot" in base_url:
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    # Opt-in only: disable thinking for reasoning models like deepseek-v4-flash
+    # (#1621). Not a default — see _thinking_disabled_via_env for the tradeoff.
+    elif _thinking_disabled_via_env():
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     # Ollama defaults num_ctx to 2048 and silently truncates prompts larger
     # than that — the symptom is hollow 200 OK responses after the first few
@@ -2112,6 +2134,8 @@ def _call_llm(
     if cfg.get("extra_body") is not None:
         kwargs["extra_body"] = cfg["extra_body"]
     elif "moonshot" in cfg["base_url"]:
+        kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+    elif _thinking_disabled_via_env():
         kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
     resp = client.chat.completions.create(**kwargs)
     if not resp.choices or resp.choices[0].message is None:
