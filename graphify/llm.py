@@ -962,8 +962,18 @@ def _call_openai_compat(
     # default. Honour GRAPHIFY_API_TIMEOUT (seconds) for explicit override;
     # default to 600s, which is long enough for a 31B model on a 16k chunk
     # but still bounds runaway connections (issue #792 addendum).
+    # The SDK's transient-error retries (default 6) exist for cloud rate limits
+    # (429). A local Ollama server does not rate-limit, and if it wedges it will
+    # not recover by retrying, so 6 retries turn a 180s --api-timeout into a
+    # ~21min block (7 attempts x 180s) with no progress (#1686). Default ollama
+    # to 0 SDK retries so --api-timeout is the hard wall-clock bound and a hung
+    # request fails fast into the chunk-level retry/skip. An explicit
+    # GRAPHIFY_MAX_RETRIES still wins for users who want it.
+    _retries = _resolve_max_retries()
+    if backend == "ollama" and not os.environ.get("GRAPHIFY_MAX_RETRIES", "").strip():
+        _retries = 0
     client = OpenAI(api_key=api_key, base_url=base_url, timeout=_resolve_api_timeout(),
-                    max_retries=_resolve_max_retries())
+                    max_retries=_retries)
     kwargs: dict = {
         "model": model,
         "messages": [
