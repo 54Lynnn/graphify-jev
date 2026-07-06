@@ -70,6 +70,10 @@ A knowledge graph is not a vector index: it is **deterministic**, **every edge i
 
 ## See it in action
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Graphify-Labs/graphify/v8/docs/demo-path.svg" alt="graphify path query: a terminal asks for the shortest path between FastAPI and ModelField, and the answer lights up hop by hop across the knowledge graph" width="900">
+</p>
+
 Once the graph is built you query it instead of reading files. Real output, graphify run on the FastAPI codebase shown above:
 
 ```text
