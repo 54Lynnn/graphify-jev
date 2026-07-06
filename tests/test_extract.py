@@ -1769,3 +1769,29 @@ def test_case_insensitive_suffix_filtering(tmp_path):
     assert "myJSFunction()" in labels
     assert "MyTSClass" in labels
 
+
+
+def test_extract_warns_on_code_files_with_no_ast_extractor(tmp_path, capsys):
+    # #1689: .r/.R is in CODE_EXTENSIONS (counted as code) but has no AST extractor,
+    # so R files silently contribute nothing. extract() must surface that instead of
+    # reporting success as if the language were mapped.
+    r1 = tmp_path / "analysis.R"; r1.write_text("f <- function(x) x + 1\n")
+    r2 = tmp_path / "helper.r"; r2.write_text("g <- function(y) y * 2\n")
+    py = tmp_path / "main.py"; py.write_text("def main():\n    return 1\n")
+
+    result = extract([r1, r2, py], cache_root=tmp_path)
+    err = capsys.readouterr().err
+
+    assert "no AST extractor" in err
+    assert ".r (2)" in err            # both R files grouped under the lowercased ext
+    assert "#1689" in err
+    # the Python file still extracts normally
+    labels = [n.get("label") for n in result["nodes"]]
+    assert any(str(l).startswith("main") for l in labels)
+
+
+def test_extract_no_warning_when_all_code_has_extractors(tmp_path, capsys):
+    py = tmp_path / "a.py"; py.write_text("def a():\n    return 1\n")
+    extract([py], cache_root=tmp_path)
+    err = capsys.readouterr().err
+    assert "no AST extractor" not in err
