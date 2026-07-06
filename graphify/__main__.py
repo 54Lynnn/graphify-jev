@@ -852,23 +852,30 @@ _AGENTS_MD_MARKER = "## graphify"
 
 _GEMINI_MD_MARKER = "## graphify"
 
-_GEMINI_HOOK = {
-    "matcher": "read_file|list_directory",
-    "hooks": [
-        {
-            "type": "command",
-            "command": (
-                'python -c "'
-                "import sys,pathlib,json;"
-                "e=pathlib.Path('graphify-out/graph.json').exists();"
-                "d={'decision':'allow'};"
-                "e and d.update({'additionalContext':'graphify: knowledge graph at graphify-out/. For focused questions, run `graphify query \"<question>\"` (scoped subgraph, usually much smaller than GRAPH_REPORT.md) instead of grepping raw files. Read GRAPH_REPORT.md only for broad architecture context.'});"
-                "sys.stdout.write(json.dumps(d))"
-                '"'
-            ),
-        }
-    ],
-}
+# Gemini CLI BeforeTool hook nudge text. The hook always returns
+# {"decision":"allow"} (never blocks a tool) and appends this as additionalContext
+# when a graph exists. Emitted by `graphify hook-guard gemini`. The old hook was a
+# `python -c "..."` one-liner that depended on a bare `python` on PATH (often
+# `python`/`py` or absent on Windows) and embedded backticks + escaped quotes that
+# Windows PowerShell mangles (#522 follow-up); the subcommand form has no such
+# dependency and parses under every shell.
+_GEMINI_NUDGE_TEXT = (
+    'graphify: knowledge graph at graphify-out/. For focused questions, run '
+    '`graphify query "<question>"` (scoped subgraph, usually much smaller than '
+    'GRAPH_REPORT.md) instead of grepping raw files. Read GRAPH_REPORT.md only '
+    'for broad architecture context.'
+)
+
+
+def _gemini_hook() -> dict:
+    """Gemini CLI BeforeTool hook, resolved to a shell-agnostic `graphify` call."""
+    exe = _resolve_graphify_exe()
+    if " " in exe and not exe.startswith('"'):
+        exe = f'"{exe}"'
+    return {
+        "matcher": "read_file|list_directory",
+        "hooks": [{"type": "command", "command": f"{exe} hook-guard gemini"}],
+    }
 
 
 def gemini_install(project_dir: Path | None = None, *, project: bool = False) -> None:
@@ -917,7 +924,7 @@ def _install_gemini_hook(project_dir: Path) -> None:
     settings["hooks"]["BeforeTool"] = [
         h for h in before_tool if "graphify" not in str(h)
     ]
-    settings["hooks"]["BeforeTool"].append(_GEMINI_HOOK)
+    settings["hooks"]["BeforeTool"].append(_gemini_hook())
     settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     print("  .gemini/settings.json  ->  BeforeTool hook registered")
 
@@ -1637,6 +1644,18 @@ def _run_hook_guard(kind: str) -> None:
     tool call is never blocked. Detection mirrors the previous hooks exactly.
     """
     from graphify.paths import out_path, GRAPHIFY_OUT_NAME
+    # Gemini's BeforeTool hook takes no stdin and must ALWAYS return a decision so
+    # the tool is never blocked; the graph nudge is appended only when a graph
+    # exists. Handled before the stdin read below (which the search/read guards need).
+    if kind == "gemini":
+        payload = {"decision": "allow"}
+        try:
+            if out_path("graph.json").is_file():
+                payload["additionalContext"] = _GEMINI_NUDGE_TEXT
+        except Exception:
+            pass
+        sys.stdout.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")))
+        return
     try:
         d = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
     except Exception:
