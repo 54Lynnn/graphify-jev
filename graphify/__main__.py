@@ -658,26 +658,31 @@ def _canonical_platform(platform_name: str) -> str:
 def _replace_or_append_section(content: str, marker: str, new_section: str) -> str:
     """Idempotently update or append a graphify-owned section in shared files.
 
-    If ``marker`` is not in ``content``, append ``new_section`` to the end
-    (with a blank-line separator if there's existing content).
+    If no line is exactly ``marker`` (the heading, at column 0), append
+    ``new_section`` to the end (with a blank-line separator if there's existing
+    content).
 
-    If ``marker`` IS in ``content``, replace the existing section in place.
-    The section runs from the first line containing ``marker`` to the line
-    before the next H2 heading (``## `` at line start), or to EOF if no later
-    H2 exists. This lets older installs receive the updated copy without
-    users having to uninstall and reinstall — important for the issue #580
-    fix where existing report-first text would otherwise silently linger.
+    If a real ``marker`` heading exists, replace the existing section in place.
+    The section runs from that heading to the line before the next H2 heading
+    (``## `` at line start), or to EOF if no later H2 exists. This lets older
+    installs receive the updated copy without users having to uninstall and
+    reinstall (issue #580).
+
+    The heading is matched only when a line *is* exactly ``marker`` (after
+    stripping surrounding whitespace), never as a substring. Matching ``##
+    graphify`` inside a bullet or an inline reference used to anchor the replace
+    on that mention and delete every line from there to the next heading,
+    silently destroying hand-curated content (#1688). When several exact
+    headings exist, the last one is used, since graphify's section is appended.
     """
-    if marker not in content:
+    lines = content.split("\n")
+    starts = [i for i, line in enumerate(lines) if line.strip() == marker]
+    if not starts:
         if content.strip():
             return content.rstrip() + "\n\n" + new_section.lstrip()
         return new_section.lstrip()
 
-    lines = content.split("\n")
-    start = next((i for i, line in enumerate(lines) if marker in line), None)
-    if start is None:
-        return content.rstrip() + "\n\n" + new_section.lstrip()
-
+    start = starts[-1]
     end = len(lines)
     for j in range(start + 1, len(lines)):
         if lines[j].startswith("## "):

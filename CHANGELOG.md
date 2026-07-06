@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## Unreleased
+
+- Fix: `--update`-style section writes to `CLAUDE.md`/`AGENTS.md` no longer corrupt or drop content (#1688, thanks @bdfinst). `_replace_or_append_section` located its managed block by substring (`marker in content`) and `next(... if marker in line)`, so a heading that appeared as a substring of another line (or duplicate headings) matched the wrong offset and the rewrite could truncate the file. It now matches the section heading exactly (`line.strip() == marker`), appends when absent, and prefers the last exact match when several exist, so unrelated content is preserved.
+
 ## 0.9.7 (2026-07-06)
 
 - Fix: Java standard-library types are no longer emitted as `references` noise (#1603, thanks @NydiaChung). A `_JAVA_BUILTIN_TYPES` skip list now suppresses ubiquitous `java.lang`/`java.util`/`java.io`/`java.time`/`java.math`/`java.nio.file` type names (`String`, `List`, `Map`, `Optional`, `Integer`, `Exception`, ...) at the type-ref walker; they never resolve to a project node, so edges to them were pure noise (mirrors `_GO_PREDECLARED_TYPES`/`_PYTHON_ANNOTATION_NOISE`). Nested user-type generic arguments still resolve: `List<Item>` drops the `List` edge but keeps `Item`.
