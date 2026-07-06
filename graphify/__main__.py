@@ -3560,6 +3560,10 @@ def main() -> None:
                 }
             except Exception:
                 existing_labels = {}
+        # Accumulate token usage from the labeling LLM calls so cluster-only mode
+        # reports real cost instead of a hardcoded zero (#1694). Stays {0, 0} on
+        # the reuse / no-label paths, which make no LLM calls.
+        label_token_usage = {"input": 0, "output": 0}
         if labels_path.exists() and not force_relabel:
             # Reuse saved labels, but don't blindly trust them: the graph may have
             # been re-scoped/re-clustered since labeling, in which case a cid now
@@ -3643,6 +3647,7 @@ def main() -> None:
             generated_labels, _ = generate_community_labels(
                 G, label_communities_input, backend=label_backend, model=label_model, gods=gods,
                 max_concurrency=label_max_concurrency, batch_size=label_batch_size,
+                usage_out=label_token_usage,
             )
             # Only let the LLM OVERRIDE where it produced a real name — its no-backend
             # fallback returns "Community {cid}" placeholders, which must not clobber
@@ -3653,7 +3658,7 @@ def main() -> None:
             })
         stages.mark("label")
         questions = suggest_questions(G, communities, labels)
-        tokens = {"input": 0, "output": 0}
+        tokens = label_token_usage
         from graphify.export import _git_head as _gh
         _commit = _gh()
         from graphify.report import load_learning_for_report as _llfr
