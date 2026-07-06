@@ -434,62 +434,70 @@ def _print_project_git_add_hint(paths: list[Path]) -> None:
     print("Project-scoped install. Add to version control:")
     print(f"  git add {' '.join(unique)}")
 
-_SETTINGS_HOOK = {
-    # Claude Code v2.1.117+ removed dedicated Grep/Glob tools; searches now go through Bash.
-    # We match on Bash and inspect the command string to avoid firing on every shell call.
-    "matcher": "Bash",
-    "hooks": [
-        {
-            "type": "command",
-            "command": (
-                "CMD=$(python3 -c \""
-                "import json,sys; d=json.load(sys.stdin); "
-                "print(d.get('tool_input',d).get('command',''))\" 2>/dev/null || true); "
-                "case \"$CMD\" in "
-                r"*grep*|*rg\ *|*ripgrep*|*find\ *|*fd\ *|*ack\ *|*ag\ *) "
-                "  [ -f graphify-out/graph.json ] && "
-                r"""  echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"MANDATORY: graphify-out/graph.json exists. You MUST run `graphify query \"<question>\"` before grepping raw files. Only grep after graphify has oriented you, or to modify/debug specific lines."}}' """
-                "  || true ;; "
-                "esac"
-            ),
-        }
-    ],
-}
+# PreToolUse nudge payloads, emitted verbatim by the shell-agnostic
+# `graphify hook-guard` subcommand (see _run_hook_guard). The previous hooks
+# inlined POSIX bash (case/esac, [ -f ], single-quoted echo) which Windows
+# cmd.exe/PowerShell cannot parse, so on Windows the hook failed and the nudge
+# silently vanished — users had to invoke /graphify by hand (#522). Moving the
+# logic into a Python subcommand invoked via an absolute exe path makes the hook
+# parse identically under sh, cmd.exe and PowerShell. Claude Code accepts
+# additionalContext on PreToolUse (Codex Desktop does not — that path stays a
+# no-op via `hook-check`). Compact separators keep the payload byte-for-byte the
+# same JSON the old `echo` emitted.
+_SEARCH_NUDGE = json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": (
+            'MANDATORY: graphify-out/graph.json exists. You MUST run '
+            '`graphify query "<question>"` before grepping raw files. Only grep '
+            'after graphify has oriented you, or to modify/debug specific lines.'
+        ),
+    }
+}, ensure_ascii=False, separators=(",", ":")) + "\n"
 
-_READ_SETTINGS_HOOK = {
-    # The Bash hook above never sees a file read through the native Read tool or a
-    # Glob, which is the most common way an agent skips the graph: answering a
-    # codebase question by Read-ing many source files one by one (issue #1114).
-    # Match Read|Glob, inspect the target path, and nudge (never block) only for a
-    # source/doc file outside graphify-out/ when a graph exists. The parser is
-    # python3 (already a graphify dependency), the shell is POSIX, and every branch
-    # fails open, so a legitimate read always goes through. Reading the graph's own
-    # report under graphify-out/ is suppressed so it never starts a feedback loop.
-    # The extension test compares each value's real trailing extension (segment
-    # after the last '/' then after the last '.') against exts -- not a substring
-    # scan, which both missed framework files like .astro and false-matched .json
-    # against .js (the substring '.js' is inside '.json').
-    "matcher": "Read|Glob",
-    "hooks": [
-        {
-            "type": "command",
-            "command": (
-                "HIT=$(python3 -c \""
-                "import json,sys;"
-                "d=json.load(sys.stdin);"
-                "t=d.get('tool_input',d);"
-                "exts=('.py','.js','.ts','.tsx','.jsx','.astro','.vue','.svelte','.go','.rs','.java','.rb','.c','.h','.cpp','.hpp','.cc','.cs','.kt','.swift','.php','.scala','.lua','.sh','.md','.rst','.txt','.mdx');"
-                "vals=[str(t.get('file_path') or ''),str(t.get('pattern') or ''),str(t.get('path') or '')];"
-                "j=' '.join(vals).lower().replace(chr(92),'/');"
-                "tails=[('.'+x.rsplit('.',1)[-1]) for v in vals if v for x in [v.lower().replace(chr(92),'/').rsplit('/',1)[-1]] if '.' in x];"
-                "sys.stdout.write('1' if 'graphify-out/' not in j and any(tl in exts for tl in tails) else '')\" 2>/dev/null || true); "
-                "if [ \"$HIT\" = 1 ] && [ -f graphify-out/graph.json ]; then "
-                r"""echo '{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"MANDATORY: graphify-out/graph.json exists. You MUST run graphify before reading source files. Use: `graphify query \"<question>\"` (scoped subgraph), `graphify explain \"<concept>\"`, or `graphify path \"<A>\" \"<B>\"`. Only read raw files after graphify has oriented you, or to modify/debug specific lines. This rule applies to subagents too — include it in every subagent prompt involving code exploration."}}'; """
-                "fi || true"
-            ),
-        }
-    ],
-}
+_READ_NUDGE = json.dumps({
+    "hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "additionalContext": (
+            'MANDATORY: graphify-out/graph.json exists. You MUST run graphify '
+            'before reading source files. Use: `graphify query "<question>"` '
+            '(scoped subgraph), `graphify explain "<concept>"`, or '
+            '`graphify path "<A>" "<B>"`. Only read raw files after graphify has '
+            'oriented you, or to modify/debug specific lines. This rule applies to '
+            'subagents too — include it in every subagent prompt involving code '
+            'exploration.'
+        ),
+    }
+}, ensure_ascii=False, separators=(",", ":")) + "\n"
+
+# Source/doc extensions the Read|Glob guard nudges on (verbatim from the old hook).
+# The trailing-extension test (real final path segment, then its last '.') means
+# '.json' never false-matches '.js', and framework files like '.astro' are kept.
+_HOOK_SOURCE_EXTS = (
+    '.py', '.js', '.ts', '.tsx', '.jsx', '.astro', '.vue', '.svelte', '.go',
+    '.rs', '.java', '.rb', '.c', '.h', '.cpp', '.hpp', '.cc', '.cs', '.kt',
+    '.swift', '.php', '.scala', '.lua', '.sh', '.md', '.rst', '.txt', '.mdx',
+)
+
+
+def _claude_pretooluse_hooks() -> "list[dict]":
+    """graphify's Claude/Codebuddy PreToolUse hooks, resolved at install time.
+
+    The command invokes `graphify hook-guard <search|read>` via the absolute exe
+    path (`_resolve_graphify_exe`), so it parses under sh, cmd.exe and PowerShell
+    alike — this is the #522 fix, and mirrors the codex hook. Matchers stay "Bash"
+    and "Read|Glob" and the command always contains "graphify", so the existing
+    install/uninstall filters find and replace both old bash hooks and these.
+    """
+    exe = _resolve_graphify_exe()
+    if " " in exe and not exe.startswith('"'):
+        exe = f'"{exe}"'
+    return [
+        {"matcher": "Bash",
+         "hooks": [{"type": "command", "command": f"{exe} hook-guard search"}]},
+        {"matcher": "Read|Glob",
+         "hooks": [{"type": "command", "command": f"{exe} hook-guard read"}]},
+    ]
 
 def _skill_registration(skill_path: str = "~/.claude/skills/graphify/SKILL.md") -> str:
     return (
@@ -1618,6 +1626,51 @@ def _resolve_graphify_exe() -> str:
     return "graphify"
 
 
+def _run_hook_guard(kind: str) -> None:
+    """Shell-agnostic PreToolUse guard (#522).
+
+    Reads the tool-call JSON from stdin and, when a knowledge graph exists in the
+    current output dir, prints a nudge (`additionalContext`) telling the agent to
+    use graphify instead of grepping/reading raw files. Replaces the old inline
+    bash hooks that failed to parse on Windows. Always fails open: any error, or a
+    non-matching tool call, prints nothing and the caller exits 0, so a legitimate
+    tool call is never blocked. Detection mirrors the previous hooks exactly.
+    """
+    from graphify.paths import out_path, GRAPHIFY_OUT_NAME
+    try:
+        d = json.loads(sys.stdin.buffer.read().decode("utf-8", "replace"))
+    except Exception:
+        return
+    if not isinstance(d, dict):
+        return
+    t = d.get("tool_input", d)
+    if not isinstance(t, dict):
+        return
+    try:
+        if kind == "search":
+            cmd_str = str(t.get("command", "") or "")
+            # Same set the old `case` matched: *grep*, *ripgrep*, and rg/find/fd/
+            # ack/ag as a token (name followed by a space).
+            if any(tok in cmd_str for tok in ("grep", "ripgrep", "rg ", "find ", "fd ", "ack ", "ag ")) \
+                    and out_path("graph.json").is_file():
+                sys.stdout.write(_SEARCH_NUDGE)
+        elif kind == "read":
+            vals = [str(t.get("file_path") or ""), str(t.get("pattern") or ""), str(t.get("path") or "")]
+            j = " ".join(vals).lower().replace("\\", "/")
+            tails = [
+                "." + seg.rsplit(".", 1)[-1]
+                for v in vals if v
+                for seg in [v.lower().replace("\\", "/").rsplit("/", 1)[-1]]
+                if "." in seg
+            ]
+            under_out = "graphify-out/" in j or (GRAPHIFY_OUT_NAME.lower() + "/") in j
+            if not under_out and any(tl in _HOOK_SOURCE_EXTS for tl in tails) \
+                    and out_path("graph.json").is_file():
+                sys.stdout.write(_READ_NUDGE)
+    except Exception:
+        pass
+
+
 def _install_codex_hook(project_dir: Path) -> None:
     """Add graphify PreToolUse hook to .codex/hooks.json."""
     hooks_path = project_dir / ".codex" / "hooks.json"
@@ -1975,8 +2028,7 @@ def _install_claude_hook(project_dir: Path) -> None:
     pre_tool = hooks.setdefault("PreToolUse", [])
 
     hooks["PreToolUse"] = [h for h in pre_tool if not (h.get("matcher") in ("Glob|Grep", "Bash", "Read|Glob") and "graphify" in str(h))]
-    hooks["PreToolUse"].append(_SETTINGS_HOOK)
-    hooks["PreToolUse"].append(_READ_SETTINGS_HOOK)
+    hooks["PreToolUse"].extend(_claude_pretooluse_hooks())
     settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     print(f"  .claude/settings.json  ->  PreToolUse hooks registered (Bash search + Read/Glob)")
 
@@ -2125,8 +2177,7 @@ def _install_codebuddy_hook(project_dir: Path) -> None:
     pre_tool = hooks.setdefault("PreToolUse", [])
 
     hooks["PreToolUse"] = [h for h in pre_tool if not (h.get("matcher") in ("Glob|Grep", "Bash", "Read|Glob") and "graphify" in str(h))]
-    hooks["PreToolUse"].append(_SETTINGS_HOOK)
-    hooks["PreToolUse"].append(_READ_SETTINGS_HOOK)
+    hooks["PreToolUse"].extend(_claude_pretooluse_hooks())
     settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     print(f"  .codebuddy/settings.json  ->  PreToolUse hooks registered")
 
@@ -2250,7 +2301,7 @@ def main() -> None:
     # Skip during install/uninstall (hook writes trigger a fresh check anyway).
     # Skip during hook-check — it runs on every editor tool use and must be silent.
     # Deduplicate paths so platforms sharing the same install dir don't warn twice.
-    _silent_cmds = {"install", "uninstall", "hook-check"}
+    _silent_cmds = {"install", "uninstall", "hook-check", "hook-guard"}
     if not any(arg in _silent_cmds for arg in sys.argv):
         # Resolve each platform's real user-scope destination so per-platform
         # overrides (gemini, opencode, devin, antigravity, amp) check the dir
@@ -3776,6 +3827,12 @@ def main() -> None:
         # Codex Desktop rejects hookSpecificOutput.additionalContext on PreToolUse.
         # Keep this as a cross-platform no-op so installed hooks never break Bash
         # tool calls. Graph guidance reaches the agent via AGENTS.md / skill instead.
+        sys.exit(0)
+    elif cmd == "hook-guard":
+        # Shell-agnostic Claude/Codebuddy PreToolUse guard (#522). Replaces the old
+        # inline-bash hooks that failed on Windows. Prints an additionalContext nudge
+        # toward graphify when a graph exists; always exits 0 (never blocks a tool).
+        _run_hook_guard(sys.argv[2] if len(sys.argv) > 2 else "")
         sys.exit(0)
     elif cmd == "check-update":
         if len(sys.argv) < 3:
