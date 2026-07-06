@@ -16254,8 +16254,13 @@ def _extract_parallel(
         )
         return False
     if total_files >= _PROGRESS_INTERVAL:
+        # Report the same denominator the intermediate lines used (uncached files
+        # actually processed this run), not total_files — switching to the full
+        # corpus made the count jump upward at the end (cached hits + files with no
+        # extractor never entered uncached_work), which read as inconsistent (#1693).
+        _done = len(uncached_work)
         print(
-            f"  AST extraction: {total_files}/{total_files} files (100%) [{max_workers} workers]",
+            f"  AST extraction: {_done}/{_done} uncached files (100%) [{max_workers} workers]",
             flush=True,
         )
     return True
@@ -16290,7 +16295,9 @@ def _extract_sequential(
             save_cached(path, result, effective_root)
         per_file[idx] = result
     if total_files >= _PROGRESS_INTERVAL:
-        print(f"  AST extraction: {total_files}/{total_files} files (100%)", flush=True)
+        # Consistent denominator with the intermediate lines (#1693).
+        _done = len(uncached_work)
+        print(f"  AST extraction: {_done}/{_done} uncached files (100%)", flush=True)
 
 
 _PARALLEL_THRESHOLD = 20

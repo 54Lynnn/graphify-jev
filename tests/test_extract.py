@@ -1795,3 +1795,21 @@ def test_extract_no_warning_when_all_code_has_extractors(tmp_path, capsys):
     extract([py], cache_root=tmp_path)
     err = capsys.readouterr().err
     assert "no AST extractor" not in err
+
+
+def test_extract_progress_final_line_uses_consistent_denominator(tmp_path, capsys):
+    # #1693: intermediate progress lines count against uncached_work; the final
+    # "100%" line must NOT switch to total_files (which includes cached hits and
+    # files with no extractor), or the count appears to jump upward at the end.
+    for i in range(100):
+        (tmp_path / f"m{i}.py").write_text(f"def f{i}():\n    return {i}\n")
+    for i in range(5):
+        (tmp_path / f"s{i}.r").write_text(f"g{i} <- function(x) x\n")  # no extractor
+    paths = sorted(tmp_path.glob("*.py")) + sorted(tmp_path.glob("*.r"))  # total 105
+
+    extract(paths, cache_root=tmp_path, parallel=False)
+    out = capsys.readouterr().out
+
+    # final progress line reports the uncached count (100), not the total (105)
+    assert "100/100 uncached files (100%)" in out
+    assert "105/105 files" not in out, "final line must not switch to total_files (#1693)"
