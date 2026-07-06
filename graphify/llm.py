@@ -1507,7 +1507,7 @@ def _estimate_file_tokens(unit: "Path | FileSlice") -> int:
             content = read_slice_text(unit)[:_FILE_CHAR_CAP]
         except OSError:
             return 0
-        return len(_TOKENIZER.encode(content)) + (_PER_FILE_OVERHEAD_CHARS // _CHARS_PER_TOKEN)
+        return len(_TOKENIZER.encode(content, disallowed_special=())) + (_PER_FILE_OVERHEAD_CHARS // _CHARS_PER_TOKEN)
 
     path = unit
     # Raster images are not read as text; a vision model bills them at a roughly
@@ -1526,7 +1526,7 @@ def _estimate_file_tokens(unit: "Path | FileSlice") -> int:
         content = path.read_text(encoding="utf-8", errors="replace")[:_FILE_CHAR_CAP]
     except OSError:
         return 0
-    return len(_TOKENIZER.encode(content)) + (_PER_FILE_OVERHEAD_CHARS // _CHARS_PER_TOKEN)
+    return len(_TOKENIZER.encode(content, disallowed_special=())) + (_PER_FILE_OVERHEAD_CHARS // _CHARS_PER_TOKEN)
 
 
 def _pack_chunks_by_tokens(

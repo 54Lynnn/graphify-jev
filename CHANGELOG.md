@@ -5,6 +5,7 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 ## Unreleased
 
 - Fix: `--update`-style section writes to `CLAUDE.md`/`AGENTS.md` no longer corrupt or drop content (#1688, thanks @bdfinst). `_replace_or_append_section` located its managed block by substring (`marker in content`) and `next(... if marker in line)`, so a heading that appeared as a substring of another line (or duplicate headings) matched the wrong offset and the rewrite could truncate the file. It now matches the section heading exactly (`line.strip() == marker`), appends when absent, and prefers the last exact match when several exist, so unrelated content is preserved.
+- Fix: token estimation no longer crashes on files containing tiktoken special-token text like `<|endoftext|>` (#1685, thanks @Kyzcreig). `_TOKENIZER.encode(content)` raises `ValueError` by default when the text contains a special token, which aborted packing on docs/corpora that merely mention these strings. Both `encode` sites now pass `disallowed_special=()` so such text is tokenized as ordinary bytes.
 
 ## 0.9.7 (2026-07-06)
 
