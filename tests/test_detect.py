@@ -1575,3 +1575,25 @@ def test_convert_office_file_does_not_rewrite_existing_sidecar(tmp_path, monkeyp
     second = detect_mod.convert_office_file(src, out_dir)
     assert second == first
     assert second.stat().st_mtime_ns == mtime_before
+
+
+def test_detect_records_unclassified_extensionless_files(tmp_path):
+    # #1692: extensionless, non-shebang project files (Dockerfile, Makefile, ...)
+    # were considered but left no trace. detect() now lists them under
+    # "unclassified" so they can be surfaced instead of silently vanishing.
+    (tmp_path / "app.py").write_text("def f():\n    return 1\n")
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12\nRUN pip install x\n")
+    (tmp_path / "Makefile").write_text("build:\n\techo hi\n")
+    (tmp_path / "LICENSE").write_text("MIT License\n")
+    res = detect(tmp_path)
+    unclassified = sorted(Path(p).name for p in res.get("unclassified", []))
+    assert unclassified == ["Dockerfile", "LICENSE", "Makefile"]
+    # real code is still classified, not swept into unclassified
+    assert any("app.py" in f for f in res["files"].get("code", []))
+
+
+def test_detect_unclassified_empty_when_all_supported(tmp_path):
+    (tmp_path / "a.py").write_text("x = 1\n")
+    (tmp_path / "README.md").write_text("# hi\n")
+    res = detect(tmp_path)
+    assert res.get("unclassified", []) == []

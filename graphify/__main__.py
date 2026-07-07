@@ -4673,6 +4673,17 @@ def main() -> None:
                 f"{len(doc_files)} docs, {len(paper_files)} papers, "
                 f"{len(image_files)} images"
             )
+        # Surface files that were seen but not classified (extensionless non-shebang
+        # project files like Dockerfile/Makefile, or unsupported extensions), so they
+        # are no longer invisible in graphify's own output (#1692).
+        _unclassified = detection.get("unclassified", []) if isinstance(detection, dict) else []
+        if _unclassified:
+            _names = ", ".join(sorted({Path(p).name for p in _unclassified})[:6])
+            _more = f" (+{len(_unclassified) - 6} more)" if len(_unclassified) > 6 else ""
+            print(
+                f"[graphify extract] {len(_unclassified)} file(s) not classified "
+                f"(no supported extension or shebang), skipped: {_names}{_more}"
+            )
         stages.mark("detect")
 
         # Resolve the LLM backend only now that we know whether the corpus

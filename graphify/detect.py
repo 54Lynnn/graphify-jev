@@ -1086,6 +1086,7 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
         return _cache.cached_word_count(path, root, count_words)
 
     skipped_sensitive: list[str] = []
+    unclassified: list[str] = []
     ignore_patterns = _load_graphifyignore(root)
     ignore_cache: dict[Path, bool] = {}  # shared across all _is_ignored calls in this scan
     # CLI --exclude patterns are anchored at the scan root and appended last
@@ -1171,6 +1172,13 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
             skipped_sensitive.append(str(p))
             continue
         ftype = classify_file(p)
+        if not ftype:
+            # Considered but unclassifiable: an extension not in any supported set,
+            # or an extensionless, non-shebang file (Dockerfile, Gemfile, Makefile,
+            # Rakefile, LICENSE, ...). Previously these left no trace at all — not
+            # counted, not listed — so a user couldn't tell they were seen (#1692).
+            unclassified.append(str(p))
+            continue
         if ftype:
             if p.suffix.lower() in GOOGLE_WORKSPACE_EXTENSIONS:
                 if not google_workspace:
@@ -1236,6 +1244,7 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
         "needs_graph": needs_graph,
         "warning": warning,
         "skipped_sensitive": skipped_sensitive,
+        "unclassified": sorted(unclassified),
         "graphifyignore_patterns": len(ignore_patterns),
         "scan_root": str(root.resolve()),
     }
