@@ -16063,6 +16063,20 @@ _CPP_HEADER_MARKERS = (
 )
 
 
+def _is_objc_source(path: Path) -> bool:
+    """Whether a `.m` file is Objective-C rather than MATLAB/Octave (#1702).
+
+    `.m` is shared by Objective-C implementation files and MATLAB (also Octave).
+    The suffix map routes `.m` to extract_objc unconditionally, which force-parses
+    MATLAB through the Objective-C tree-sitter grammar and emits garbage nodes/edges
+    (worse than skipping). A genuine ObjC `.m` always carries an ObjC directive
+    (@implementation/@interface/@import/#import); MATLAB has none of them. Reuses
+    the same marker set as the `.h` sniff. `.mm` is unambiguously Objective-C++ and
+    is not sniffed.
+    """
+    return _is_objc_header(path)
+
+
 def _is_cpp_header(path: Path) -> bool:
     """Whether a `.h` file is C++ rather than plain C (#1547).
 
@@ -16106,6 +16120,13 @@ def _get_extractor(path: Path) -> Any | None:
         # grammar has no class_specifier). Reroute to extract_cpp (#1547).
         if _is_cpp_header(path):
             return extract_cpp
+    # `.m` is Objective-C OR MATLAB. extract_objc unconditionally would force-parse
+    # MATLAB through the ObjC grammar into garbage (#1702). Route to extract_objc
+    # only when the file actually looks like Objective-C; otherwise leave it without
+    # an extractor (surfaced by the no-AST-extractor warning, #1689) rather than
+    # mis-parsed. `.mm` is unambiguously Objective-C++ and stays on extract_objc.
+    if suffix == ".m" and not _is_objc_source(path):
+        return None
     # Extensionless files: resolve by shebang, mirroring detect.classify_file.
     # Without this, detect labels e.g. `#!/usr/bin/env bash` CLIs as code but
     # extraction returns no extractor and the file silently contributes nothing.
