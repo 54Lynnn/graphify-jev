@@ -20,6 +20,7 @@ from .resolver_registry import (
     run_language_resolvers,
 )
 from .ruby_resolution import resolve_ruby_member_calls
+from .pascal_resolution import resolve_pascal_inherited_calls
 
 # --- migrated to graphify/extractors/ (see graphify/extractors/MIGRATION.md) ---
 from graphify.extractors.base import (  # noqa: F401
@@ -2641,6 +2642,19 @@ register_language_resolver(
 # bound to the receiver's declared type instead of a bare same-named match.
 register_language_resolver(
     LanguageResolver("csharp_member_calls", frozenset({".cs"}), _resolve_csharp_member_calls)
+)
+# Pascal/Delphi cross-file inherited-method-call resolution: a call from a
+# manual descendant class to a method it inherits from an ancestor declared
+# in a DIFFERENT file (the common generated-base/manual-descendant split,
+# e.g. Sistec's Th0Xxx/Th5Xxx) falls outside the per-file extractor's own
+# scope. Lives in graphify.pascal_resolution; registered here as a consumer
+# of the framework, same as the Ruby resolver above.
+register_language_resolver(
+    LanguageResolver(
+        "pascal_inherited_calls",
+        frozenset({".pas", ".pp", ".dpr", ".dpk", ".inc"}),
+        resolve_pascal_inherited_calls,
+    )
 )
 
 
