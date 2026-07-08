@@ -888,6 +888,20 @@ def _is_obsidian_usage_comment_line(line: str) -> bool:
     return "# full pipeline on current directory" in line
 
 
+def _is_uv_from_interpreter_fix_line(line: str) -> bool:
+    """Whether a line is part of the uv interpreter-detection fix (#1735).
+
+    Step 1's POSIX interpreter probe ran ``uv tool run graphifyy python -c ...``,
+    but ``graphifyy`` exposes its executable as ``graphify``, so uv treated
+    ``python`` as a missing ``graphifyy`` command and the probe silently failed
+    (the ``2>/dev/null`` swallowed uv's "use --from" hint), leaving PYTHON on a
+    graphify-less system interpreter. The probe now runs
+    ``uv tool run --from graphifyy python -c ...``. Both the old (removed) and new
+    (added) forms match here.
+    """
+    return "uv tool run" in line and "graphifyy python" in line
+
+
 # Every line that may differ between a rendered monolith and its pristine v8
 # baseline. Each predicate documents one sanctioned change-class; a blank line is
 # allowed because the multi-line fix blocks insert spacing. Anything else failing
@@ -904,6 +918,7 @@ _SANCTIONED_MONOLITH_DIFFS = (
     _is_no_api_key_fix_line,
     _is_shebang_allowlist_fix_line,
     _is_obsidian_usage_comment_line,
+    _is_uv_from_interpreter_fix_line,
 )
 
 
