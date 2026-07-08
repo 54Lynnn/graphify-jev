@@ -2,6 +2,13 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.11 (2026-07-08)
+
+- Refactor: decomposed the two largest modules into focused, single-responsibility modules — verbatim moves only, every original import path preserved via re-exports, no behavior change (#1737, thanks @TPAteeq). `extract.py` 17,054 → 4,740 LOC (the tree-sitter engine, cross-file resolution, shared models, and 23 language extractors moved under `graphify/extractors/`), `__main__.py` 5,368 → 673 (install/uninstall + CLI dispatch split into `graphify/install.py` and `graphify/cli.py`), `export.py` 1,671 → 962 (HTML + graph-DB exporters under `graphify/exporters/`). Full suite unchanged.
+- Fix: `merge-graphs` gives each input a distinct repo tag so same-stem nodes from different source graphs don't collapse (#1729). Two graphs under a same-named repo dir (`src/graphify-out` and `frontend/src/graphify-out`, both → `src`) shared the `src::` prefix, so a backend `src/app.js` and a frontend `App.jsx` (both bare `app`) merged into one node with edges from both — false cross-runtime `path` results. Colliding tags are now widened (`frontend_src`) with an index-suffix backstop, and the command prints a note when it disambiguates.
+- Fix: `uninstall` removes the graphify hook/section from Claude's local-only files too (#1731, thanks @TPAteeq). It now cleans `.claude/settings.local.json` and both `CLAUDE.local.md` locations in addition to the standard files, via both `graphify uninstall` and `graphify claude uninstall`.
+- Feat: `graphify extract --code-only` indexes code (local AST, no API key) and skips the doc/paper/image semantic pass, so a mixed repo no longer hard-fails when no LLM backend is configured (#1734). Reports what it skipped; the no-key error now points users at the flag.
+
 ## 0.9.10 (2026-07-08)
 
 - Fix: TS/JS member calls on a builtin-typed receiver no longer collapse onto a same-named user symbol (#1726). `_resolve_typescript_member_calls` matched a receiver's type to a definition by casefolded label, so `x: Date; x.getTime()` bound the caller to a user `class DATE`/`const DATE` in another file — inventing hundreds of phantom `references` edges and a false god node. Builtin-global receiver types (`Date`, `Promise`, `Map`, ...) are now skipped, mirroring the cross-file call guard; genuine user types are unaffected.
