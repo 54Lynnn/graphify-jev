@@ -772,7 +772,7 @@ _KOTLIN_CONFIG = LanguageConfig(
     # older forks use `simple_identifier`. Accept both so the extractor
     # works across grammar generations.
     name_fallback_child_types=("simple_identifier", "identifier"),
-    body_fallback_child_types=("function_body", "class_body"),
+    body_fallback_child_types=("function_body", "class_body", "enum_class_body"),
     function_boundary_types=frozenset({"function_declaration"}),
     import_handler=_import_kotlin,
 )
