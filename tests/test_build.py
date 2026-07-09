@@ -257,6 +257,41 @@ def test_ghost_merge_skipped_on_basename_collision():
     assert not G.has_edge("caller", "b_render")
 
 
+def test_ghost_merge_non_ast_different_files_both_survive():
+    """#1753: two NON-AST (semantic) nodes sharing (basename, label) but from
+    DIFFERENT files are distinct concepts with no AST canonical twin. They must
+    not be merged into an arbitrary survivor (which flipped run-to-run with the
+    hash seed); both survive, mirroring the AST/AST guard (#1257)."""
+    ext = {
+        "nodes": [
+            {"id": "dir_a_update_build_merge", "label": "build_merge() function",
+             "file_type": "concept", "source_file": "dir_a/update.md", "source_location": "L10"},
+            {"id": "dir_b_update_build_merge", "label": "build_merge() function",
+             "file_type": "concept", "source_file": "dir_b/update.md", "source_location": "L12"},
+        ],
+        "edges": [],
+    }
+    G = build_from_json(ext, directed=False)
+    assert sorted(G.nodes()) == ["dir_a_update_build_merge", "dir_b_update_build_merge"]
+
+
+def test_ghost_merge_non_ast_same_file_still_merges():
+    """A genuine duplicate — two non-AST nodes with the SAME source_file and
+    label — is a real ghost and still collapses to one node (deterministically),
+    so #1753's fix doesn't leave same-file LLM duplicates behind."""
+    ext = {
+        "nodes": [
+            {"id": "a_foo", "label": "Foo", "file_type": "concept",
+             "source_file": "x/doc.md", "source_location": "L1"},
+            {"id": "b_foo", "label": "Foo", "file_type": "concept",
+             "source_file": "x/doc.md", "source_location": "L2"},
+        ],
+        "edges": [],
+    }
+    G = build_from_json(ext, directed=False)
+    assert G.number_of_nodes() == 1
+
+
 def test_build_merge_preserves_call_edge_direction(tmp_path):
     """Regression for #760.
 

@@ -449,7 +449,11 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
     # ghost would pick an arbitrary winner via set-iteration order (#1257). Track
     # those keys so Pass 2 skips them — same conservatism as
     # _rewire_unique_stub_nodes, which only merges when exactly one real def exists.
-    for nid in node_set:
+    # Iterate in a deterministic (sorted) order, not set-iteration order, so the
+    # canonical winner and the ambiguity decisions below don't flip run-to-run
+    # with CPython's per-process string-hash seed (#1753) — the same reason the
+    # edge-iteration loop further down sorts on purpose.
+    for nid in sorted(node_set):
         attrs = G.nodes[nid]
         label = str(attrs.get("label", "")).strip()
         sf = str(attrs.get("source_file", ""))
@@ -465,11 +469,27 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
                     _loc_collisions.add(key)
                 # AST-origin nodes always overwrite a prior non-AST entry.
                 _loc_nodes[key] = nid
-            elif key not in _loc_nodes:
-                _loc_nodes[key] = nid
+            else:
+                existing = _loc_nodes.get(key)
+                if existing is None:
+                    _loc_nodes[key] = nid
+                elif (
+                    G.nodes[existing].get("_origin") != "ast"
+                    and str(G.nodes[existing].get("source_file", "")) != sf
+                ):
+                    # Two NON-AST nodes sharing (basename, label) but coming from
+                    # DIFFERENT files are distinct concepts (e.g. a same-named
+                    # concept in dir_a/update.md and dir_b/update.md), not an AST
+                    # ghost/canonical twin. Merging them would drop a real node
+                    # and pick the survivor arbitrarily via iteration order
+                    # (#1753). Mark the key ambiguous so Pass 2 leaves both, the
+                    # same conservatism the AST/AST case uses (#1257). A genuine
+                    # same-file duplicate (identical source_file) is not flagged
+                    # and still collapses.
+                    _loc_collisions.add(key)
 
     # Pass 2: find ghosts — non-AST nodes that have an AST canonical twin.
-    for nid in node_set:
+    for nid in sorted(node_set):
         attrs = G.nodes[nid]
         if attrs.get("_origin") == "ast":
             continue  # AST nodes are never ghosts
