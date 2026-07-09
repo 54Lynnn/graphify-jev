@@ -184,11 +184,44 @@ def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str, *,
     # Safety check: refuse to silently shrink an existing graph (#479)
     existing_path = Path(output_path)
     if not force and existing_path.exists():
+        from graphify.security import check_graph_file_size_cap
         try:
-            from graphify.security import check_graph_file_size_cap
             check_graph_file_size_cap(existing_path)
-            existing_data = json.loads(existing_path.read_text(encoding="utf-8"))
-            existing_n = len(existing_data.get("nodes", []))
+        except Exception:
+            # Existing graph.json trips the size cap; reading it to compare would
+            # be the very DoS the cap guards against. Can't verify — let the new
+            # graph replace the oversized file.
+            oversized = True
+        else:
+            oversized = False
+        if not oversized:
+            try:
+                raw = existing_path.read_text(encoding="utf-8")
+            except Exception:
+                raw = ""
+            if not raw.strip():
+                # Empty/whitespace existing file (e.g. a freshly touched path):
+                # no nodes to lose, so any new graph is a growth — proceed.
+                existing_n = 0
+            else:
+                try:
+                    existing_data = json.loads(raw)
+                    existing_n = len(existing_data.get("nodes", []))
+                except Exception as exc:
+                    # Non-empty but unparseable existing graph (corrupt or a
+                    # mid-write): we cannot verify the new graph is not a silent
+                    # shrink. Fail SAFE — refuse rather than overwrite. A
+                    # fail-OPEN here (the prior behavior) is the silent data-loss
+                    # path #479 exists to prevent: a transiently unreadable
+                    # graph.json would let a partial rebuild clobber a good one.
+                    import sys as _sys
+                    print(
+                        f"[graphify] WARNING: existing {existing_path} could not be "
+                        f"read to verify the new graph is not smaller ({exc}). "
+                        f"Refusing to overwrite; pass force=True to override.",
+                        file=_sys.stderr,
+                    )
+                    return False
             new_n = G.number_of_nodes()
             if new_n < existing_n:
                 import sys as _sys
@@ -203,8 +236,6 @@ def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str, *,
                     file=_sys.stderr,
                 )
                 return False
-        except Exception:
-            pass  # unreadable existing file — proceed with write
 
     node_community = _node_community_map(communities)
     _labels: dict[int, str] = {int(k): v for k, v in (community_labels or {}).items()}

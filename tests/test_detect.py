@@ -1597,3 +1597,38 @@ def test_detect_unclassified_empty_when_all_supported(tmp_path):
     (tmp_path / "README.md").write_text("# hi\n")
     res = detect(tmp_path)
     assert res.get("unclassified", []) == []
+
+
+def test_detect_reports_walk_errors_key():
+    """detect() always surfaces a walk_errors list so callers can tell whether
+    enumeration was complete."""
+    import tempfile
+    d = Path(tempfile.mkdtemp())
+    (d / "a.py").write_text("def f(): pass\n")
+    res = detect(d)
+    assert "walk_errors" in res
+    assert res["walk_errors"] == []
+
+
+def test_detect_surfaces_unreadable_dir_instead_of_silent_skip(tmp_path, capsys):
+    """os.walk silently skips a subtree whose scandir raises (permissions, or a
+    dir deleted mid-walk); that under-enumeration used to be invisible and could
+    yield a silently partial graph. detect() now records it in walk_errors and
+    warns, while still enumerating the rest of the tree."""
+    import os
+    if os.geteuid() == 0:
+        import pytest
+        pytest.skip("running as root: chmod 000 does not block scandir")
+    (tmp_path / "a.py").write_text("def f(): pass\n")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    (locked / "b.py").write_text("def g(): pass\n")
+    os.chmod(locked, 0o000)
+    try:
+        res = detect(tmp_path)
+    finally:
+        os.chmod(locked, 0o755)  # restore for cleanup
+    code = res["files"]["code"]
+    assert any(f.endswith("a.py") for f in code)  # rest of tree still enumerated
+    assert len(res["walk_errors"]) >= 1
+    assert "could not scan" in capsys.readouterr().err
