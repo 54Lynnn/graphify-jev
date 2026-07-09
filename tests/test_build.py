@@ -877,3 +877,50 @@ def test_semantic_rekey_relative_vs_absolute_source_file():
     # absolute path with no resolvable root → skipped, not remapped to an abs-path id
     ab = [{"id": "api_readme", "source_file": "/abs/docs/v1/api/README.md", "type": "document"}]
     assert _semantic_id_remap(ab, None) == {}
+
+
+def test_cross_language_imports_references_are_dropped():
+    """#1749: an `imports`/`references` edge must not bind across a language
+    family. A Python `import time` that resolved by bare stem onto a `time.ts`
+    file node welds the two language halves together at a phantom edge; the spec
+    forbids this for `calls` and it is equally invalid here."""
+    ext = {
+        "nodes": [
+            {"id": "backend_worker_py", "label": "worker.py", "file_type": "code",
+             "source_file": "backend/worker.py", "source_location": "L1", "_origin": "ast"},
+            {"id": "src_time_ts", "label": "time.ts", "file_type": "code",
+             "source_file": "src/time.ts", "source_location": "L1", "_origin": "ast"},
+            {"id": "src_util_ts", "label": "util.ts", "file_type": "code",
+             "source_file": "src/util.ts", "source_location": "L1", "_origin": "ast"},
+        ],
+        "edges": [
+            # phantom: Python file importing a TS file (cross-language)
+            {"source": "backend_worker_py", "target": "src_time_ts", "relation": "imports",
+             "confidence": "EXTRACTED", "source_file": "backend/worker.py", "weight": 1.0},
+            # legit: TS importing TS (same family) must survive
+            {"source": "src_time_ts", "target": "src_util_ts", "relation": "imports",
+             "confidence": "EXTRACTED", "source_file": "src/time.ts", "weight": 1.0},
+        ],
+    }
+    G = build_from_json(ext, directed=False)
+    assert not G.has_edge("backend_worker_py", "src_time_ts"), "cross-language import must be dropped"
+    assert G.has_edge("src_time_ts", "src_util_ts"), "same-family (TS->TS) import must survive"
+
+
+def test_cross_family_reference_to_unknown_ext_is_kept():
+    """The #1749 guard only drops when BOTH endpoints are known code languages,
+    so a reference from a config/manifest (unknown ext) to a code file is kept."""
+    ext = {
+        "nodes": [
+            {"id": "pkg_json", "label": "package.json", "file_type": "code",
+             "source_file": "package.json", "source_location": "L1", "_origin": "ast"},
+            {"id": "src_app_ts", "label": "app.ts", "file_type": "code",
+             "source_file": "src/app.ts", "source_location": "L1", "_origin": "ast"},
+        ],
+        "edges": [
+            {"source": "pkg_json", "target": "src_app_ts", "relation": "references",
+             "confidence": "EXTRACTED", "source_file": "package.json", "weight": 1.0},
+        ],
+    }
+    G = build_from_json(ext, directed=False)
+    assert G.has_edge("pkg_json", "src_app_ts"), "config->code reference (unknown ext) must be kept"

@@ -33,6 +33,26 @@ from .paths import default_graph_json as _default_graph_json
 from .validate import validate_extraction
 
 
+# Language interop families, keyed by extension, for the cross-language phantom-edge
+# guard in the edge loop below. Families group by REAL interop (JS/TS share a module
+# graph; C/C++/ObjC share a compilation unit via headers; JVM langs share bytecode),
+# so a legitimate TS->JS import or C impl->header call survives, while a Python
+# `import time` binding to a `time.ts` (#1749) or a cross-language INFERRED `calls`
+# edge (#1547/#1556) is dropped. Kept local to build.py (not imported from extract.py,
+# which imports build.py — a cycle) and deliberately mirrors extract._LANG_FAMILY_BY_EXT.
+_EDGE_LANG_FAMILY: dict[str, str] = {
+    ".py": "py", ".pyi": "py",
+    ".js": "js", ".mjs": "js", ".cjs": "js", ".jsx": "js",
+    ".ts": "js", ".tsx": "js", ".mts": "js", ".cts": "js",
+    ".go": "go", ".rs": "rs",
+    ".java": "jvm", ".kt": "jvm", ".scala": "jvm", ".groovy": "jvm",
+    ".c": "c", ".h": "c", ".cc": "c", ".cpp": "c", ".hpp": "c",
+    ".cxx": "c", ".hh": "c", ".hxx": "c",
+    ".cu": "c", ".cuh": "c", ".metal": "c", ".m": "c", ".mm": "c",
+    ".rb": "rb", ".php": "php", ".cs": "cs", ".swift": "swift", ".lua": "lua",
+}
+
+
 # Synonym mapper for known invalid file_type values that LLM subagents commonly
 # emit. Keeps semantic intent close (markdown→document, tool→code) and falls
 # back to "concept" for any other invalid value (see #840).
@@ -628,31 +648,31 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
             )
         if "source_file" in attrs:
             attrs["source_file"] = _norm_source_file(attrs["source_file"], _root)
-        # Drop cross-language INFERRED `calls` edges — same short names (render,
-        # parse, etc.) appear across language boundaries in multi-language chunks,
-        # producing phantom edges that don't represent real call relationships.
-        if attrs.get("relation") == "calls" and attrs.get("confidence") == "INFERRED":
-            _LANG_FAMILY: dict[str, str] = {
-                ".py": "py", ".pyi": "py",
-                ".js": "js", ".mjs": "js", ".cjs": "js", ".jsx": "js",
-                ".ts": "js", ".tsx": "js", ".mts": "js", ".cts": "js",
-                ".go": "go", ".rs": "rs",
-                ".java": "jvm", ".kt": "jvm", ".scala": "jvm", ".groovy": "jvm",
-                # C, C++, and ObjC interoperate within one compilation unit: a method
-                # declared in a shared `.h` is defined/called from a `.c`/`.cpp`/`.m`
-                # sibling, so a cross-file INFERRED call from impl to its header decl
-                # is legitimate, not a phantom name-collision across languages. Treat
-                # the whole C family as one so the receiver-typed C++/ObjC member-call
-                # resolvers' header-targeting edges survive build (#1547/#1556).
-                ".c": "c", ".h": "c", ".cc": "c", ".cpp": "c", ".hpp": "c",
-                ".cxx": "c", ".hh": "c", ".hxx": "c",
-                ".cu": "c", ".cuh": "c", ".metal": "c", ".m": "c", ".mm": "c",
-                ".rb": "rb", ".php": "php", ".cs": "cs", ".swift": "swift", ".lua": "lua",
-            }
+        # Drop cross-language phantom edges — the same short names (render, parse,
+        # time, ...) recur across language boundaries, so an unresolved target can
+        # bind to a same-named node in another language. The extraction spec forbids
+        # this for `calls`; it is equally invalid for `imports`/`references` (a
+        # Python `import time` must not bind to a `time.ts`, #1749).
+        _edge_rel = attrs.get("relation")
+        if _edge_rel in ("calls", "imports", "imports_from", "references"):
             src_ext = Path(G.nodes[src].get("source_file") or "").suffix.lower()
             tgt_ext = Path(G.nodes[tgt].get("source_file") or "").suffix.lower()
-            if src_ext and tgt_ext and _LANG_FAMILY.get(src_ext) != _LANG_FAMILY.get(tgt_ext):
-                continue
+            src_fam = _EDGE_LANG_FAMILY.get(src_ext)
+            tgt_fam = _EDGE_LANG_FAMILY.get(tgt_ext)
+            if _edge_rel == "calls":
+                # Unchanged #1547/#1556 behavior: only INFERRED calls, and drop as
+                # soon as either family differs (an unknown ext counts as different).
+                if (
+                    attrs.get("confidence") == "INFERRED"
+                    and src_ext and tgt_ext and src_fam != tgt_fam
+                ):
+                    continue
+            else:
+                # imports/references: drop only when BOTH endpoints are known code
+                # languages of different families, so a config->code reference
+                # (unknown ext, e.g. a manifest) is never mistaken for a phantom.
+                if src_fam is not None and tgt_fam is not None and src_fam != tgt_fam:
+                    continue
         # Preserve original edge direction - undirected graphs lose it otherwise,
         # causing display functions to show edges backwards.
         attrs["_src"] = src
