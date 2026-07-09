@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.12 (unreleased)
+
+- Fix: a Java field/parameter/return-type reference to a class whose simple name is shared by two modules no longer dangles on a sourceless phantom node (#1744, thanks @aviciot). Both same-named classes already survive as distinct path-scoped nodes, but the cross-module `references` edge was left pointing at a bare no-source stub because `_resolve_java_type_references` re-pointed `implements`/`inherits`/`imports` but not `references` — so a query about the referenced class could miss it. The Java resolver now disambiguates `references` by the importing file's `import` statement (falling back to same-package), mirroring the C# resolver, and drops the orphaned phantom.
+
 ## 0.9.11 (2026-07-08)
 
 - Fix: file enumeration no longer silently drops a directory subtree. `detect()`'s `os.walk` had no `onerror` handler, so an `os.scandir` failure (a permission error, or a directory created/deleted mid-walk by concurrent writes) was swallowed and that whole subtree vanished from the scan with no log, yielding a silently partial `graph.json`. The walk now records every skipped directory (surfaced in the result's `walk_errors`) and warns to stderr, while still enumerating the rest. Relatedly, `to_json`'s anti-shrink guard (#479) now fails safe: a non-empty but unreadable existing `graph.json` refuses the overwrite (pass `force=True` to override) instead of silently clobbering a good graph; an empty file still proceeds.

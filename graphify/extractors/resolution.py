@@ -2173,8 +2173,13 @@ def _resolve_java_type_references(
     # `imports` is included so the file-level import edge that also lands on the
     # shadow stub gets re-pointed too, leaving the stub unreferenced (and dropped).
     # External/stdlib imports never resolve (no internal def / same-package match),
-    # so their edges correctly stay on their stub.
-    REPOINT_RELATIONS = {"implements", "inherits", "extends", "imports"}
+    # so their edges correctly stay on their stub. `references` (field/parameter/
+    # return-type uses) is included so a cross-module reference to a same-named
+    # class doesn't dangle on a sourceless phantom node when two packages define
+    # the same simple name — the node itself survives with a path-scoped id, but
+    # the reference must point at the RIGHT one (#1744). Mirrors the C# resolver,
+    # whose REPOINT set already covers `references`.
+    REPOINT_RELATIONS = {"implements", "inherits", "extends", "imports", "references"}
     repointed_from: set[str] = set()
     for edge in all_edges:
         if edge.get("relation") not in REPOINT_RELATIONS:
