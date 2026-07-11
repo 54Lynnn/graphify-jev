@@ -1778,7 +1778,7 @@ _LANG_FAMILY_BY_EXT: dict[str, str] = {
     ".py": "python",
     ".go": "go",
     ".rs": "rust",
-    ".rb": "ruby",
+    ".rb": "ruby", ".rake": "ruby",
     ".php": "php", ".phtml": "php", ".php3": "php", ".php4": "php",
     ".php5": "php", ".php7": "php", ".phps": "php",
     ".cs": "dotnet", ".razor": "dotnet", ".cshtml": "dotnet", ".xaml": "dotnet",
@@ -2757,7 +2757,7 @@ register_language_resolver(
 # Ruby type-aware member-call resolution (Class.new + typed var.method). Lives in
 # graphify.ruby_resolution; registered here as a second consumer of the framework.
 register_language_resolver(
-    LanguageResolver("ruby_member_calls", frozenset({".rb"}), resolve_ruby_member_calls)
+    LanguageResolver("ruby_member_calls", frozenset({".rb", ".rake"}), resolve_ruby_member_calls)
 )
 register_language_resolver(
     LanguageResolver("typescript_member_calls", frozenset({".ts", ".tsx", ".mts", ".cts", ".js", ".jsx"}), _resolve_typescript_member_calls)
@@ -3813,7 +3813,7 @@ _DISPATCH: dict[str, Any] = {
     ".cu": extract_cpp,
     ".cuh": extract_cpp,
     ".metal": extract_cpp,
-    ".rb": extract_ruby,
+    ".rb": extract_ruby, ".rake": extract_ruby,
     ".cs": extract_csharp,
     ".kt": extract_kotlin,
     ".kts": extract_kotlin,
