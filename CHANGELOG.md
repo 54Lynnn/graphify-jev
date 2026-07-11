@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## 0.9.13 (unreleased)
 
+- Fix: the report's "Suggested Questions" weakly-connected-node count now matches its "Knowledge Gaps" count (#1768, thanks @balloon72). `suggest_questions()` omitted the `file_type != "rationale"` filter that `report.py`'s Knowledge Gaps section applies, so the same `GRAPH_REPORT.md` showed two different numbers for the same concept (e.g. 757 vs 245), making a healthy graph look like it had a major documentation gap. Both computations now use the same filter.
+
 - Fix: Bash scripts that run each other by execution now get a cross-file edge (#1756, thanks @balloon72). `extract_bash` only linked `source x.sh` / `. x.sh`; the two most common forms — `bash x.sh` and `./x.sh` — produced no edge, so execution topology was missing. They now emit a `calls` edge (context `script_invocation`) to the invoked script's entry node when the target resolves to a real file on disk (script runners `bash`/`sh`/`zsh`/`ksh`/`dash` and bare `./x.sh`), skipping missing or shadowed targets.
 
 - Fix: Ruby `.rake` files are now extracted and participate in Ruby cross-file resolution like `.rb` (#1784, thanks @krishnateja7). `.rake` is plain Ruby but the extension was gated out of seven places (classification, extractor dispatch, the language-name/family maps, the `ruby_member_calls` resolver's suffix set, both `.rb`-suffix filters in `ruby_resolution.py`, and the build repo-tag map), so every rake task was skipped and its calls were invisible. All seven now include `.rake`; `Widget.tally` from a `.rake` task resolves to its `.rb` definition.
