@@ -1903,7 +1903,7 @@ def extract_corpus_parallel(
     # over session state. Force serial unless the user explicitly opts in.
     if backend == "claude-cli" and os.environ.get("GRAPHIFY_CLAUDE_CLI_PARALLEL", "").strip() != "1":
         max_concurrency = 1
-    def _checkpoint_chunk(result: dict) -> None:
+    def _checkpoint_chunk(result: dict, chunk: "list[Path | FileSlice]") -> None:
         # Persist each chunk's semantic results to the cache as soon as it
         # completes. Without this, the semantic cache is only written once, at
         # the very end of the run (in __main__), so a run interrupted partway
@@ -1914,12 +1914,20 @@ def extract_corpus_parallel(
             return
         try:
             from .cache import save_semantic_cache as _scs
+            # Scope the write to the files actually dispatched in this chunk
+            # (#1757). The model can attribute a node's source_file to another
+            # corpus file; without this bound, that stray node would clobber the
+            # other file's complete cache entry (or, with merge_existing, pollute
+            # it). A FileSlice reports its file via `.rel`; a bare Path is the
+            # relative source_file itself.
+            allowed = [getattr(item, "rel", None) or item for item in chunk]
             _scs(
                 result.get("nodes", []),
                 result.get("edges", []),
                 result.get("hyperedges", []),
                 root=root,
                 merge_existing=True,
+                allowed_source_files=allowed,
             )
         except Exception as _exc:  # noqa: BLE001 — checkpoint is best-effort
             print(f"[graphify] incremental cache checkpoint failed: {_exc}", file=sys.stderr)
@@ -1936,7 +1944,7 @@ def extract_corpus_parallel(
                 continue
             assert result is not None
             _merge_into(merged, result)
-            _checkpoint_chunk(result)
+            _checkpoint_chunk(result, chunk)
             if callable(on_chunk_done):
                 on_chunk_done(idx, total, result)
     else:
@@ -1961,7 +1969,7 @@ def extract_corpus_parallel(
                     continue
                 assert result is not None
                 results_by_idx[idx] = result
-                _checkpoint_chunk(result)
+                _checkpoint_chunk(result, chunks[idx])
                 if callable(on_chunk_done):
                     on_chunk_done(idx, total, result)
         for idx in sorted(results_by_idx):

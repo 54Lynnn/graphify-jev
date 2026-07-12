@@ -279,6 +279,53 @@ def test_corpus_parallel_continues_after_chunk_failure(tmp_path, capsys):
     assert "failed" in err and "simulated API error" in err
 
 
+def test_checkpoint_scopes_cache_writes_to_chunk_files(tmp_path):
+    """#1757: the per-chunk incremental checkpoint must not let a chunk's
+    mis-attributed node clobber another corpus file's semantic cache. A chunk
+    processing only A.py that returns a node attributed to B.py must leave B.py's
+    existing cache entry untouched. Guards the call site the original fix missed."""
+    from graphify.llm import extract_corpus_parallel
+    from graphify.cache import save_semantic_cache, load_cached
+
+    a = tmp_path / "A.py"; a.write_text("def a(): pass")
+    b = tmp_path / "B.py"; b.write_text("def b(): pass")
+
+    # Seed B.py's legitimate semantic cache (a full, correct entry).
+    save_semantic_cache(
+        [{"id": "b_real", "source_file": "B.py", "file_type": "code"}],
+        [], [], root=tmp_path,
+    )
+    before = load_cached(b, tmp_path, kind="semantic")
+    assert before and [n["id"] for n in before["nodes"]] == ["b_real"]
+
+    # The chunk dispatches only A.py, but the (untrusted) model result attributes
+    # a stray node to B.py — the #1757 mis-attribution.
+    def stray(chunk, **kwargs):
+        return {
+            "nodes": [
+                {"id": "a_ok", "source_file": "A.py", "file_type": "code"},
+                {"id": "b_stray", "source_file": "B.py", "file_type": "code"},
+            ],
+            "edges": [], "hyperedges": [],
+            "input_tokens": 1, "output_tokens": 1,
+        }
+
+    with patch("graphify.llm.extract_files_direct", side_effect=stray):
+        extract_corpus_parallel(
+            [a], backend="kimi", root=tmp_path,
+            token_budget=None, chunk_size=1, max_concurrency=1,
+        )
+
+    # B.py's cache is unchanged: the stray node was rejected, not merged in.
+    after = load_cached(b, tmp_path, kind="semantic")
+    assert [n["id"] for n in after["nodes"]] == ["b_real"], (
+        f"B.py cache was clobbered by an out-of-chunk node: {after}"
+    )
+    # A.py (the actual chunk file) was legitimately cached.
+    a_cache = load_cached(a, tmp_path, kind="semantic")
+    assert a_cache and any(n["id"] == "a_ok" for n in a_cache["nodes"])
+
+
 def test_corpus_parallel_legacy_mode_when_token_budget_is_none(tmp_path):
     """token_budget=None should fall back to legacy fixed-count chunking."""
     from graphify.llm import extract_corpus_parallel

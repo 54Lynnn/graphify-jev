@@ -7,6 +7,7 @@ import json
 import os
 import re
 import tempfile
+import warnings
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -600,8 +601,6 @@ def save_semantic_cache(
         p = resolved_source_path(fpath)
         if p.is_file():
             if allowed_paths is not None and p not in allowed_paths:
-                import warnings
-
                 warnings.warn(
                     "semantic cache skipped out-of-scope source_file "
                     f"{fpath!r}; the file was not dispatched for extraction",
