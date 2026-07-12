@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.14 (2026-07-12)
+
+- Fix: Visual Studio *solution folder* nodes no longer embed the absolute scan path (including the local username) in their `id` and `source_file` (#1789, thanks @fremat79). A solution folder is a virtual grouping, not a file — VS writes its name as both the display name and the "path" — but `extract_sln` resolved it to an absolute filesystem path anyway and keyed the node id off that. The CLI's id-relativization pass only remaps ids of real files in the scan set, so a virtual folder never matched and its absolute id survived into a committed `graph.json` (e.g. `id=/Users/<name>/proj/Plugins` instead of `id=plugins`). Solution folders are now detected (name == path) and keyed off the folder name only; real project files still resolve as before. (The earlier fix covered `.csproj`/`.sln` file nodes but missed the virtual folders — this completes it.)
+
 ## 0.9.13 (2026-07-12)
 
 - Fix: the query log is now opt-in (off by default) (#1797, thanks @adam-pond-agent). `querylog` wrote every `query`/`path`/`explain` question and corpus path (and full responses if `GRAPHIFY_QUERY_LOG_RESPONSES`) to a default-on, unbounded, fail-silent plaintext file at `~/.cache/graphify-queries.log` — outside any repo's .gitignore/retention, and undocumented, which contradicts graphify's on-device / no-telemetry posture. Logging is now OFF unless you opt in with `GRAPHIFY_QUERY_LOG_ENABLE=1` (default path) or `GRAPHIFY_QUERY_LOG=<path>`; `GRAPHIFY_QUERY_LOG_DISABLE=1` still forces it off. All the query-log env vars are now documented in the README.
