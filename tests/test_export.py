@@ -99,6 +99,48 @@ def test_to_graphml_tolerates_none_attribute_values():
         content = out.read_text()
         assert "<graphml" in content
 
+def test_to_graphml_tolerates_dict_and_list_attribute_values():
+    """nx.write_graphml only accepts scalars; a dict/list attribute (per-node
+    metadata, or the graph-level hyperedges list) used to crash the whole export.
+    to_graphml must JSON-serialize them across graph/node/edge scopes (#1831)."""
+    import networkx as nx
+    G = make_graph()
+    communities = cluster(G)
+    a_node = next(iter(G.nodes()))
+    G.nodes[a_node]["metadata"] = {"kind": "file", "size": 12}
+    G.nodes[a_node]["tags"] = ["x", "y"]
+    if G.number_of_edges():
+        u, v = next(iter(G.edges()))
+        G.edges[u, v]["ctx"] = {"k": "v"}
+    G.graph["hyperedges"] = [{"nodes": [a_node], "label": "h"}]
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "graph.graphml"
+        to_graphml(G, communities, str(out))  # must not raise
+        H = nx.read_graphml(str(out))
+        assert json.loads(H.nodes[a_node]["metadata"]) == {"kind": "file", "size": 12}
+        assert json.loads(H.nodes[a_node]["tags"]) == ["x", "y"]
+        assert json.loads(H.graph["hyperedges"]) == [{"nodes": [a_node], "label": "h"}]
+        assert not (Path(tmp) / "graph.graphml.tmp").exists()
+
+
+def test_to_graphml_preserves_native_scalar_types():
+    """Coercion must leave GraphML-native scalars (int/float/bool/str) untouched,
+    only stringifying non-scalars (#1831)."""
+    import networkx as nx
+    G = nx.Graph()
+    G.add_node("a", count=3, ratio=0.5, flag=True, name="x")
+    G.add_node("b")
+    G.add_edge("a", "b")
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "g.graphml"
+        to_graphml(G, {0: ["a", "b"]}, str(out))
+        H = nx.read_graphml(str(out))
+        assert H.nodes["a"]["count"] == 3
+        assert H.nodes["a"]["ratio"] == 0.5
+        assert H.nodes["a"]["flag"] is True
+        assert H.nodes["a"]["name"] == "x"
+
+
 def test_to_html_creates_file():
     G = make_graph()
     communities = cluster(G)

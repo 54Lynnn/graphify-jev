@@ -911,16 +911,44 @@ def to_graphml(
     for _, _, attrs in H.edges(data=True):
         for k in [k for k in attrs if k.startswith("_")]:
             del attrs[k]
-    # nx.write_graphml raises ValueError on None attribute values; replace with "".
+    # nx.write_graphml only accepts scalar attribute values: None raises, and a
+    # dict/list value (e.g. a per-node `metadata` dict, or the graph-level
+    # `hyperedges` list set by attach_hyperedges()) raises
+    # "GraphML does not support type <class 'dict'/'list'> as data values" (#1831).
+    # Coerce None -> "" and non-scalars -> a JSON string, across all three scopes.
+    def _graphml_safe(val):
+        if val is None:
+            return ""
+        if isinstance(val, bool) or isinstance(val, (int, float, str)):
+            return val  # GraphML-native scalars pass through unchanged
+        try:
+            return json.dumps(val, default=str, sort_keys=True)
+        except (TypeError, ValueError):
+            return str(val)
+
+    for key, val in list(H.graph.items()):
+        H.graph[key] = _graphml_safe(val)
     for node_id in H.nodes():
         for key, val in list(H.nodes[node_id].items()):
-            if val is None:
-                H.nodes[node_id][key] = ""
+            H.nodes[node_id][key] = _graphml_safe(val)
     for u, v in H.edges():
         for key, val in list(H.edges[u, v].items()):
-            if val is None:
-                H.edges[u, v][key] = ""
-    nx.write_graphml(H, output_path)
+            H.edges[u, v][key] = _graphml_safe(val)
+
+    # Write atomically: a mid-serialization error otherwise leaves a 0-byte
+    # .graphml on disk that downstream tooling mistakes for a completed export
+    # (#1831). Write to a sibling temp file, then replace on success.
+    out = Path(output_path)
+    tmp = out.with_name(out.name + ".tmp")
+    try:
+        nx.write_graphml(H, str(tmp))
+        os.replace(str(tmp), str(out))
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
 
 
 def to_svg(

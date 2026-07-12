@@ -464,6 +464,11 @@ def main() -> None:
     agent harnesses read a successful query as a command failure (#1807)."""
     try:
         _run_cli()
+        # Flush explicitly, inside the guard. Piped stdout is block-buffered, so a
+        # small fully-buffered output would otherwise only flush at interpreter
+        # shutdown — outside this try — where a reader that closed the pipe surfaces
+        # as a noisy "Exception ignored on flushing sys.stdout" and a nonzero exit.
+        sys.stdout.flush()
     except BrokenPipeError:
         _silence_broken_pipe()
     except OSError as exc:
