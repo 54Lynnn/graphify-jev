@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.13 (unreleased)
+## 0.9.13 (2026-07-12)
 
 - Fix: the query log is now opt-in (off by default) (#1797, thanks @adam-pond-agent). `querylog` wrote every `query`/`path`/`explain` question and corpus path (and full responses if `GRAPHIFY_QUERY_LOG_RESPONSES`) to a default-on, unbounded, fail-silent plaintext file at `~/.cache/graphify-queries.log` — outside any repo's .gitignore/retention, and undocumented, which contradicts graphify's on-device / no-telemetry posture. Logging is now OFF unless you opt in with `GRAPHIFY_QUERY_LOG_ENABLE=1` (default path) or `GRAPHIFY_QUERY_LOG=<path>`; `GRAPHIFY_QUERY_LOG_DISABLE=1` still forces it off. All the query-log env vars are now documented in the README.
 
@@ -21,6 +21,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 - Fix: Ruby `.rake` files are now extracted and participate in Ruby cross-file resolution like `.rb` (#1784, thanks @krishnateja7). `.rake` is plain Ruby but the extension was gated out of seven places (classification, extractor dispatch, the language-name/family maps, the `ruby_member_calls` resolver's suffix set, both `.rb`-suffix filters in `ruby_resolution.py`, and the build repo-tag map), so every rake task was skipped and its calls were invisible. All seven now include `.rake`; `Widget.tally` from a `.rake` task resolves to its `.rb` definition.
 
 - Fix: cross-module references to a function now resolve to its definition instead of dangling on a name-only stub (#1781, thanks @EmilNyg). `_rewire_unique_stub_nodes` gated merge targets through `_is_type_like_definition`, which rejects any label ending in `)` — so function/method defs could never absorb their reference stubs, and "who references this function" returned nothing on the definition node while a sourceless stub held all the edges. Top-level function defs are now eligible rewire targets when the label match is globally unique, gated by a language-family match with the referrers (a Python `get_db` reference can't bind to a unique Go `get_db()`) and excluding stubs used as a supertype (`inherits`/`implements`/`extends` — you don't inherit from a function). Types are unchanged.
+
+## 0.9.12 (2026-07-10)
 
 - Fix: live PostgreSQL introspection (`--postgres`) now emits foreign-key `references` edges under a read-only role (#1746, thanks @rithyKabir). The FK query read `information_schema.referential_constraints`, which is privilege-filtered — a role with only SELECT sees zero FK rows while tables/views/routines still appear, so every `references` edge silently vanished. It now reads the world-readable `pg_catalog.pg_constraint` (keyed by oid, which also fixes same-named constraints on sibling tables cross-matching in the old name-based joins), preserving composite-FK column order via `UNNEST ... WITH ORDINALITY`.
 
