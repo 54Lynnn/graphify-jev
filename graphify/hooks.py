@@ -240,6 +240,25 @@ def _detached_launch(rebuild_body: str) -> str:
     return '"$GRAPHIFY_PYTHON" -c "' + launcher + '"\n'
 
 
+# Skip the rebuild inside a linked worktree (git worktree add), shared by both
+# hooks. With core.hooksPath shared across worktrees a commit in any worktree
+# fires these hooks; the canonical graphify-out/ belongs to the primary checkout,
+# so rebuilding from a worktree is wasteful, writes a rogue delta-only graph the
+# user never asked for, and races deploy/CI `git clean` against the detached
+# rebuild ("failed to remove graphify-out/: Directory not empty") (#1809, #1806).
+# A linked worktree has git-dir != git-common-dir. Both are resolved to absolute
+# via `cd ... && pwd` before comparing: git's exported GIT_DIR / --git-dir can be
+# absolute while --git-common-dir is the relative ".git", and a raw compare would
+# false-positive on the PRIMARY checkout and wrongly skip it.
+_WORKTREE_GUARD = """\
+_GFY_GITDIR=$(cd "$(git rev-parse --git-dir 2>/dev/null)" 2>/dev/null && pwd)
+_GFY_COMMONDIR=$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd)
+if [ -n "$_GFY_COMMONDIR" ] && [ "$_GFY_GITDIR" != "$_GFY_COMMONDIR" ]; then
+    exit 0
+fi
+"""
+
+
 _HOOK_SCRIPT = """\
 # graphify-hook-start
 # Auto-rebuilds the knowledge graph after each commit (code files only, no LLM needed).
@@ -268,6 +287,7 @@ GIT_DIR=${GIT_DIR:-$(git rev-parse --git-dir 2>/dev/null)}
 
 [ "${GRAPHIFY_SKIP_HOOK:-0}" = "1" ] && exit 0
 
+""" + _WORKTREE_GUARD + """
 CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null)
 if [ -z "$CHANGED" ]; then
     exit 0
@@ -334,7 +354,11 @@ GIT_DIR=${GIT_DIR:-$(git rev-parse --git-dir 2>/dev/null)}
 [ -f "$GIT_DIR/MERGE_HEAD" ] && exit 0
 [ -f "$GIT_DIR/CHERRY_PICK_HEAD" ] && exit 0
 
-""" + _PYTHON_DETECT + """
+# Honor the same opt-out as post-commit: without this, GRAPHIFY_SKIP_HOOK=1
+# suppressed commit-triggered rebuilds but not branch-switch ones (#1809).
+[ "${GRAPHIFY_SKIP_HOOK:-0}" = "1" ] && exit 0
+
+""" + _WORKTREE_GUARD + _PYTHON_DETECT + """
 _GRAPHIFY_LOG="${HOME}/.cache/graphify-rebuild.log"
 mkdir -p "$(dirname "$_GRAPHIFY_LOG")"
 export GRAPHIFY_REBUILD_LOG="$_GRAPHIFY_LOG"

@@ -790,6 +790,48 @@ def _find_vcs_root(start: Path) -> Path | None:
         current = parent
 
 
+def _git_info_exclude(vcs_root: Path) -> Path | None:
+    """Resolve ``$GIT_DIR/info/exclude`` for the repo rooted at ``vcs_root``.
+
+    ``info/exclude`` is where git records local-only, uncommitted excludes — and
+    where ``git worktree add`` writes nested worktree paths — so a repo can ignore
+    a directory without any ``.gitignore`` entry. graphify only read
+    ``.gitignore``/``.graphifyignore``, so it walked into those worktree copies and
+    the graph exploded (#1810). Handles the linked-worktree/submodule case where
+    ``.git`` is a file (``gitdir: <path>``) and the real excludes live in the
+    shared common git dir. Returns None when there is no readable exclude file.
+    """
+    dot_git = vcs_root / ".git"
+    git_dir: Path | None = None
+    if dot_git.is_dir():
+        git_dir = dot_git
+    elif dot_git.is_file():
+        try:
+            content = dot_git.read_text(encoding="utf-8", errors="ignore").strip()
+        except OSError:
+            content = ""
+        if content.startswith("gitdir:"):
+            gd = Path(content[len("gitdir:"):].strip())
+            if not gd.is_absolute():
+                gd = (vcs_root / gd).resolve()
+            git_dir = gd
+            # A linked worktree's gitdir holds a `commondir` file pointing at the
+            # shared git dir, where info/exclude actually lives.
+            commondir = gd / "commondir"
+            if commondir.exists():
+                try:
+                    cd_raw = commondir.read_text(encoding="utf-8", errors="ignore").strip()
+                except OSError:
+                    cd_raw = ""
+                if cd_raw:
+                    cd = Path(cd_raw)
+                    git_dir = cd if cd.is_absolute() else (gd / cd).resolve()
+    if git_dir is None:
+        return None
+    exclude = git_dir / "info" / "exclude"
+    return exclude if exclude.is_file() else None
+
+
 def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
     """Read .graphifyignore files and return (anchor_dir, pattern) pairs.
 
@@ -814,6 +856,18 @@ def _load_graphifyignore(root: Path) -> list[tuple[Path, str]]:
     dirs.reverse()  # ceiling first, scan root last
 
     patterns: list[tuple[Path, str]] = []
+
+    # $GIT_DIR/info/exclude is repo-root-scoped and, per git, ranks below every
+    # per-directory .gitignore/.graphifyignore — so load it first (lowest priority
+    # under last-match-wins) anchored at the VCS root, letting a nearer `!`
+    # re-include still override it (#1810).
+    info_exclude = _git_info_exclude(ceiling)
+    if info_exclude is not None:
+        for raw in info_exclude.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = _parse_gitignore_line(raw)
+            if line:
+                patterns.append((ceiling, line))
+
     for d in dirs:
         # Merge .gitignore and .graphifyignore for this dir (#1363). Previously
         # the presence of a .graphifyignore made graphify skip that dir's

@@ -549,6 +549,36 @@ def test_detect_skips_nox_virtualenv(tmp_path):
     assert any("app.py" in f for f in all_files)
 
 
+def test_detect_honors_git_info_exclude(tmp_path):
+    """.git/info/exclude (where `git worktree add` records nested worktree paths,
+    and where local-only excludes live) must be honored, not just .gitignore /
+    .graphifyignore — otherwise nested worktree copies get fully indexed (#1810)."""
+    (tmp_path / ".git" / "info").mkdir(parents=True)
+    (tmp_path / ".git" / "info" / "exclude").write_text("worktrees/\n")
+    wt = tmp_path / "worktrees" / "foo"
+    wt.mkdir(parents=True)
+    (wt / "dupe.py").write_text("def dupe(): pass")
+    (tmp_path / "real.py").write_text("def real(): pass")
+    result = detect(tmp_path)
+    all_files = [f for files in result["files"].values() for f in files]
+    assert not any("dupe.py" in f for f in all_files), "worktree dir was not excluded"
+    assert any("real.py" in f for f in all_files), "real source was dropped"
+
+
+def test_git_info_exclude_ranks_below_gitignore_negation(tmp_path):
+    """info/exclude is loaded at lowest priority, so a later .gitignore `!` negation
+    of the same (non-directory) pattern still wins under last-match-wins (#1810)."""
+    from graphify.detect import _load_graphifyignore, _is_ignored
+    (tmp_path / ".git" / "info").mkdir(parents=True)
+    (tmp_path / ".git" / "info" / "exclude").write_text("secret*.txt\n")
+    (tmp_path / ".gitignore").write_text("!secret-ok.txt\n")
+    (tmp_path / "secret-bad.txt").write_text("x")
+    (tmp_path / "secret-ok.txt").write_text("x")
+    patterns = _load_graphifyignore(tmp_path)
+    assert _is_ignored(tmp_path / "secret-bad.txt", tmp_path, patterns)
+    assert not _is_ignored(tmp_path / "secret-ok.txt", tmp_path, patterns)
+
+
 def test_detect_skips_graphify_own_cache(tmp_path):
     """.graphify/ (extraction cache) must never be re-indexed as source (#873)."""
     cache = tmp_path / ".graphify" / "cache"
