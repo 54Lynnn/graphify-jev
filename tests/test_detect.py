@@ -537,6 +537,18 @@ def test_detect_skips_next_cache(tmp_path):
     assert any("index.tsx" in f for f in all_files)
 
 
+def test_detect_skips_nox_virtualenv(tmp_path):
+    """.nox/ (nox virtualenvs, tox's successor) must be excluded like .tox (#1804)."""
+    nox = tmp_path / ".nox" / "tests" / "lib" / "site-packages" / "pydeck"
+    nox.mkdir(parents=True)
+    (nox / "widget.py").write_text("class Deck: pass")
+    (tmp_path / "app.py").write_text("def go(): pass")
+    result = detect(tmp_path)
+    all_files = [f for files in result["files"].values() for f in files]
+    assert not any(".nox" in f for f in all_files)
+    assert any("app.py" in f for f in all_files)
+
+
 def test_detect_skips_graphify_own_cache(tmp_path):
     """.graphify/ (extraction cache) must never be re-indexed as source (#873)."""
     cache = tmp_path / ".graphify" / "cache"

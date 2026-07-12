@@ -1,6 +1,7 @@
 """graphify CLI - `graphify install` sets up the Claude Code skill."""
 
 from __future__ import annotations
+import errno
 import functools
 import json
 import os
@@ -444,7 +445,37 @@ _CODEX_HOOK = {
 
 
 
+def _silence_broken_pipe() -> None:
+    """Handle a downstream reader that closed the pipe early. Redirect stdout to
+    devnull so the interpreter's shutdown flush does not raise a second time, then
+    exit 0 — the reader (head, `Select-Object -First N`, `sed q`) has what it needs."""
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    except Exception:
+        pass
+    sys.exit(0)
+
+
 def main() -> None:
+    """Console entry point. Wraps the CLI so that when a downstream consumer closes
+    stdout early, graphify treats it as success instead of crashing with an
+    unhandled write-to-closed-pipe error and exit 255 — which made CI wrappers and
+    agent harnesses read a successful query as a command failure (#1807)."""
+    try:
+        _run_cli()
+    except BrokenPipeError:
+        _silence_broken_pipe()
+    except OSError as exc:
+        # Windows surfaces a write to a closed pipe as OSError(EINVAL) rather than
+        # BrokenPipeError; EPIPE is the POSIX form when it slips past the above.
+        if getattr(exc, "errno", None) in (errno.EPIPE, errno.EINVAL):
+            _silence_broken_pipe()
+        else:
+            raise
+
+
+def _run_cli() -> None:
     for _stream in (sys.stdout, sys.stderr):
         if _stream is not None and hasattr(_stream, "reconfigure"):
             try:
