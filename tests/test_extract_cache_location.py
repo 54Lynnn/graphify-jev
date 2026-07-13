@@ -17,7 +17,17 @@ from __future__ import annotations
 from pathlib import Path
 
 import graphify.extract as ex
+import graphify.cache as cache
 from graphify.cache import load_cached, file_hash
+
+
+def _reset_stat_index():
+    """The stat-index location is chosen once per process via a module global
+    (#1747). Reset it so a test sees a fresh-process decision — otherwise an
+    earlier test pins the location and masks where THIS extract would write it."""
+    cache._stat_index_root = None
+    cache._stat_index = {}
+    cache._stat_index_dirty = False
 
 
 def _make_corpus(base: Path) -> Path:
@@ -29,6 +39,7 @@ def _make_corpus(base: Path) -> Path:
 
 
 def test_default_cache_lands_in_cwd_not_source_tree(tmp_path, monkeypatch):
+    _reset_stat_index()
     corpus = _make_corpus(tmp_path)
     work = tmp_path / "work"
     work.mkdir()
@@ -37,13 +48,38 @@ def test_default_cache_lands_in_cwd_not_source_tree(tmp_path, monkeypatch):
     result = ex.extract([corpus / "a.py", corpus / "b.py"], parallel=False)
 
     assert result["nodes"], "extraction should still produce nodes"
+    # Nothing at all in the source tree — not the AST cache, and not the
+    # stat-index.json the hash fastpath writes (which file_hash used to anchor on
+    # the key-root, leaving a stray graphify-out/ in a writable corpus, #1774).
     assert not (corpus / "graphify-out").exists(), (
-        "cache written into the analyzed source tree (#1774)"
+        "cache/stat-index written into the analyzed source tree (#1774)"
     )
     assert (work / "graphify-out" / "cache").is_dir(), "cache should land under CWD"
 
 
+def test_default_cache_does_not_leave_stat_index_in_source_tree(tmp_path, monkeypatch):
+    """Fresh-process regression for the stat-index leak specifically: even for a
+    WRITABLE out-of-CWD corpus (where the write would succeed), file_hash's
+    stat-index must follow the cache location, not the key anchor (#1774)."""
+    _reset_stat_index()
+    corpus = _make_corpus(tmp_path)
+    work = tmp_path / "elsewhere"
+    work.mkdir()
+    monkeypatch.chdir(work)
+
+    ex.extract([corpus / "a.py", corpus / "b.py"], parallel=False)
+    # The stat index is buffered in memory and flushed at interpreter exit; force
+    # the flush now so we can assert WHERE it lands.
+    cache._flush_stat_index()
+
+    assert not (corpus / "graphify-out").exists(), "stat-index leaked into the corpus"
+    assert (work / "graphify-out" / "cache" / "stat-index.json").exists(), (
+        "stat-index should be written under the cache location (CWD)"
+    )
+
+
 def test_explicit_cache_root_still_wins(tmp_path, monkeypatch):
+    _reset_stat_index()
     corpus = _make_corpus(tmp_path)
     work = tmp_path / "work"
     work.mkdir()

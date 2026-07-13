@@ -159,7 +159,7 @@ def _normalize_path(path: Path) -> Path:
     return Path(os.path.normcase(s))
 
 
-def file_hash(path: Path, root: Path = Path(".")) -> str:
+def file_hash(path: Path, root: Path = Path("."), cache_root: "Path | None" = None) -> str:
     """SHA256 of file contents + path relative to root.
 
     Uses a stat-based fastpath (size + mtime_ns) to skip full reads when the
@@ -179,7 +179,11 @@ def file_hash(path: Path, root: Path = Path(".")) -> str:
     if not p.is_file():
         raise IsADirectoryError(f"file_hash requires a file, got: {p}")
 
-    _ensure_stat_index(root)
+    # The stat index is a cache artifact, so it must follow the cache location
+    # (cache_root), not the key-anchor root — otherwise it leaves a stray
+    # graphify-out/cache/stat-index.json inside the analyzed source tree even when
+    # the AST cache itself is redirected to CWD (#1774 completion).
+    _ensure_stat_index(root, cache_root=cache_root)
     abs_key = str(p.resolve())
     st: "os.stat_result | None" = None
     try:
@@ -377,7 +381,7 @@ def load_cached(path: Path, root: Path = Path("."), kind: str = "ast",
     """
     location = cache_root if cache_root is not None else root
     try:
-        h = file_hash(path, root)
+        h = file_hash(path, root, cache_root=cache_root)
     except OSError:
         return None
     entry = cache_dir(location, kind) / f"{h}.json"
@@ -428,7 +432,7 @@ def save_cached(path: Path, result: dict, root: Path = Path("."), kind: str = "a
         import copy as _copy
         on_disk = _copy.deepcopy(result)
         _relativize_source_files_in(on_disk, root)
-    h = file_hash(p, root)
+    h = file_hash(p, root, cache_root=cache_root)
     location = cache_root if cache_root is not None else root
     target_dir = cache_dir(location, kind)
     entry = target_dir / f"{h}.json"
