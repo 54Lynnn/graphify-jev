@@ -4,6 +4,10 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## 0.9.16 (unreleased)
 
+- Fix: `detect_incremental` re-extracts a legacy-manifest file when its mtime moves backwards, not just forwards (#1859 / #1862, thanks @thejesh23). The legacy float-schema branch used a strict `current_mtime > stored`, so a file restored to an older timestamp (a `git checkout` of an older commit, a tarball restore, `rsync --times`) was treated as unchanged and never re-extracted, leaving the graph reflecting newer content than the corpus on disk. It now compares with `!=`, matching the dict-schema branch; with no stored hash to verify, any mtime delta forces a re-extract, and the next save promotes the entry to the hash-verified dict schema.
+
+- Fix: the dedup summary line reports the fuzzy-merge count even when there were no exact merges (#1857 / #1860, thanks @thejesh23). The fuzzy branch was nested inside `if exact_merges`, so a doc- or semantic-heavy run that merged only via the cross-file fuzzy pass printed a bare `Deduplicated N node(s).` with no breakdown. Both counts are now reported whenever non-zero.
+
 - Fix: the incremental semantic-cache checkpoint no longer fails on oversized (sliced) documents (#1870). The 0.9.14 batch-scoping fix built its per-chunk allowlist by reading `FileSlice.rel`, an attribute that does not exist (a `FileSlice` carries its parent file in `.path`), so every chunk containing a sliced document leaked the `FileSlice` object into the allowlist, `save_semantic_cache` raised `TypeError`, and the best-effort handler swallowed it: extraction still finished but those chunks were never checkpointed, so a re-run or a run resumed after a crash/rate-limit re-billed them. The allowlist now resolves each unit through `unit_path`, so a slice maps to its parent file and the checkpoint writes as intended.
 
 ## 0.9.15 (2026-07-13)
