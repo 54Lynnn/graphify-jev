@@ -1114,7 +1114,7 @@ def test_extract_falls_back_to_sequential_when_parallel_returns_false(tmp_path, 
     calls = {"parallel": 0, "sequential": 0}
     real_sequential = extract_mod._extract_sequential
 
-    def fake_parallel(uncached_work, per_file, effective_root, max_workers, total_files):
+    def fake_parallel(uncached_work, per_file, root, max_workers, total_files, cache_location=None):
         calls["parallel"] += 1
         return False  # simulate the post-fix BrokenProcessPool branch
 

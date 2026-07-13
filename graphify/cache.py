@@ -354,12 +354,20 @@ def cache_dir(root: Path = Path("."), kind: str = "ast") -> Path:
     return d
 
 
-def load_cached(path: Path, root: Path = Path("."), kind: str = "ast") -> dict | None:
+def load_cached(path: Path, root: Path = Path("."), kind: str = "ast",
+                cache_root: Path | None = None) -> dict | None:
     """Return cached extraction for this file if hash matches, else None.
 
     Cache key: SHA256 of file contents.
     Cache value: stored as graphify-out/cache/{kind}/{hash}.json (AST entries
     under the per-version subdirectory, see :func:`cache_dir`).
+
+    ``root`` anchors the content-hash key and source_file relativization (it
+    must stay the inferred common parent so keys remain portable). ``cache_root``
+    decouples *where* the cache directory lives from that anchor — the cache is
+    an output and must not land inside a read-only/analyzed source tree (#1774).
+    When ``cache_root`` is None the location falls back to ``root`` (unchanged
+    behavior for existing callers).
 
     AST entries written by other graphify versions — including the legacy
     flat cache/ layout (pre-0.5.3) and the unversioned cache/ast/ layout —
@@ -367,11 +375,12 @@ def load_cached(path: Path, root: Path = Path("."), kind: str = "ast") -> dict |
     extractor and may be stale.
     Returns None if no cache entry or file has changed.
     """
+    location = cache_root if cache_root is not None else root
     try:
         h = file_hash(path, root)
     except OSError:
         return None
-    entry = cache_dir(root, kind) / f"{h}.json"
+    entry = cache_dir(location, kind) / f"{h}.json"
     if entry.exists():
         try:
             result = json.loads(entry.read_text(encoding="utf-8"))
@@ -386,11 +395,16 @@ def load_cached(path: Path, root: Path = Path("."), kind: str = "ast") -> dict |
     return None
 
 
-def save_cached(path: Path, result: dict, root: Path = Path("."), kind: str = "ast") -> None:
+def save_cached(path: Path, result: dict, root: Path = Path("."), kind: str = "ast",
+                cache_root: Path | None = None) -> None:
     """Save extraction result for this file.
 
     Stores as graphify-out/cache/{kind}/{hash}.json where hash = SHA256 of current file contents.
     result should be a dict with 'nodes' and 'edges' lists.
+
+    ``root`` anchors the content-hash key and source_file relativization;
+    ``cache_root`` (when given) is where the cache directory is written, decoupled
+    from ``root`` so the cache never lands inside the analyzed source tree (#1774).
 
     No-ops if `path` is not a regular file. Subagent-produced semantic fragments
     occasionally carry a directory path in `source_file`; skipping them prevents
@@ -415,7 +429,8 @@ def save_cached(path: Path, result: dict, root: Path = Path("."), kind: str = "a
         on_disk = _copy.deepcopy(result)
         _relativize_source_files_in(on_disk, root)
     h = file_hash(p, root)
-    target_dir = cache_dir(root, kind)
+    location = cache_root if cache_root is not None else root
+    target_dir = cache_dir(location, kind)
     entry = target_dir / f"{h}.json"
     fd, tmp_path = tempfile.mkstemp(dir=target_dir, prefix=f"{h}.", suffix=".tmp")
     try:
