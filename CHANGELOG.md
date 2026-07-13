@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.16 (unreleased)
+
+- Fix: the incremental semantic-cache checkpoint no longer fails on oversized (sliced) documents (#1870). The 0.9.14 batch-scoping fix built its per-chunk allowlist by reading `FileSlice.rel`, an attribute that does not exist (a `FileSlice` carries its parent file in `.path`), so every chunk containing a sliced document leaked the `FileSlice` object into the allowlist, `save_semantic_cache` raised `TypeError`, and the best-effort handler swallowed it: extraction still finished but those chunks were never checkpointed, so a re-run or a run resumed after a crash/rate-limit re-billed them. The allowlist now resolves each unit through `unit_path`, so a slice maps to its parent file and the checkpoint writes as intended.
+
 ## 0.9.15 (2026-07-13)
 
 - Fix: detection now honors nested `.gitignore`/`.graphifyignore` files below the scan root, not just those at the scan root and above (#1847, thanks @Mohak-Agrawal). git applies a `.gitignore` to everything under its own directory, but graphify only loaded ignore files from the VCS-root-down-to-scan-root chain — so a `vendor/sub/.gitignore` deeper in the tree was never read and its exclusions leaked into the graph. Each directory's own ignore files are now read during the walk and anchored to that directory, preserving last-match-wins precedence (nearer files win, including over `.git/info/exclude`) and the parent-exclusion rule.
