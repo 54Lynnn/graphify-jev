@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.15 (2026-07-13)
+
+- Security: fix a stored XSS and broken neighbor links in the exported `graph.html` (#1838, thanks @edgestack-ai). The report's neighbor "focus" links dropped an unescaped `JSON.stringify(nid)` into a double-quoted inline `onclick`. Because the stringified value carries its own quotes, the attribute was truncated on every node — so the links never worked — and a node `id`/`label` containing a double-quote broke out of the attribute and injected live handlers. AST node ids are `[a-z0-9_]`-safe, but ids/labels from documents or from titles scraped via `graphify add <url>` are not, so a hostile source could plant an executable handler into a report opened locally. The id is now carried in an HTML-escaped `data-nid` attribute and dispatched through a single delegated listener, closing the injection and repairing the links.
+
 ## 0.9.14 (2026-07-12)
 
 - Fix: Visual Studio *solution folder* nodes no longer embed the absolute scan path (including the local username) in their `id` and `source_file` (#1789, thanks @fremat79). A solution folder is a virtual grouping, not a file — VS writes its name as both the display name and the "path" — but `extract_sln` resolved it to an absolute filesystem path anyway and keyed the node id off that. The CLI's id-relativization pass only remaps ids of real files in the scan set, so a virtual folder never matched and its absolute id survived into a committed `graph.json` (e.g. `id=/Users/<name>/proj/Plugins` instead of `id=plugins`). Solution folders are now detected (name == path) and keyed off the folder name only; real project files still resolve as before. (The earlier fix covered `.csproj`/`.sln` file nodes but missed the virtual folders — this completes it.)
