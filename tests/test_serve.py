@@ -769,6 +769,65 @@ def test_pick_seeds_diversity_recovers_starved_term(monkeypatch):
     assert "target" in seeds_after
 
 
+# --- generic-symbol seed flooding (#1766) ---
+
+def test_pick_seeds_dedups_homonymous_generic_labels():
+    """Many nodes sharing one generic label (e.g. framework `GET` handlers)
+    must contribute at most ONE seed, not consume every slot (#1766). A
+    distinct, relevant label still gets its own seed."""
+    G = nx.DiGraph()
+    for i in range(5):
+        G.add_node(f"get{i}", label="GET", source_file=f"routes/r{i}.py")
+    G.add_node("um", label="users_model", source_file="models/users.py")
+    # Score all the GET nodes above users_model so, pre-fix, they'd take every slot.
+    scored = [(1000.0, f"get{i}") for i in range(5)] + [(900.0, "um")]
+    seeds = _pick_seeds(scored, G=G)
+    get_seeds = [s for s in seeds if s.startswith("get")]
+    assert len(get_seeds) == 1, f"expected one GET representative, got {get_seeds}"
+    # A different, well-within-gap label is not starved out by the GET flood.
+    assert "um" in seeds
+
+
+def test_pick_seeds_dedup_key_is_case_and_diacritic_normalized():
+    """`GET`/`Get`/`get` are the same generic label and must dedup together."""
+    G = nx.DiGraph()
+    G.add_node("a", label="GET", source_file="a.py")
+    G.add_node("b", label="Get", source_file="b.py")
+    G.add_node("c", label="get", source_file="c.py")
+    scored = [(1000.0, "a"), (990.0, "b"), (980.0, "c")]
+    seeds = _pick_seeds(scored, G=G)
+    assert len(seeds) == 1, f"case-variant duplicates not collapsed: {seeds}"
+
+
+def test_pick_seeds_per_term_guarantee_does_not_reintroduce_generic_dupe(monkeypatch):
+    """The per-term guarantee loop must honor the same per-label cap, so it can't
+    add a second `GET` after dedup already seeded one (#1766)."""
+    G = nx.DiGraph()
+    for i in range(3):
+        G.add_node(f"get{i}", label="GET", source_file=f"r{i}.py")
+    G.add_node("um", label="users_model", source_file="users.py")
+    G.add_edge("um", "get0")
+    scored = _score_nodes(G, ["get", "users"])
+    seeds = _pick_seeds(scored, G=G, terms=["get", "users"])
+    get_seeds = [s for s in seeds if s.startswith("get")]
+    assert len(get_seeds) == 1, f"per-term guarantee reintroduced a GET dupe: {seeds}"
+
+
+def test_score_nodes_scores_identical_labels_equally():
+    """Guard against a per-label multiplicity penalty leaking into _score_nodes
+    (shared by shortest_path / explain endpoint resolution): two nodes with the
+    SAME label must receive the SAME score for a query, i.e. the fix lives in
+    seed selection, not in the shared scorer (#1766 followup)."""
+    G = nx.DiGraph()
+    G.add_node("g1", label="GET", source_file="a.py")
+    G.add_node("g2", label="GET", source_file="b.py")
+    G.add_node("g3", label="GET", source_file="c.py")
+    by_id = {nid: s for s, nid in _score_nodes(G, ["get"])}
+    assert by_id["g1"] == by_id["g2"] == by_id["g3"], (
+        f"identical-label nodes scored differently: {by_id}"
+    )
+
+
 # --- actionable truncation hint (#897) ---
 
 def test_subgraph_to_text_truncation_hint_is_actionable():
