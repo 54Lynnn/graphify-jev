@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.16 (unreleased)
+## 0.9.16 (2026-07-14)
 
 - Fix: semantic extraction now reconciles dispatched files against returned results, so a document the model silently omits is no longer lost without a trace (#1890). A chunk can return a clean, non-empty response that simply leaves out some of the documents it was given; those docs previously produced no node, no warning, and no cache/manifest stamp, so they were re-dispatched and re-omitted on every run. `extract_corpus_parallel` now diffs the dispatched file set against the `source_file`s that came back, records the gap in `uncovered_files`, and prints a loud warning listing the omitted files. (This is the visibility guard; routing documents through the deterministic extractor so they always get at least a file node is tracked separately.)
 
