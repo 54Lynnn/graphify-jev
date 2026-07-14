@@ -52,6 +52,50 @@ _GEMINI_NUDGE_TEXT = (
 
 def _default_graph_path() -> str:
     return str(Path(_GRAPHIFY_OUT) / "graph.json")
+
+
+def _stamped_manifest_files(
+    files_by_type: dict[str, list[str]],
+    sem_result: dict,
+    root: Path,
+) -> dict[str, list[str]]:
+    """Manifest-safe files dict: only stamp semantic files that actually
+    produced output (cache hit or fresh extraction). Files whose chunk failed
+    have no source_file entry in sem_result — leaving their semantic_hash
+    empty so detect_incremental re-queues them (#933).
+
+    Both sides of the membership test are resolved against the scan ``root``
+    before comparing (#1897): node/edge ``source_file`` values are
+    root-relative on a fresh extraction while ``files_by_type`` entries are
+    absolute (from detect()), so a raw string comparison never matched and
+    every freshly-extracted semantic doc was dropped from the manifest.
+    Mirrors the #1890 path normalization in graphify.llm.
+    """
+    root = Path(root)
+
+    def _resolve(value: str) -> Path:
+        p = Path(value)
+        if not p.is_absolute():
+            p = root / p
+        try:
+            return p.resolve()
+        except (OSError, RuntimeError):
+            return p
+
+    sem_extracted: set[Path] = set()
+    for coll in ("nodes", "edges"):
+        for item in sem_result.get(coll, []):
+            sf = item.get("source_file", "")
+            if sf:
+                sem_extracted.add(_resolve(sf))
+    sem_types = {"document", "paper", "image"}
+    return {
+        ftype: [
+            f for f in flist
+            if ftype not in sem_types or _resolve(f) in sem_extracted
+        ]
+        for ftype, flist in files_by_type.items()
+    }
 class _StageTimer:
     """Print per-stage wall-clock timings to stderr when --timing is set (#1490).
 
@@ -2438,17 +2482,10 @@ def dispatch_command(cmd: str) -> None:
         # that actually produced output (cache hit or fresh extraction). Files
         # whose chunk failed have no source_file entry in sem_result — leaving
         # their semantic_hash empty so detect_incremental re-queues them (#933).
-        _sem_extracted: set[str] = {
-            n.get("source_file", "") for n in sem_result.get("nodes", [])
-        } | {
-            e.get("source_file", "") for e in sem_result.get("edges", [])
-        }
-        _sem_extracted.discard("")
-        _sem_types = {"document", "paper", "image"}
-        _manifest_files = {
-            ftype: [f for f in flist if ftype not in _sem_types or f in _sem_extracted]
-            for ftype, flist in files_by_type.items()
-        }
+        # Path normalization against the scan root happens inside the helper
+        # (#1897) so fresh root-relative source_files match detect()'s
+        # absolute file lists.
+        _manifest_files = _stamped_manifest_files(files_by_type, sem_result, target)
 
         if no_cluster:
             # --no-cluster: dump the raw merged extraction as graph.json.
