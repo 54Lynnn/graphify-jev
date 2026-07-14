@@ -2,6 +2,17 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.17 (unreleased)
+
+- Security/privacy follow-up: nodes whose `source_file` was never dispatched are now dropped from the graph, not just skipped from the cache (#1895). The #1757 guard stopped a mis-attributed node from clobbering another file's cache entry, but the node itself still flowed into `graph.json`; it is now filtered out of the merged result (real-file, non-dispatched attributions only), consistent with the cache rejection.
+- Fix: `manifest.json` now records every successfully-extracted file, not just the zero-node ones (#1897). The #933 stamping filter compared root-relative node `source_file`s against absolute `detect()` paths, so it dropped every freshly-extracted semantic document from the manifest and broke the incremental-update baseline. Both sides are now resolved before comparison; genuinely omitted/zero-node docs stay unstamped so they retry.
+- Fix: `graphify hook install` now registers the `graph.json` union merge driver that the README and CHANGELOG have long documented (#1902). It writes the `merge.graphify` config via `git config` and an idempotent, append-only `graphify-out/graph.json merge=graphify` line in `.gitattributes`; `uninstall` removes them.
+- Fix: `hook install`/`status` no longer print a spurious "could not read core.hooksPath" warning on repos whose `.git/config` contains git-legal duplicate keys (VS Code writes these) (#1907). Config is now resolved via `git rev-parse --git-path hooks` instead of a strict `configparser`, which rejected duplicate keys.
+- Fix: `graphify export obsidian` prunes notes for nodes that left the graph instead of merging old and new on re-export (#1896). Only notes graphify itself wrote (tracked in its ownership manifest) are removed, with a vault-containment guard, so user-authored notes are never touched.
+- Fix: non-English query sentences no longer pick wrong BFS seeds because their filler words were unfiltered (#1900). The query stopword set now covers German and the major Romance languages (curated to avoid clobbering English content words), so `Wie funktioniert die Authentifizierung?` seeds the keyword, not the stopwords.
+- Fix: Python calls to an imported module now resolve (already shipped in 0.9.16); `.skill` files (Markdown-with-frontmatter agent files) are now classified as documents instead of being silently dropped as an unsupported extension (#1901).
+- Fix: the `--postgres` missing-driver error now points at the correct PyPI package, `graphifyy[postgres]` (was the nonexistent `graphify[postgres]`) (#1906).
+
 ## 0.9.16 (2026-07-14)
 
 - Fix: semantic extraction now reconciles dispatched files against returned results, so a document the model silently omits is no longer lost without a trace (#1890). A chunk can return a clean, non-empty response that simply leaves out some of the documents it was given; those docs previously produced no node, no warning, and no cache/manifest stamp, so they were re-dispatched and re-omitted on every run. `extract_corpus_parallel` now diffs the dispatched file set against the `source_file`s that came back, records the gap in `uncovered_files`, and prints a loud warning listing the omitted files. (This is the visibility guard; routing documents through the deterministic extractor so they always get at least a file node is tracked separately.)
