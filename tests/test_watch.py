@@ -219,6 +219,38 @@ def test_update_rebuilds_with_nested_star_gitignore(tmp_path):
     assert not any("scratch/junk.py" in s for s in sources)
 
 
+def test_update_discovers_newly_added_files_and_dirs(tmp_path):
+    """#1837: after an initial build, a plain `graphify update` (full re-scan, no
+    change-list) must discover brand-new files AND new directories. The reported
+    silent no-op was the #1873 nested-gitignore scoping bug zeroing the re-scan;
+    this pins the build -> add -> update -> discovered sequence the earlier test
+    (single build) did not cover, with a nested `*` scratch dir as a guard."""
+    import json
+    from graphify.watch import _rebuild_code
+
+    corpus = tmp_path / "corpus"
+    (corpus / "src").mkdir(parents=True)
+    (corpus / "src" / "a.py").write_text("def alpha(): return 1\n", encoding="utf-8")
+    assert _rebuild_code(corpus, acquire_lock=False) is True
+
+    # Add a brand-new file and a brand-new nested directory after the first build,
+    # plus a scratch dir that ignores only itself.
+    (corpus / "src" / "new.py").write_text("def added(): return 2\n", encoding="utf-8")
+    (corpus / "monitor").mkdir()
+    (corpus / "monitor" / "dash.py").write_text("def board(): return 3\n", encoding="utf-8")
+    (corpus / "scratch").mkdir()
+    (corpus / "scratch" / ".gitignore").write_text("*\n", encoding="utf-8")
+    (corpus / "scratch" / "junk.py").write_text("x = 1\n", encoding="utf-8")
+
+    assert _rebuild_code(corpus, acquire_lock=False) is True
+
+    sources = {n.get("source_file", "") for n in
+               json.loads((corpus / "graphify-out" / "graph.json").read_text())["nodes"]}
+    assert any("src/new.py" in s for s in sources), "new file not discovered by update (#1837)"
+    assert any("monitor/dash.py" in s for s in sources), "new directory not discovered (#1837)"
+    assert not any("scratch/junk.py" in s for s in sources)
+
+
 def test_rebuild_honors_persisted_excludes(tmp_path):
     """#1886: `--exclude` recorded at extract time must survive into update/watch/
     hook rebuilds. Before the fix only the initial scan applied the excludes, so
