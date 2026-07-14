@@ -2162,9 +2162,9 @@ def _resolve_python_member_calls(
         tnode = node_by_id.get(tgt)
         if tnode is not None:
             method_index[(src, _key(tnode.get("label", "")))] = tgt
-    if not class_def_nids:
-        return
-    # A class with N methods produced N entries; collapse to a unique set.
+    # A class with N methods produced N entries; collapse to a unique set. (No
+    # early return when there are no classes: the module arm below resolves
+    # `module.func()` where the callable is a plain function, not a method.)
     for k in list(class_def_nids):
         class_def_nids[k] = sorted(set(class_def_nids[k]))
 
@@ -2172,35 +2172,46 @@ def _resolve_python_member_calls(
     for result in per_file:
         all_raw_calls.extend(result.get("raw_calls", []))
 
+    # Module-alias arm index (#1883): `module.func()` where `module` is imported.
+    # Key on stable node ids, not source_file strings (source_file is relativized
+    # by the CLI id-remap pass but raw_calls keep their original path, so a string
+    # join would miss under an explicit cache_root). The `imports` edge's source
+    # is the caller's own file node; `contains` maps a file node to its children.
+    contains_children: dict[str, dict[str, list[str]]] = {}
+    file_of_node: dict[str, str] = {}
+    for e in all_edges:
+        if e.get("relation") == "contains":
+            src, tgt = e.get("source"), e.get("target")
+            tnode = node_by_id.get(tgt)
+            if tnode is not None:
+                contains_children.setdefault(src, {}).setdefault(
+                    _key(tnode.get("label", "")), []).append(tgt)
+                file_of_node[tgt] = src
+    imported_by_filenode: dict[str, set[str]] = {}
+    for e in all_edges:
+        if e.get("relation") in ("imports", "imports_from"):
+            imported_by_filenode.setdefault(e.get("source"), set()).add(e.get("target"))
+
+    def _module_stem_key(nid: str) -> str:
+        n = node_by_id.get(nid)
+        if not n:
+            return ""
+        sf = n.get("source_file") or ""
+        stem = Path(sf).stem if sf else ""
+        return _key(stem or n.get("label", ""))
+
     existing_pairs = {(e.get("source"), e.get("target")) for e in all_edges}
-    for rc in all_raw_calls:
-        if not rc.get("is_member_call"):
-            continue
-        receiver = rc.get("receiver")
-        callee = rc.get("callee")
-        caller = rc.get("caller_nid")
-        if not receiver or not callee or not caller:
-            continue
-        # Only a capitalized receiver is treated as a class reference, so an
-        # instance/module (`self`, `obj`, `config`) never collides with a
-        # same-spelled class via the case-folding key.
-        if not receiver[:1].isupper():
-            continue
-        class_nids = class_def_nids.get(_key(receiver), [])
-        if len(class_nids) != 1:  # absent or ambiguous -> bail (god-node guard)
-            continue
-        method_nid = method_index.get((class_nids[0], _key(callee)))
-        if not method_nid or method_nid == caller:
-            continue
-        if (caller, method_nid) in existing_pairs:
-            continue
-        existing_pairs.add((caller, method_nid))
-        # EXTRACTED: a qualified `ClassName.method()` is an explicit, unambiguous
-        # static reference (unlike a bare instance member call), and the class
-        # resolved to exactly one definition that owns the method.
+
+    def _emit_call(caller: str, target_nid: "str | None", rc: dict) -> None:
+        if not target_nid or target_nid == caller or (caller, target_nid) in existing_pairs:
+            return
+        existing_pairs.add((caller, target_nid))
+        # EXTRACTED: a qualified call (`ClassName.method()` or `module.func()`) is
+        # an explicit, unambiguous static reference resolved to exactly one
+        # definition (each arm applies a single-definition god-node guard).
         all_edges.append({
             "source": caller,
-            "target": method_nid,
+            "target": target_nid,
             "relation": "calls",
             "context": "call",
             "confidence": "EXTRACTED",
@@ -2209,6 +2220,37 @@ def _resolve_python_member_calls(
             "source_location": rc.get("source_location"),
             "weight": 1.0,
         })
+
+    for rc in all_raw_calls:
+        if not rc.get("is_member_call"):
+            continue
+        receiver = rc.get("receiver")
+        callee = rc.get("callee")
+        caller = rc.get("caller_nid")
+        if not receiver or not callee or not caller:
+            continue
+        if receiver[:1].isupper():
+            # Class arm (#1446): a capitalized receiver is a class reference; an
+            # instance (`self`, `obj`) never collides with a same-spelled class.
+            class_nids = class_def_nids.get(_key(receiver), [])
+            if len(class_nids) != 1:  # absent or ambiguous -> bail (god-node guard)
+                continue
+            _emit_call(caller, method_index.get((class_nids[0], _key(callee))), rc)
+        else:
+            # Module arm (#1883): a lowercase receiver may be an imported module.
+            # Resolve it against the modules imported into the caller's own file
+            # (so `self`/`obj`/local instances, which are not imported modules,
+            # never match), then to the single callable that module contains.
+            rkey = _key(receiver)
+            caller_file = file_of_node.get(caller)
+            mods = [t for t in imported_by_filenode.get(caller_file, ())
+                    if t in contains_children and _module_stem_key(t) == rkey]
+            if len(mods) != 1:  # not an imported module, or ambiguous -> bail
+                continue
+            children = contains_children[mods[0]].get(_key(callee), [])
+            if len(children) != 1:  # absent or ambiguous callable -> bail
+                continue
+            _emit_call(caller, children[0], rc)
 
 
 def _resolve_typescript_member_calls(
