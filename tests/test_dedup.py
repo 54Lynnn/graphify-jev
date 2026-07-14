@@ -513,6 +513,35 @@ def test_same_file_relabel_is_noted(capsys):
     assert "WARNING" not in captured.err
 
 
+def test_collision_survivor_is_order_independent():
+    """#1851: definer + same-file relabel + cross-file reference. Across every
+    insertion order the SAME node (source_file AND label) must survive — the
+    definer heuristic alone left the label order-dependent among co-definers."""
+    import itertools
+    nid = "agents_make_batch_fixtures_make_batch_fixtures"
+    definer = {"id": nid, "label": "make-batch-fixtures agent",
+               "file_type": "concept", "source_file": "agents/make-batch-fixtures.md"}
+    relabel = {"id": nid, "label": "make-batch-fixtures helper agent",
+               "file_type": "concept", "source_file": "agents/make-batch-fixtures.md"}
+    xref = {"id": nid, "label": "make-batch-fixtures", "file_type": "concept",
+            "source_file": "available/diagnose-issue/SKILL.md"}
+    survivors = set()
+    for perm in itertools.permutations([definer, relabel, xref]):
+        out, _ = deduplicate_entities([dict(n) for n in perm], [], communities={})
+        assert len(out) == 1
+        survivors.add((out[0]["source_file"], out[0]["label"]))
+    assert survivors == {("agents/make-batch-fixtures.md", "make-batch-fixtures agent")}, (
+        f"non-deterministic collision survivor: {survivors}"
+    )
+
+
+def test_bare_file_node_defines_its_own_id():
+    """A file-level semantic node whose id is exactly the slugified path (no
+    `_entity` suffix) must be recognised as defining its id (#1851 tweak)."""
+    assert _defines_id({"id": "agents_make_batch_fixtures",
+                        "source_file": "agents/make-batch-fixtures.md"})
+
+
 def test_defines_id_helper():
     assert _defines_id(_DEFINING)
     assert not _defines_id(_REFERENCING)

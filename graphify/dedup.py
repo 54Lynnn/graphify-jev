@@ -218,7 +218,30 @@ def _defines_id(node: dict) -> bool:
     source_file = node.get("source_file") or ""
     if not nid or not source_file:
         return False
-    return any(nid.startswith(f"{prefix}_") for prefix in _id_prefixes(source_file))
+    # `nid == prefix` covers a bare file-level node whose id is exactly the
+    # slugified path with no `_entity` suffix (a semantic node for the file
+    # itself); `startswith(prefix + "_")` covers the usual `<path>_<entity>` id.
+    return any(nid == prefix or nid.startswith(f"{prefix}_")
+               for prefix in _id_prefixes(source_file))
+
+
+def _collision_rank(node: dict) -> tuple:
+    """A total order for choosing the survivor of an ID collision, independent of
+    the order the colliding nodes arrive in.
+
+    The winner is the node with the SMALLEST rank. A node whose ``source_file``
+    defines the ID always outranks a mere reference; among equally-(non-)defining
+    nodes it prefers the shorter, more canonical label over a longer qualified
+    variant, then breaks any remaining tie lexically on label and then source_file
+    (so the lexically-first path wins) — fully deterministic regardless of order.
+    """
+    label = node.get("label") or ""
+    return (
+        not _defines_id(node),  # definers (False) sort before references (True)
+        len(label),             # shorter, more canonical label first
+        label,                  # lexical tiebreak
+        node.get("source_file") or "",  # lexically-first source path wins
+    )
 
 
 def _report_id_collision(nid: str, survivor: dict, losers: list[dict]) -> None:
@@ -304,7 +327,10 @@ def deduplicate_entities(
         incumbent = seen_ids.get(nid)
         if incumbent is None:
             seen_ids[nid] = node
-        elif _defines_id(node) and not _defines_id(incumbent):
+        elif _collision_rank(node) < _collision_rank(incumbent):
+            # Smallest-ranked node wins; the min over a total order is independent
+            # of the order nodes arrive in, so the survivor no longer depends on
+            # chunk ordering (#1851).
             seen_ids[nid] = node
             dropped[nid].append(incumbent)
         else:
