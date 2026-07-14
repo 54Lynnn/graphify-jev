@@ -360,6 +360,92 @@ def test_omitted_documents_are_reconciled_and_warned(tmp_path, capsys):
     assert "produced no nodes" in err and "doc1.md" in err
 
 
+def test_out_of_scope_nodes_are_dropped_from_merged_result(tmp_path, capsys):
+    """#1895: the #1757 cache guard skips the CACHE write for a node attributed
+    to a real corpus file that was not dispatched, but the node itself still
+    flowed into merged["nodes"] and landed in graph.json. The merged result must
+    drop such nodes (and edges/hyperedges touching them), warn once, and record
+    the count — while keeping in-scope sibling attributions (a node attributed
+    to a different dispatched file in the same chunk) and non-file concept
+    source_files, mirroring the #1757 `.is_file()` condition."""
+    from graphify.llm import extract_corpus_parallel
+
+    a = tmp_path / "A.md"; a.write_text("# a\n")
+    c = tmp_path / "C.md"; c.write_text("# c\n")
+    # B.py exists on disk but is NOT dispatched — the #1895 out-of-scope case.
+    b = tmp_path / "B.py"; b.write_text("def b(): pass\n")
+
+    def stray(chunk, **kwargs):
+        return {
+            "nodes": [
+                {"id": "a_ok", "source_file": "A.md", "file_type": "document"},
+                # sibling attribution: a different dispatched file in the same chunk
+                {"id": "c_sibling", "source_file": "C.md", "file_type": "document"},
+                # out-of-scope: real file on disk, never dispatched
+                {"id": "b_stray", "source_file": "B.py", "file_type": "code"},
+                # concept node: source_file is not a file — must survive
+                {"id": "auth_flow", "source_file": "auth flow", "file_type": "concept"},
+            ],
+            "edges": [
+                {"source": "a_ok", "target": "c_sibling", "source_file": "A.md"},
+                {"source": "a_ok", "target": "b_stray", "source_file": "A.md"},
+            ],
+            "hyperedges": [
+                {"id": "h_bad", "nodes": ["a_ok", "c_sibling", "b_stray"], "source_file": "A.md"},
+                {"id": "h_ok", "nodes": ["a_ok", "c_sibling", "auth_flow"], "source_file": "A.md"},
+            ],
+            "input_tokens": 1, "output_tokens": 1,
+        }
+
+    with patch("graphify.llm.extract_files_direct", side_effect=stray):
+        result = extract_corpus_parallel(
+            [a, c], backend="kimi", root=tmp_path,
+            token_budget=None, chunk_size=2, max_concurrency=1,
+        )
+
+    ids = {n["id"] for n in result["nodes"]}
+    assert "b_stray" not in ids, "out-of-scope node leaked into the merged graph (#1895)"
+    assert {"a_ok", "c_sibling", "auth_flow"} <= ids, (
+        f"in-scope sibling/concept attributions must be kept: {ids}"
+    )
+    assert result["out_of_scope_dropped"] == 1
+    # Edges/hyperedges referencing the dropped node id are gone; in-scope ones stay.
+    assert all(
+        "b_stray" not in (e.get("source"), e.get("target")) for e in result["edges"]
+    ), f"edge to dropped node survived: {result['edges']}"
+    assert any(
+        e["source"] == "a_ok" and e["target"] == "c_sibling" for e in result["edges"]
+    )
+    assert [h["id"] for h in result["hyperedges"]] == ["h_ok"]
+    err = capsys.readouterr().err
+    assert "out-of-scope" in err and "B.py" in err
+    # The dispatched files all produced nodes — reconciliation sees no gaps.
+    assert result["uncovered_files"] == []
+
+
+def test_out_of_scope_drop_count_is_zero_when_all_in_scope(tmp_path, capsys):
+    """Counter-test: a clean run records out_of_scope_dropped == 0 and no warning."""
+    from graphify.llm import extract_corpus_parallel
+
+    a = tmp_path / "A.md"; a.write_text("# a\n")
+
+    def clean(chunk, **kwargs):
+        return {
+            "nodes": [{"id": "a_ok", "source_file": "A.md", "file_type": "document"}],
+            "edges": [], "hyperedges": [], "input_tokens": 1, "output_tokens": 1,
+        }
+
+    with patch("graphify.llm.extract_files_direct", side_effect=clean):
+        result = extract_corpus_parallel(
+            [a], backend="kimi", root=tmp_path,
+            token_budget=None, chunk_size=1, max_concurrency=1,
+        )
+
+    assert result["out_of_scope_dropped"] == 0
+    assert [n["id"] for n in result["nodes"]] == ["a_ok"]
+    assert "out-of-scope" not in capsys.readouterr().err
+
+
 def test_checkpoint_caches_sliced_document_chunks(tmp_path, capsys):
     """#1870: the checkpoint's allowlist must resolve a FileSlice to its parent
     path (via unit_path), not read a non-existent `.rel`. An oversized doc is

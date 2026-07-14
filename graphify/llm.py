@@ -1994,6 +1994,72 @@ def extract_corpus_parallel(
     # they are silently re-dispatched (and re-omitted) forever. Diff the files we
     # dispatched against the source_files that actually came back and surface the gap.
     dispatched = {unit_path(f) for chunk in chunks for f in chunk}
+
+    # Out-of-scope node filter (#1895). The #1757 cache guard already refuses
+    # to WRITE a cache entry for a node whose source_file is a real file that
+    # was not dispatched, but the node itself still flowed into the merged
+    # result and landed in graph.json. Mirror the #1757 condition here: resolve
+    # each source_file against root and drop the node only when it resolves to
+    # an existing file (.is_file()) outside the dispatched set — non-file
+    # source_files (concepts, model-invented anchors) pass through untouched.
+    # Runs BEFORE the #1890 covered/uncovered reconciliation so that diff
+    # reflects the post-filter graph.
+    def _resolve_against_root(value: "str | Path") -> Path:
+        p = Path(value)
+        if not p.is_absolute():
+            p = root / p
+        try:
+            return p.resolve()
+        except (OSError, RuntimeError):
+            return p
+
+    _dispatched_resolved = {_resolve_against_root(p) for p in dispatched}
+
+    def _out_of_scope(item: dict) -> bool:
+        sf = item.get("source_file")
+        if not sf:
+            return False
+        p = _resolve_against_root(sf)
+        return p.is_file() and p not in _dispatched_resolved
+
+    dropped_ids: set = set()
+    dropped_files: set[str] = set()
+    kept_nodes: list[dict] = []
+    for n in merged.get("nodes", []):
+        if _out_of_scope(n):
+            if n.get("id") is not None:
+                dropped_ids.add(n.get("id"))
+            dropped_files.add(str(n.get("source_file")))
+            continue
+        kept_nodes.append(n)
+    dropped_node_count = len(merged.get("nodes", [])) - len(kept_nodes)
+    merged["out_of_scope_dropped"] = dropped_node_count
+    if dropped_node_count:
+        merged["nodes"] = kept_nodes
+        # Keep the graph consistent: an edge or hyperedge referencing a
+        # dropped node's id (or itself attributed to an undispatched real
+        # file) must not survive its endpoint.
+        merged["edges"] = [
+            e for e in merged.get("edges", [])
+            if not _out_of_scope(e)
+            and e.get("source") not in dropped_ids
+            and e.get("target") not in dropped_ids
+        ]
+        merged["hyperedges"] = [
+            h for h in merged.get("hyperedges", [])
+            if not _out_of_scope(h)
+            and not (dropped_ids & set(h.get("nodes", []) or []))
+        ]
+        shown = ", ".join(sorted(Path(f).name for f in dropped_files)[:5])
+        more = f" (+{len(dropped_files) - 5} more)" if len(dropped_files) > 5 else ""
+        print(
+            f"[graphify] WARNING: dropped {dropped_node_count} out-of-scope node(s) "
+            f"attributed to file(s) not dispatched for extraction: {shown}{more}. "
+            "The model mis-attributed them to another corpus file; they were "
+            "excluded from the graph (#1895).",
+            file=sys.stderr,
+        )
+
     covered: set[Path] = set()
     for n in merged.get("nodes", []):
         sf = n.get("source_file")
