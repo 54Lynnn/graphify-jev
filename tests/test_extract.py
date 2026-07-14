@@ -970,6 +970,23 @@ def test_python_qualified_class_method_call_resolves_extracted(tmp_path):
     assert call_edges[0]["confidence"] == "EXTRACTED"
 
 
+def test_degenerate_symbol_name_does_not_leak_absolute_id(tmp_path):
+    """#1899 variant B: a symbol whose name normalizes to nothing (a minified `$`
+    function, a JSONC `"//"` key) must not be minted — `_make_id(stem, "")`
+    collapses to the bare, absolute-path-derived file stem, leaking the scan path
+    and colliding with the file node. Such nodes carry no graph signal."""
+    (tmp_path / "vendor.js").write_text(
+        "function $(){return 1}\nfunction real(){return 2}\n", encoding="utf-8"
+    )
+    result = extract([tmp_path / "vendor.js"], cache_root=tmp_path)
+    marker = str(tmp_path)
+    for n in result["nodes"]:
+        assert marker not in n["id"], f"absolute path leaked into id: {n}"
+    labels = {n.get("label") for n in result["nodes"]}
+    assert "real()" in labels, "the real function must still be extracted"
+    assert "$()" not in labels, "the degenerate `$` symbol must be dropped (#1899)"
+
+
 def test_python_module_qualified_call_resolves_extracted(tmp_path):
     """`module.func()` where `module` is imported resolves to the callable that
     module contains, with an EXTRACTED `calls` edge (#1883). A lowercase module

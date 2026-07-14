@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 from graphify.extractors.base import _LANGUAGE_BUILTIN_GLOBALS, _file_stem, _make_id, _read_text
+from graphify.ids import normalize_id
 from graphify.extractors.models import LanguageConfig
 from graphify.extractors.resolution import _resolve_js_import_target
 from graphify.security import sanitize_metadata
@@ -1760,6 +1761,11 @@ def _js_extra_walk(node, source: bytes, file_nid: str, stem: str, str_path: str,
                         if name_node:
                             func_name = _read_text(name_node, source)
                             line = child.start_point[0] + 1
+                            # A name that normalizes to nothing (e.g. minified `$`)
+                            # would collapse the id to the absolute file-stem and
+                            # leak the scan path (#1899); skip it (no graph signal).
+                            if not normalize_id(func_name):
+                                continue
                             func_nid = _make_id(stem, func_name)
                             add_node_fn(func_nid, f"{func_name}()", line)
                             add_edge_fn(file_nid, func_nid, "contains", line)
@@ -3123,6 +3129,11 @@ def _extract_generic(
                 func_name = _read_text(name_node, source) if name_node else None
 
             if not func_name:
+                return
+            # A name that normalizes to nothing collapses `_make_id(prefix, name)`
+            # onto the (absolute-path-derived) prefix, leaking the scan path and
+            # colliding with the file/class node (#1899). No graph signal; skip.
+            if not normalize_id(func_name):
                 return
 
             line = node.start_point[0] + 1

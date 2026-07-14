@@ -4891,7 +4891,31 @@ def extract(
     # a new language plugs in without editing this body (#1356 Swift, #1446 Python).
     run_language_resolvers(paths, per_file, all_nodes, all_edges)
 
-    # Relativize source_file fields so paths are portable across machines (#555)
+    # Relativize source_file fields so paths are portable across machines (#555).
+    # A target OUTSIDE the scan root (an out-of-root ProjectReference/.sln/bash
+    # `source`) can't be made relative to root; leaving it absolute leaked the
+    # scan path including the OS username into a committed graph.json (#1899).
+    # Fall back to a walk-up relative form, or the bare basename when that would
+    # still embed foreign path segments (a far-away or cross-drive target). When
+    # the node's id was itself minted from the absolute path, remap it to a
+    # portable id and rewrite the edge endpoints that reference it.
+    def _portable_out_of_root_sf(p: Path) -> str:
+        try:
+            rel = os.path.relpath(str(p), str(root)).replace("\\", "/")
+        except ValueError:
+            return p.name  # different Windows drive: no relative path exists
+        updepth = 0
+        for seg in rel.split("/"):
+            if seg == "..":
+                updepth += 1
+            else:
+                break
+        # More than a couple of walk-ups means the target lives well outside the
+        # corpus; its ancestor dirs would embed foreign (possibly user-named)
+        # segments, so collapse to the basename.
+        return p.name if updepth > 3 else rel
+
+    ext_id_remap: dict[str, str] = {}
     for item in all_nodes + all_edges:
         sf = item.get("source_file")
         if not sf:
@@ -4901,8 +4925,24 @@ def extract(
             continue
         try:
             item["source_file"] = sf_path.relative_to(root).as_posix()
+            continue
         except ValueError:
             pass
+        portable = _portable_out_of_root_sf(sf_path)
+        # A node whose id was minted from this absolute path also leaks it.
+        if "id" in item and item.get("id") == _make_id(str(sf_path)):
+            ext_id_remap[item["id"]] = _make_id("ext", portable)
+        item["source_file"] = portable
+
+    if ext_id_remap:
+        for n in all_nodes:
+            if n.get("id") in ext_id_remap:
+                n["id"] = ext_id_remap[n["id"]]
+        for e in all_edges:
+            if e.get("source") in ext_id_remap:
+                e["source"] = ext_id_remap[e["source"]]
+            if e.get("target") in ext_id_remap:
+                e["target"] = ext_id_remap[e["target"]]
 
     # origin_file is an internal disambiguation hint (#1462): the colliding-id pass
     # above reads it to keep same-named cross-file stubs distinct, after which nothing

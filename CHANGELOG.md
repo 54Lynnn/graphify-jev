@@ -4,6 +4,8 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## 0.9.16 (unreleased)
 
+- Fix: close two residual paths where an absolute scan path (including the OS username) still leaked into a committed `graph.json`, completing #1789 (#1899). (a) A reference target outside the scan root (an out-of-root `.csproj` ProjectReference, `.sln` project, or bash `source`) kept its absolute `source_file` and an absolute-derived id, because the relativization post-passes silently skipped anything `relative_to(root)` could not handle; such targets now get a portable walk-up relative path and an `ext_`-namespaced id (bare basename when the target is far outside the corpus or on another drive). (b) A symbol whose name normalizes to nothing (a minified `$` function, a JSONC `"//"` comment key) collapsed `_make_id(stem, name)` down to the bare absolute file stem; those no-signal symbols are now skipped at mint time.
+
 - Fix: uppercase TypeScript extensions (`.TS`/`.TSX`/`.MTS`/`.CTS`) are now parsed with the TypeScript grammar instead of falling through to the JavaScript grammar, which silently dropped interfaces and type aliases (#1881, thanks @xkam7ar). Detection and dispatch already lowercased, but the grammar selection inside `extract_js` compared the suffix case-sensitively.
 
 - Fix: Kotlin builtin/stdlib types (`String`, `Int`, `List`, ...) are no longer emitted as `references` edges, matching the existing Java/Python/Go builtin filtering (#1876, thanks @kebwlmbhee). They created false coupling and split clusters on real projects. User types that legitimately share a name (`Result`, framework types) are deliberately not filtered, consistent with the other languages.
