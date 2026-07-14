@@ -1987,6 +1987,33 @@ def extract_corpus_parallel(
             " — see errors above. Partial results returned.",
             file=sys.stderr,
         )
+
+    # Dispatch/return reconciliation (#1890). A chunk can return a clean, non-empty
+    # response that simply omits some of the documents it was given; those docs then
+    # vanish from the graph with no node, no warning, and no cache/manifest stamp, so
+    # they are silently re-dispatched (and re-omitted) forever. Diff the files we
+    # dispatched against the source_files that actually came back and surface the gap.
+    dispatched = {unit_path(f) for chunk in chunks for f in chunk}
+    covered: set[Path] = set()
+    for n in merged.get("nodes", []):
+        sf = n.get("source_file")
+        if sf:
+            p = Path(sf)
+            covered.add(p if p.is_absolute() else (root / p))
+    uncovered = sorted(
+        p for p in dispatched
+        if p.resolve() not in {c.resolve() for c in covered}
+    )
+    merged["uncovered_files"] = [str(p) for p in uncovered]
+    if uncovered:
+        shown = ", ".join(p.name for p in uncovered[:5])
+        more = f" (+{len(uncovered) - 5} more)" if len(uncovered) > 5 else ""
+        print(
+            f"[graphify] WARNING: {len(uncovered)}/{len(dispatched)} dispatched file(s) "
+            f"produced no nodes and are absent from the graph: {shown}{more}. The model "
+            "returned a response but omitted them; a re-run will retry them.",
+            file=sys.stderr,
+        )
     return merged
 
 
