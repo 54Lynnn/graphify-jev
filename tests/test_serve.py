@@ -364,6 +364,39 @@ def test_query_terms_all_stopwords_falls_back_to_unfiltered():
     assert _query_terms("how does it work") == ["how", "does", "work"]
 
 
+def test_query_terms_drops_german_question_stopwords():
+    # #1900: German full-sentence queries must reduce to the content noun.
+    # In a mostly-English corpus "wie"/"funktioniert" are rare, get high IDF
+    # weight, and out-seed the actual keyword unless dropped here.
+    assert _query_terms("Wie funktioniert die Authentifizierung?") == ["authentifizierung"]
+
+
+def test_query_terms_all_german_stopwords_falls_back_to_unfiltered():
+    # Existing all-stopword fallback applies to German fillers too: the query
+    # keeps its terms rather than seeding on nothing.
+    terms = _query_terms("wie funktioniert das")
+    assert terms == ["wie", "funktioniert", "das"]
+
+
+def test_pick_seeds_german_query_seeds_content_node_not_heading_noise():
+    """End-to-end for #1900: a German question over a graph with German
+    heading-noise nodes must seed on the content noun, not on nodes that
+    happen to contain 'die'/'wie'/'wird'."""
+    G = nx.DiGraph()
+    G.add_node("cfg", label="Die Konfiguration", source_file="docs/konfiguration.md")
+    G.add_node("sec", label="Wie wird gesichert", source_file="docs/sicherheit.md")
+    G.add_node("auth", label="Authentifizierung", source_file="src/auth.py")
+    G.add_node("helper", label="login_helper", source_file="src/auth.py")
+    G.add_edge("helper", "auth")
+
+    q = "Wie funktioniert die Authentifizierung?"
+    terms = _query_terms(q)
+    seeds = _pick_seeds(_score_nodes(G, terms), G=G, terms=terms)
+    assert "auth" in seeds
+    assert "cfg" not in seeds
+    assert "sec" not in seeds
+
+
 def test_query_terms_filters_only_short_english_terms(monkeypatch):
     import graphify.serve as serve_mod
 
