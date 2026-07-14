@@ -188,6 +188,37 @@ def test_rebuild_code_writes_community_name(tmp_path):
     )
 
 
+def test_update_rebuilds_with_nested_star_gitignore(tmp_path):
+    """#1880: `graphify update` must not emit 0 nodes (and then refuse to
+    overwrite) just because the source tree has a nested `.gitignore` with a
+    broad pattern. This was the 0.9.15 symptom of the #1847/#1873 subtree-scoping
+    bug: a nested bare `*` zeroed the re-scan, update built 0 nodes, and the
+    shrink-guard refused. With scoping fixed the rebuild sees the real files."""
+    import json
+    from graphify.watch import _rebuild_code
+
+    corpus = tmp_path / "corpus"
+    (corpus / "src").mkdir(parents=True)
+    (corpus / "src" / "a.py").write_text(
+        "from src.b import Base\nclass App(Base):\n    def run(self): return 1\n", encoding="utf-8"
+    )
+    (corpus / "src" / "b.py").write_text("class Base: pass\n", encoding="utf-8")
+    (corpus / "main.py").write_text("def top(): return 2\n", encoding="utf-8")
+    # a common scratch-dir idiom deeper in the tree: ignore everything HERE only
+    (corpus / "scratch").mkdir()
+    (corpus / "scratch" / ".gitignore").write_text("*\n", encoding="utf-8")
+    (corpus / "scratch" / "junk.py").write_text("x = 1\n", encoding="utf-8")
+
+    assert _rebuild_code(corpus, acquire_lock=False) is True
+
+    graph = json.loads((corpus / "graphify-out" / "graph.json").read_text(encoding="utf-8"))
+    sources = {n.get("source_file", "") for n in graph["nodes"]}
+    assert graph["nodes"], "update produced 0 nodes on a tree with a nested '*' gitignore (#1880)"
+    assert any("src/a.py" in s for s in sources) and any("main.py" in s for s in sources)
+    # the nested-ignored scratch file stays out (scoped correctly, not tree-wide)
+    assert not any("scratch/junk.py" in s for s in sources)
+
+
 def test_graphify_root_preserves_absolute_when_user_supplied(tmp_path):
     """When the caller supplies an absolute path, ``.graphify_root`` stores
     that absolute form verbatim — preserving explicit-absolute intent."""
