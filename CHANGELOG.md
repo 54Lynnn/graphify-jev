@@ -4,6 +4,12 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## 0.9.16 (unreleased)
 
+- Fix: uppercase TypeScript extensions (`.TS`/`.TSX`/`.MTS`/`.CTS`) are now parsed with the TypeScript grammar instead of falling through to the JavaScript grammar, which silently dropped interfaces and type aliases (#1881, thanks @xkam7ar). Detection and dispatch already lowercased, but the grammar selection inside `extract_js` compared the suffix case-sensitively.
+
+- Fix: Kotlin builtin/stdlib types (`String`, `Int`, `List`, ...) are no longer emitted as `references` edges, matching the existing Java/Python/Go builtin filtering (#1876, thanks @kebwlmbhee). They created false coupling and split clusters on real projects. User types that legitimately share a name (`Result`, framework types) are deliberately not filtered, consistent with the other languages.
+
+- Fix: the stale/missing-skill version warning now prints to stderr, not stdout, so it no longer pollutes the machine-readable output of `graphify query`/`path` (#1805 / #1893, thanks @Mzt00). Every sibling warning in that check already used stderr.
+
 - Fix: Python qualified calls to an imported module (`module.function()`) now produce a `calls` edge, matching bare-name calls (#1883). The call was captured correctly but fell through a gap: the shared cross-file pass skips every member call (to avoid god-node blowups from bare method names), and the Python member-call resolver only handled capitalized class receivers (`ClassName.method()`), so a lowercase module receiver was dropped. The resolver now also resolves a lowercase receiver that names a module imported into the caller's file, linking to the single callable that module contains (guarded so `self`/`obj`/local instances and ambiguous names never create a false edge).
 
 - Fix: `--exclude` patterns now survive into `update`/`watch`/git-hook rebuilds instead of applying only to the initial scan (#1886). The patterns were never persisted, so the first rebuild re-ran `detect()` without them and silently re-indexed the excluded paths. `extract` now records them in a `graphify-out/.graphify_build.json` sidecar and `_rebuild_code` re-applies them on every rebuild (they still layer after `.gitignore`/`.graphifyignore`/`.git/info/exclude`, so they keep winning). Graphs built before this release simply have no sidecar and behave as before.
