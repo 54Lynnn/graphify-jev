@@ -69,6 +69,44 @@ def _drain_pending(out_dir: Path) -> list[Path]:
     return out
 
 
+# Build options that must survive into later rebuilds. The initial `extract`
+# scan honours `--exclude`, but `update`/`watch`/hook rebuilds re-run detect()
+# and would silently re-include excluded paths unless the patterns are persisted
+# (#1886). We store them beside the graph so any rebuild driver can re-apply them.
+_BUILD_CONFIG_FILENAME = ".graphify_build.json"
+
+
+def _write_build_config(out_dir: Path, *, excludes: "list[str] | None") -> None:
+    """Persist build options (currently ``--exclude`` patterns) under ``out_dir``.
+
+    Best-effort and non-clobbering: with no excludes it leaves any existing file
+    untouched, so a plain rebuild never erases patterns a prior extract recorded.
+    """
+    if not excludes:
+        return
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / _BUILD_CONFIG_FILENAME).write_text(
+            json.dumps({"excludes": list(excludes)}), encoding="utf-8"
+        )
+    except OSError:
+        pass
+
+
+def _read_build_excludes(out_dir: Path) -> list[str]:
+    """Return the persisted ``--exclude`` patterns for this graph, or []."""
+    try:
+        path = out_dir / _BUILD_CONFIG_FILENAME
+        if path.is_file():
+            cfg = json.loads(path.read_text(encoding="utf-8"))
+            ex = cfg.get("excludes") if isinstance(cfg, dict) else None
+            if isinstance(ex, list):
+                return [str(x) for x in ex if isinstance(x, str) and x]
+    except (OSError, json.JSONDecodeError):
+        pass
+    return []
+
+
 def _merge_changed_paths(*sources: "list[Path] | None") -> list[Path]:
     """Concatenate path lists, preserving order and dropping duplicates.
 
@@ -827,7 +865,14 @@ def _rebuild_code(
         from graphify.export import to_json, to_html
         from graphify.security import check_graph_file_size_cap
 
-        detected = detect(watch_path, follow_symlinks=follow_symlinks)
+        # Re-apply the excludes the initial extract recorded, so an update/watch/
+        # hook rebuild does not silently re-include deliberately excluded paths
+        # (#1886).
+        _persisted_excludes = _read_build_excludes(out)
+        detected = detect(
+            watch_path, follow_symlinks=follow_symlinks,
+            extra_excludes=_persisted_excludes or None,
+        )
         code_files = [Path(f) for f in detected['files']['code']]
 
         # Include document files that have AST extractors (e.g. .md, .mdx, .qmd)

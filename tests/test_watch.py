@@ -219,6 +219,32 @@ def test_update_rebuilds_with_nested_star_gitignore(tmp_path):
     assert not any("scratch/junk.py" in s for s in sources)
 
 
+def test_rebuild_honors_persisted_excludes(tmp_path):
+    """#1886: `--exclude` recorded at extract time must survive into update/watch/
+    hook rebuilds. Before the fix only the initial scan applied the excludes, so
+    the first rebuild silently re-indexed the excluded paths. _rebuild_code now
+    reads the persisted build config and re-applies them."""
+    import json
+    from graphify.watch import _rebuild_code, _write_build_config
+
+    corpus = tmp_path / "corpus"
+    (corpus / "src").mkdir(parents=True)
+    (corpus / "vendor").mkdir()
+    (corpus / "src" / "app.py").write_text("def keep(): return 1\n", encoding="utf-8")
+    (corpus / "main.py").write_text("def top(): return 2\n", encoding="utf-8")
+    (corpus / "vendor" / "lib.py").write_text("def vendored(): pass\n", encoding="utf-8")
+    _write_build_config(corpus / "graphify-out", excludes=["vendor"])
+
+    assert _rebuild_code(corpus, no_cluster=True, acquire_lock=False) is True
+
+    graph = json.loads((corpus / "graphify-out" / "graph.json").read_text(encoding="utf-8"))
+    sources = {n.get("source_file", "") for n in graph["nodes"]}
+    assert any("src/app.py" in s for s in sources) and any("main.py" in s for s in sources)
+    assert not any("vendor/lib.py" in s for s in sources), (
+        "rebuild silently re-included an excluded path (#1886)"
+    )
+
+
 def test_graphify_root_preserves_absolute_when_user_supplied(tmp_path):
     """When the caller supplies an absolute path, ``.graphify_root`` stores
     that absolute form verbatim — preserving explicit-absolute intent."""

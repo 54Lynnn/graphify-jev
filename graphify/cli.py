@@ -2071,6 +2071,10 @@ def dispatch_command(cmd: str) -> None:
         out_root = (out_dir.resolve() if out_dir else target)
         graphify_out = out_root / _GRAPHIFY_OUT
         graphify_out.mkdir(parents=True, exist_ok=True)
+        # Persist --exclude so later update/watch/hook rebuilds re-apply it
+        # instead of silently re-including the excluded paths (#1886).
+        from graphify.watch import _write_build_config as _write_build_cfg
+        _write_build_cfg(graphify_out, excludes=cli_excludes or None)
 
         stages = _StageTimer(cli_timing)
 
