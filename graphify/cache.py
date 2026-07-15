@@ -615,6 +615,62 @@ def save_semantic_cache(
     if allowed_source_files is not None:
         allowed_paths = {resolved_source_path(path) for path in allowed_source_files}
 
+    def group_skipped(fpath: str) -> bool:
+        """Mirror the write-loop skip condition for one source_file group."""
+        p = resolved_source_path(fpath)
+        return not p.is_file() or (allowed_paths is not None and p not in allowed_paths)
+
+    # Dangling-reference pruning (#1916). A node group is skipped by the write
+    # loop below when its source_file is not a real file (ghost path) or is
+    # out-of-scope per the #1757 guard — but an edge/hyperedge in an ALLOWED
+    # group that references a node id from a skipped group used to be written
+    # verbatim, so on replay (check_semantic_cache) it dangled forever (the
+    # #1895 merged-result filter runs AFTER this checkpoint write and is
+    # bypassed entirely on replay). Compute the node ids that will be skipped
+    # and drop any to-be-written edge whose endpoint — or hyperedge whose
+    # member (whole-hyperedge drop, mirroring #1895) — references one. Gated
+    # on allowed_source_files so unscoped callers stay byte-identical.
+    if allowed_paths is not None:
+        skipped_ids: set = set()
+        written_ids: set = set()
+        for fpath, result in by_file.items():
+            target = skipped_ids if group_skipped(fpath) else written_ids
+            for n in result["nodes"]:
+                nid = n.get("id")
+                if nid is None:
+                    continue
+                try:
+                    hash(nid)
+                except TypeError:
+                    continue
+                target.add(nid)
+        # A duplicate-attribution node (defined in a skipped AND a written
+        # group) still reaches the cache — don't over-prune references to it.
+        skipped_ids -= written_ids
+        if skipped_ids:
+
+            def edge_dangles(e: dict) -> bool:
+                try:
+                    return e.get("source") in skipped_ids or e.get("target") in skipped_ids
+                except TypeError:
+                    # Non-hashable endpoint from an untrusted result; leave it
+                    # to build-time validation rather than fail the save.
+                    return False
+
+            def hyperedge_dangles(h: dict) -> bool:
+                try:
+                    return bool(skipped_ids & set(h.get("nodes") or []))
+                except TypeError:
+                    return False
+
+            for fpath, result in by_file.items():
+                if group_skipped(fpath):
+                    continue
+                result["edges"] = [e for e in result["edges"] if not edge_dangles(e)]
+                result["hyperedges"] = [
+                    h for h in result["hyperedges"] if not hyperedge_dangles(h)
+                ]
+
     saved = 0
     for fpath, result in by_file.items():
         p = resolved_source_path(fpath)
