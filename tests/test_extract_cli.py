@@ -364,3 +364,170 @@ def test_extract_timing_flag_emits_stage_timings(monkeypatch, tmp_path, capsys):
         mainmod.main()
     assert exc2.value.code == 0
     assert "graphify timing" not in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# #1909: a newly-excluded file's nodes must be pruned from graph.json on the
+# next incremental extract even when the manifest never listed the file (the
+# pre-#1897 state every 0.9.16 graph is in), so the manifest-diff prune set
+# (`manifest - corpus`) can never see it.
+# ---------------------------------------------------------------------------
+
+def _two_file_corpus(tmp_path):
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "x.py").write_text(
+        "def secret_helper():\n    return 42\n\n"
+        "def secret_caller():\n    return secret_helper()\n"
+    )
+    (project / "keep.py").write_text(
+        "def kept():\n    return still_here()\n\n"
+        "def still_here():\n    return 1\n"
+    )
+    return project
+
+
+def _node_sources(graph_path):
+    import json
+    data = json.loads(graph_path.read_text(encoding="utf-8"))
+    return {n.get("source_file", "") for n in data.get("nodes", [])}
+
+
+def _run_extract(monkeypatch, argv):
+    monkeypatch.setattr(mainmod.sys, "argv", argv)
+    try:
+        mainmod.main()
+    except SystemExit as exc:
+        assert exc.code in (None, 0), f"unexpected exit code {exc.code}"
+
+
+def test_incremental_extract_prunes_newly_excluded_file_not_in_manifest(
+    monkeypatch, tmp_path
+):
+    """Seed a graph with nodes for x.py, drop x.py from the manifest (pre-#1897
+    manifests never listed excluded/omitted files), exclude x.py via
+    .graphifyignore, re-run extract: x.py's nodes must be gone even though it
+    was never on the deleted list."""
+    import json
+    project = _two_file_corpus(tmp_path)
+    out_dir = tmp_path / "out"
+    _clear_backend_keys(monkeypatch)
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+
+    _run_extract(
+        monkeypatch,
+        ["graphify", "extract", str(project), "--out", str(out_dir)],
+    )
+    graph_path = out_dir / "graphify-out" / "graph.json"
+    manifest_path = out_dir / "graphify-out" / "manifest.json"
+    assert any("x.py" in s for s in _node_sources(graph_path)), (
+        "seed extract must produce nodes for x.py"
+    )
+
+    # Simulate the pre-#1897 manifest state: x.py was never manifest-listed,
+    # so `manifest - corpus` can never flag it.
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = {k: v for k, v in manifest.items() if "x.py" not in k}
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    (project / ".graphifyignore").write_text("x.py\n")
+    _run_extract(
+        monkeypatch,
+        ["graphify", "extract", str(project), "--out", str(out_dir)],
+    )
+
+    sources = _node_sources(graph_path)
+    assert not any("x.py" in s for s in sources), (
+        f"newly-excluded x.py must be pruned from graph.json, still see {sources}"
+    )
+    assert any("keep.py" in s for s in sources), (
+        "unchanged keep.py nodes must survive the incremental merge"
+    )
+    # x.py exists on disk, is excluded, and must not creep into the manifest.
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert not any("x.py" in k for k in manifest), (
+        f"excluded x.py must not be (re)listed in the manifest: {set(manifest)}"
+    )
+
+
+def test_incremental_extract_prunes_excluded_file_listed_in_manifest(
+    monkeypatch, tmp_path
+):
+    """Post-#1897 state: the excluded file IS manifest-listed. It must be
+    pruned from graph.json AND dropped from the manifest (#1908), and stay
+    settled on a further run."""
+    import json
+    project = _two_file_corpus(tmp_path)
+    out_dir = tmp_path / "out"
+    _clear_backend_keys(monkeypatch)
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+
+    _run_extract(
+        monkeypatch,
+        ["graphify", "extract", str(project), "--out", str(out_dir)],
+    )
+    graph_path = out_dir / "graphify-out" / "graph.json"
+    manifest_path = out_dir / "graphify-out" / "manifest.json"
+    assert any("x.py" in k for k in json.loads(manifest_path.read_text()))
+
+    (project / ".graphifyignore").write_text("x.py\n")
+    _run_extract(
+        monkeypatch,
+        ["graphify", "extract", str(project), "--out", str(out_dir)],
+    )
+
+    sources = _node_sources(graph_path)
+    assert not any("x.py" in s for s in sources)
+    assert any("keep.py" in s for s in sources)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert not any("x.py" in k for k in manifest), (
+        "excluded-but-alive manifest row must be pruned (#1908)"
+    )
+
+    # Steady state: a third run neither resurrects x.py nor loses keep.py.
+    _run_extract(
+        monkeypatch,
+        ["graphify", "extract", str(project), "--out", str(out_dir)],
+    )
+    sources = _node_sources(graph_path)
+    assert not any("x.py" in s for s in sources)
+    assert any("keep.py" in s for s in sources)
+
+
+def test_no_cluster_incremental_prunes_newly_excluded_file(
+    monkeypatch, tmp_path, capsys
+):
+    """--no-cluster's exclusion-only early exit must still scrub the excluded
+    file's nodes from the raw graph.json (that path never runs build_merge),
+    and must not report the alive file as deleted."""
+    import json
+    project = _two_file_corpus(tmp_path)
+    out_dir = tmp_path / "out"
+    _clear_backend_keys(monkeypatch)
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+
+    monkeypatch.setattr(
+        mainmod.sys, "argv",
+        ["graphify", "extract", str(project), "--no-cluster", "--out", str(out_dir)],
+    )
+    with pytest.raises(SystemExit) as exc:
+        mainmod.main()
+    assert exc.value.code == 0
+    graph_path = out_dir / "graphify-out" / "graph.json"
+    assert any("x.py" in s for s in _node_sources(graph_path))
+    capsys.readouterr()
+
+    (project / ".graphifyignore").write_text("x.py\n")
+    with pytest.raises(SystemExit) as exc:
+        mainmod.main()
+    assert exc.value.code == 0
+    out_text = capsys.readouterr().out
+    assert "1 deleted" not in out_text, (
+        "excluded-but-alive file must not be reported as deleted"
+    )
+
+    sources = _node_sources(graph_path)
+    assert not any("x.py" in s for s in sources), (
+        f"--no-cluster early exit must prune excluded sources, still see {sources}"
+    )
+    assert any("keep.py" in s for s in sources)

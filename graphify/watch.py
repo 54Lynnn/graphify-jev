@@ -1021,7 +1021,14 @@ def _rebuild_code(
 
             try:
                 from graphify.detect import save_manifest
-                save_manifest(detected["files"], kind="ast", root=project_root)
+                # detected["files"] is a FULL detect of the watched root, so
+                # pass it as the scan corpus too: rows for files that left the
+                # scan but still exist on disk (newly excluded) are pruned
+                # instead of surviving as phantom "deleted" entries (#1908).
+                save_manifest(
+                    detected["files"], kind="ast", root=project_root,
+                    scan_corpus={f for _fl in detected["files"].values() for f in _fl},
+                )
             except Exception:
                 pass
 
@@ -1060,7 +1067,11 @@ def _rebuild_code(
             if same_topology:
                 try:
                     from graphify.detect import save_manifest
-                    save_manifest(detected["files"], kind="ast", root=project_root)
+                    # Full-scan save: prune excluded-but-alive rows (#1908).
+                    save_manifest(
+                        detected["files"], kind="ast", root=project_root,
+                        scan_corpus={f for _fl in detected["files"].values() for f in _fl},
+                    )
                 except Exception:
                     pass
                 flag = out / "needs_update"
@@ -1138,7 +1149,11 @@ def _rebuild_code(
 
         try:
             from graphify.detect import save_manifest
-            save_manifest(detected["files"], kind="ast", root=project_root)
+            # Full-scan save: prune excluded-but-alive rows (#1908).
+            save_manifest(
+                detected["files"], kind="ast", root=project_root,
+                scan_corpus={f for _fl in detected["files"].values() for f in _fl},
+            )
         except Exception:
             pass
 
