@@ -1649,3 +1649,189 @@ def test_rebuild_code_still_evicts_when_excluded_file_is_also_deleted(tmp_path):
     labels = {n["label"] for n in json.loads(graph_path.read_text(encoding="utf-8"))["nodes"]}
     assert "brainstorm.md" not in labels, "deleted file's nodes must still be evicted"
     assert "login()" in labels
+
+
+# --- #1915: semantic-backed docs must not be double-represented by the AST quick-scan ---
+
+
+_SEMANTIC_GUIDE_IDS = {"guide_doc", "auth_flow", "session_model"}
+_AST_GUIDE_IDS = {"guide", "guide_overview", "guide_setup", "guide_usage"}
+
+
+def _seed_semantic_doc_graph(corpus):
+    """Build a code-only graph, then add guide.md represented ONLY semantically.
+
+    Mimics a graph produced by the CLI ``graphify . --update`` path: code AST
+    nodes plus a semantic (LLM) layer for the document — a ``<slug>_doc`` node
+    and concept nodes, none carrying the ``_origin`` marker — and NO AST
+    heading nodes for the doc.
+    """
+    from graphify.watch import _rebuild_code
+
+    corpus.mkdir()
+    (corpus / "app.py").write_text(
+        "def handle_login():\n    return 1\n", encoding="utf-8"
+    )
+    assert _rebuild_code(corpus, no_cluster=True, acquire_lock=False) is True
+
+    (corpus / "guide.md").write_text(
+        "# Overview\n\nIntro.\n\n## Setup\n\nSteps.\n\n## Usage\n\nMore.\n",
+        encoding="utf-8",
+    )
+    graph_path = corpus / "graphify-out" / "graph.json"
+    data = json.loads(graph_path.read_text(encoding="utf-8"))
+    code_node_id = next(
+        n["id"] for n in data["nodes"] if n.get("source_file") == "app.py"
+    )
+    data["nodes"].extend([
+        {"id": "guide_doc", "label": "Guide", "file_type": "document",
+         "source_file": "guide.md"},
+        {"id": "auth_flow", "label": "Auth Flow", "file_type": "concept",
+         "source_file": "guide.md"},
+        {"id": "session_model", "label": "Session Model", "file_type": "concept",
+         "source_file": "guide.md"},
+    ])
+    data["links"].extend([
+        {"source": "guide_doc", "target": "auth_flow", "relation": "explains",
+         "confidence": "INFERRED", "source_file": "guide.md"},
+        {"source": "auth_flow", "target": code_node_id,
+         "relation": "implemented_by", "confidence": "INFERRED",
+         "source_file": "guide.md"},
+    ])
+    graph_path.write_text(json.dumps(data), encoding="utf-8")
+    return graph_path
+
+
+def test_rebuild_code_semantic_doc_not_double_represented_on_full_rebuild(tmp_path):
+    """#1915: a full _rebuild_code must not AST-quick-scan a doc whose semantic
+    (LLM) nodes already represent it. Before the fix the quick-scan minted
+    heading nodes ON TOP of the preserved semantic nodes, representing every
+    doc twice (~4x bloated graph vs the CLI update path)."""
+    from graphify.watch import _rebuild_code
+
+    corpus = tmp_path / "corpus"
+    graph_path = _seed_semantic_doc_graph(corpus)
+    before = json.loads(graph_path.read_text(encoding="utf-8"))
+
+    assert _rebuild_code(corpus, no_cluster=True, acquire_lock=False) is True
+
+    after = json.loads(graph_path.read_text(encoding="utf-8"))
+    after_ids = {n["id"] for n in after["nodes"]}
+    assert _SEMANTIC_GUIDE_IDS <= after_ids, "semantic doc nodes must be preserved"
+    assert not (_AST_GUIDE_IDS & after_ids), (
+        "AST heading nodes minted for a semantic-backed doc (#1915)"
+    )
+    assert len(after["nodes"]) == len(before["nodes"]), (
+        f"node count inflated {len(before['nodes'])} -> {len(after['nodes'])} (#1915)"
+    )
+
+
+@pytest.mark.parametrize(
+    "changed",
+    [[Path("guide.md")], [Path("guide.md"), Path("app.py")]],
+    ids=["doc-only", "doc-plus-code"],
+)
+def test_rebuild_code_incremental_preserves_semantic_doc_nodes_and_edges(
+    tmp_path, changed
+):
+    """#1915: an incremental rebuild whose change set includes a semantic-backed
+    doc must not wipe the doc's semantic nodes or their edges — re-extraction
+    owns only a source's AST tier (node-level mirror of #1865's edge rule)."""
+    from graphify.watch import _rebuild_code
+
+    corpus = tmp_path / "corpus"
+    graph_path = _seed_semantic_doc_graph(corpus)
+
+    assert _rebuild_code(
+        corpus, changed_paths=changed, no_cluster=True, acquire_lock=False
+    ) is True
+
+    after = json.loads(graph_path.read_text(encoding="utf-8"))
+    after_ids = {n["id"] for n in after["nodes"]}
+    assert _SEMANTIC_GUIDE_IDS <= after_ids, (
+        "semantic doc nodes wiped by an incremental rebuild"
+    )
+    relations = {
+        (e.get("source"), e.get("target"), e.get("relation"))
+        for e in after["links"]
+    }
+    assert ("guide_doc", "auth_flow", "explains") in relations, (
+        "semantic doc edge dropped by an incremental rebuild"
+    )
+    assert any(
+        src == "auth_flow" and rel == "implemented_by"
+        for src, _tgt, rel in relations
+    ), "doc-to-code semantic edge dropped by an incremental rebuild"
+    assert not (_AST_GUIDE_IDS & after_ids), (
+        "incremental rebuild AST-quick-scanned a semantic-backed doc (#1915)"
+    )
+
+
+def test_rebuild_code_quick_scans_doc_without_semantic_nodes(tmp_path):
+    """#09b33b7 guard: a doc with NO semantic layer still gets the AST
+    quick-scan so no-LLM corpora keep their heading structure — #1915's
+    semantic-supersedes-AST rule must not regress the fallback."""
+    from graphify.watch import _rebuild_code
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "app.py").write_text("def f():\n    return 1\n", encoding="utf-8")
+    (corpus / "notes.md").write_text("# Alpha\n\n## Beta\n", encoding="utf-8")
+
+    assert _rebuild_code(corpus, no_cluster=True, acquire_lock=False) is True
+    graph_path = corpus / "graphify-out" / "graph.json"
+    ids = {n["id"] for n in json.loads(graph_path.read_text(encoding="utf-8"))["nodes"]}
+    assert {"notes", "notes_alpha", "notes_beta"} <= ids
+
+    # A rebuild over the existing graph (still no semantic nodes for the doc)
+    # keeps quick-scanning it rather than dropping its structure.
+    assert _rebuild_code(corpus, no_cluster=True, acquire_lock=False) is True
+    ids = {n["id"] for n in json.loads(graph_path.read_text(encoding="utf-8"))["nodes"]}
+    assert {"notes", "notes_alpha", "notes_beta"} <= ids
+
+
+def test_rebuild_code_polluted_graph_self_heals_on_full_rebuild(tmp_path):
+    """#1915: a graph already bloated by the bug (semantic doc nodes PLUS stale
+    _origin=="ast" heading nodes for the same doc) sheds the heading nodes on
+    the next full rebuild via the AST ownership rule — and the shrink guard
+    accepts the smaller write without --force."""
+    from graphify.watch import _rebuild_code
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "app.py").write_text(
+        "def handle_login():\n    return 1\n", encoding="utf-8"
+    )
+    (corpus / "guide.md").write_text(
+        "# Overview\n\n## Setup\n\n## Usage\n", encoding="utf-8"
+    )
+    # Initial build quick-scans guide.md (no semantic layer yet): AST nodes.
+    assert _rebuild_code(corpus, no_cluster=True, acquire_lock=False) is True
+    graph_path = corpus / "graphify-out" / "graph.json"
+    data = json.loads(graph_path.read_text(encoding="utf-8"))
+    assert _AST_GUIDE_IDS <= {n["id"] for n in data["nodes"]}
+
+    # Layer the semantic representation on top -> the double-represented state.
+    data["nodes"].extend([
+        {"id": "guide_doc", "label": "Guide", "file_type": "document",
+         "source_file": "guide.md"},
+        {"id": "auth_flow", "label": "Auth Flow", "file_type": "concept",
+         "source_file": "guide.md"},
+    ])
+    data["links"].append({
+        "source": "guide_doc", "target": "auth_flow", "relation": "explains",
+        "confidence": "INFERRED", "source_file": "guide.md",
+    })
+    graph_path.write_text(json.dumps(data), encoding="utf-8")
+    nodes_before = len(data["nodes"])
+
+    # No force=True: the self-heal shrink must be accepted by the guard.
+    assert _rebuild_code(corpus, no_cluster=True, acquire_lock=False) is True
+
+    after = json.loads(graph_path.read_text(encoding="utf-8"))
+    after_ids = {n["id"] for n in after["nodes"]}
+    assert {"guide_doc", "auth_flow"} <= after_ids
+    assert not (_AST_GUIDE_IDS & after_ids), (
+        "stale AST heading nodes for a semantic-backed doc must self-heal away"
+    )
+    assert len(after["nodes"]) < nodes_before, "polluted graph should shrink"

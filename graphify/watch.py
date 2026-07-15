@@ -876,15 +876,63 @@ def _rebuild_code(
         code_files = [Path(f) for f in detected['files']['code']]
 
         # Include document files that have AST extractors (e.g. .md, .mdx, .qmd)
+        ast_doc_files: list[Path] = []
         for doc_file in detected['files'].get('document', []):
             p = Path(doc_file)
             if _get_extractor(p) is not None:
                 code_files.append(p)
+                ast_doc_files.append(p)
 
         existing_graph = out / "graph.json"
         if not code_files and not existing_graph.exists():
             print("[graphify watch] No code files found - nothing to rebuild.")
             return False
+
+        # #1915: a document that already carries SEMANTIC (LLM) nodes in the
+        # existing graph must not ALSO be AST-quick-scanned — otherwise every
+        # rebuild mints heading nodes on top of the preserved semantic nodes
+        # and the doc is represented twice (~4x graph bloat vs the CLI update
+        # path, which AST-extracts only code). Semantic supersedes AST per doc
+        # source: the quick-scan stays as a fallback for docs with no semantic
+        # layer (the no-LLM doc-structure feature, #09b33b7) and for brand-new
+        # docs the graph has never seen. These docs stay in ``code_files`` so
+        # corpus membership (#1795 fail-closed deletion evidence) and the
+        # shrink accounting below still cover them — a previously-bloated
+        # graph must be allowed to self-heal on a full rebuild without the
+        # shrink-guard refusing the smaller write.
+        semantic_doc_files: set[Path] = set()
+        if ast_doc_files and existing_graph.exists():
+            try:
+                check_graph_file_size_cap(existing_graph)
+                prior = json.loads(existing_graph.read_text(encoding="utf-8"))
+                prior_paths = _StoredSourcePaths(
+                    prior,
+                    out=out,
+                    project_root=project_root,
+                    watch_root=watch_root,
+                    normalize_source=_nsf,
+                )
+                # Semantic doc nodes lack the AST origin marker. Gate on
+                # file_type=="document" as well so a pre-#1865 graph whose
+                # AST nodes lack the ``_origin`` marker isn't misread as
+                # semantic-backed via some other marker-less node kind.
+                semantic_doc_identities: set[str] = set()
+                for node in prior.get("nodes", []):
+                    if node.get("_origin") == "ast":
+                        continue
+                    if node.get("file_type") != "document":
+                        continue
+                    identity = prior_paths.identity(node.get("source_file"))
+                    if identity:
+                        semantic_doc_identities.add(identity)
+                if semantic_doc_identities:
+                    semantic_doc_files = {
+                        p for p in ast_doc_files
+                        if prior_paths.absolute_identity(str(p), project_root)
+                        in semantic_doc_identities
+                    }
+            except Exception:
+                semantic_doc_files = set()
 
         # Incremental path: when the caller passed an explicit change list,
         # extract only changed-and-still-existing files. Deleted paths are
@@ -898,6 +946,12 @@ def _rebuild_code(
 
         if changed_paths is not None:
             code_set = {Path(os.path.abspath(p)) for p in code_files}
+            # #1915: semantic-backed docs are never AST-quick-scanned; their
+            # semantic nodes are the sole representation. Mirroring #1865's
+            # tier-scoped edge rule at the node level, they also must NOT
+            # enter extract_targets (hence rebuilt/node-evicted identities) on
+            # an incremental rebuild, or their semantic nodes would be wiped.
+            semantic_doc_set = {Path(os.path.abspath(p)) for p in semantic_doc_files}
             wanted: list[Path] = []
             change_root = Path.cwd().resolve()
             for raw in changed_paths:
@@ -908,7 +962,7 @@ def _rebuild_code(
                 )
                 tracked = next((cand for cand in candidates if cand.exists() and cand in code_set), None)
                 if tracked is not None:
-                    if tracked not in wanted:
+                    if tracked not in wanted and tracked not in semantic_doc_set:
                         wanted.append(tracked)
                     continue
 
@@ -938,7 +992,12 @@ def _rebuild_code(
                 return True
             extract_targets = wanted
         else:
-            extract_targets = code_files
+            # Full rebuild: skip the AST quick-scan for semantic-backed docs
+            # (#1915). They remain in code_files, so stale _origin=="ast"
+            # heading nodes from a previously-bloated graph are dropped by the
+            # full-rebuild AST ownership rule while the shrink accounting
+            # below still counts the doc as a rebuilt source.
+            extract_targets = [p for p in code_files if p not in semantic_doc_files]
 
         commit = _git_head()
         result = extract(extract_targets, cache_root=watch_root) if extract_targets else {
