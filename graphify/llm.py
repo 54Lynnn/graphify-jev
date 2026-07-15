@@ -1924,6 +1924,9 @@ def extract_corpus_parallel(
             # chunk leaked the FileSlice object into the allowlist and the write
             # raised TypeError, silently defeating the checkpoint.)
             allowed = [unit_path(item) for item in chunk]
+            # Deep-mode results checkpoint into their own namespace
+            # (cache/semantic-deep/) so a deep run never overwrites standard
+            # entries — and a later standard run never serves deep ones (#1894).
             _scs(
                 result.get("nodes", []),
                 result.get("edges", []),
@@ -1931,6 +1934,7 @@ def extract_corpus_parallel(
                 root=root,
                 merge_existing=True,
                 allowed_source_files=allowed,
+                mode="deep" if deep_mode else None,
             )
         except Exception as _exc:  # noqa: BLE001 — checkpoint is best-effort
             print(f"[graphify] incremental cache checkpoint failed: {_exc}", file=sys.stderr)

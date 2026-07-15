@@ -326,6 +326,38 @@ def test_checkpoint_scopes_cache_writes_to_chunk_files(tmp_path):
     assert a_cache and any(n["id"] == "a_ok" for n in a_cache["nodes"])
 
 
+def test_checkpoint_writes_deep_namespace_in_deep_mode(tmp_path):
+    """#1894: the per-chunk checkpoint must follow the run's mode — a
+    deep_mode=True run checkpoints into cache/semantic-deep/, leaving the
+    standard cache/semantic/ namespace untouched (and vice versa)."""
+    from graphify.llm import extract_corpus_parallel
+    from graphify.cache import load_cached
+
+    doc = tmp_path / "doc.md"
+    doc.write_text("# Doc\n\nsome content\n")
+
+    def ok(chunk, **kwargs):
+        return {
+            "nodes": [{"id": "d1", "source_file": "doc.md", "file_type": "document"}],
+            "edges": [], "hyperedges": [], "input_tokens": 1, "output_tokens": 1,
+        }
+
+    with patch("graphify.llm.extract_files_direct", side_effect=ok):
+        extract_corpus_parallel(
+            [doc], backend="kimi", root=tmp_path,
+            token_budget=None, chunk_size=1, max_concurrency=1,
+            deep_mode=True,
+        )
+
+    deep = load_cached(doc, tmp_path, kind="semantic-deep")
+    assert deep and [n["id"] for n in deep["nodes"]] == ["d1"], (
+        "deep-mode checkpoint must land in cache/semantic-deep/"
+    )
+    assert load_cached(doc, tmp_path, kind="semantic") is None, (
+        "deep-mode checkpoint must not write the standard semantic namespace"
+    )
+
+
 def test_omitted_documents_are_reconciled_and_warned(tmp_path, capsys):
     """#1890: a chunk can return a clean, non-empty response that omits some of the
     documents it was given. Those docs must not vanish silently — the run reports

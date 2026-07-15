@@ -2138,6 +2138,9 @@ def dispatch_command(cmd: str) -> None:
         cli_exclude_hubs: float | None = None
         cli_excludes: list[str] = []
         cli_timing: bool = False
+        # --force parity with `graphify update`: the flag or GRAPHIFY_FORCE=1
+        # disables the incremental gate and skips semantic-cache reads (#1894).
+        force = os.environ.get("GRAPHIFY_FORCE", "").lower() in ("1", "true", "yes")
 
         def _parse_int(name: str, raw: str) -> int:
             try:
@@ -2228,6 +2231,8 @@ def dispatch_command(cmd: str) -> None:
             elif a == "--cargo":
                 cli_cargo = True
                 i += 1
+            elif a == "--force":
+                force = True; i += 1
             elif a == "--timing":
                 cli_timing = True; i += 1
             else:
@@ -2277,6 +2282,11 @@ def dispatch_command(cmd: str) -> None:
         manifest_path = graphify_out / "manifest.json"
         existing_graph_path = graphify_out / "graph.json"
         incremental_mode = manifest_path.exists() and existing_graph_path.exists() if has_path else False
+        # --force: full scan, not the manifest-gated incremental diff — a warm
+        # unchanged tree would otherwise dispatch zero files (#1894).
+        incremental_mode = incremental_mode and not force
+        if force:
+            print("[graphify extract] --force: full re-scan, semantic cache reads skipped")
 
         if not has_path:
             code_files = []
@@ -2343,6 +2353,30 @@ def dispatch_command(cmd: str) -> None:
             doc_files = []
             paper_files = []
             image_files = []
+        if deep_mode and incremental_mode and not code_only:
+            # Deep mode reads/writes its own cache namespace
+            # (cache/semantic-deep/), so the manifest's changed-file gate is
+            # not a valid proxy for deep coverage: over a warm unchanged tree
+            # it dispatches zero files and `--mode deep` silently no-ops
+            # (#1894). Widen the semantic pass to the FULL live
+            # doc/paper/image set (``files_by_type`` from detect_incremental,
+            # which already excludes excluded files) and let the
+            # mode-namespaced cache decide hits/misses — the first deep run
+            # re-dispatches everything (deep namespace cold), later deep runs
+            # hit the deep cache.
+            _deep_all = [
+                Path(p)
+                for _ftype in ("document", "paper", "image")
+                for p in files_by_type.get(_ftype, [])
+            ]
+            if len(_deep_all) != len(semantic_files):
+                print(
+                    f"[graphify extract] deep mode: widening semantic pass from "
+                    f"{len(semantic_files)} changed to {len(_deep_all)} live "
+                    f"doc/paper/image file(s); the deep semantic cache decides "
+                    f"what is re-extracted"
+                )
+            semantic_files = _deep_all
         if incremental_mode:
             # Excluded-but-alive files are reported separately from deletions
             # (#1908): they still exist on disk, the scan just stopped
@@ -2495,11 +2529,21 @@ def dispatch_command(cmd: str) -> None:
         }
         sem_cache_hits = 0
         sem_cache_misses = 0
+        # Deep mode uses its own namespace (cache/semantic-deep/) so deep and
+        # standard results for the same content never shadow each other (#1894).
+        sem_cache_mode = "deep" if deep_mode else None
         if semantic_files:
             sem_paths_str = [str(p) for p in semantic_files]
-            cached_nodes, cached_edges, cached_hyperedges, uncached_paths = (
-                _check_semantic_cache(sem_paths_str, root=out_root)
-            )
+            if force:
+                # --force: skip the cache READ so every semantic file is
+                # re-dispatched; the save below still runs so the fresh
+                # results replace the stale entries.
+                cached_nodes, cached_edges, cached_hyperedges = [], [], []
+                uncached_paths = list(sem_paths_str)
+            else:
+                cached_nodes, cached_edges, cached_hyperedges, uncached_paths = (
+                    _check_semantic_cache(sem_paths_str, root=out_root, mode=sem_cache_mode)
+                )
             sem_cache_hits = len(semantic_files) - len(uncached_paths)
             sem_cache_misses = len(uncached_paths)
             sem_result["nodes"].extend(cached_nodes)
@@ -2570,6 +2614,7 @@ def dispatch_command(cmd: str) -> None:
                         fresh.get("hyperedges", []),
                         root=out_root,
                         allowed_source_files=uncached_paths,
+                        mode=sem_cache_mode,
                     )
                 except Exception as exc:
                     print(f"[graphify extract] warning: could not write semantic cache: {exc}", file=sys.stderr)
@@ -2880,27 +2925,41 @@ def dispatch_command(cmd: str) -> None:
         stages.total()
 
     elif cmd == "cache-check":
-        # graphify cache-check <files_from> [--root <dir>]
+        # graphify cache-check <files_from> [--root <dir>] [--mode <m> | --deep]
         # Reads file paths (one per line) from <files_from>, checks semantic cache.
+        # --mode deep (or --deep) checks the cache/semantic-deep/ namespace
+        # written by `extract --mode deep` instead of cache/semantic/ (#1894).
         # Writes:
         #   graphify-out/.graphify_cached.json   — already-cached nodes/edges/hyperedges
         #   graphify-out/.graphify_uncached.txt  — paths that need extraction
         # Stdout: "Cache: N hit, M miss"
         from graphify.cache import check_semantic_cache
         if len(sys.argv) < 3:
-            print("Usage: graphify cache-check <files_from> [--root <dir>]", file=sys.stderr)
+            print("Usage: graphify cache-check <files_from> [--root <dir>] [--mode <m> | --deep]", file=sys.stderr)
             sys.exit(1)
         files_from = Path(sys.argv[2])
         root = Path(".")
+        cache_mode: str | None = None
         i = 3
         while i < len(sys.argv):
             if sys.argv[i] == "--root" and i + 1 < len(sys.argv):
                 root = Path(sys.argv[i + 1])
                 i += 2
+            elif sys.argv[i] == "--mode" and i + 1 < len(sys.argv):
+                cache_mode = sys.argv[i + 1]
+                i += 2
+            elif sys.argv[i].startswith("--mode="):
+                cache_mode = sys.argv[i].split("=", 1)[1]
+                i += 1
+            elif sys.argv[i] == "--deep":
+                cache_mode = "deep"
+                i += 1
             else:
                 i += 1
         files = [f for f in files_from.read_text(encoding="utf-8").splitlines() if f.strip()]
-        cached_nodes, cached_edges, cached_hyperedges, uncached = check_semantic_cache(files, root)
+        cached_nodes, cached_edges, cached_hyperedges, uncached = check_semantic_cache(
+            files, root, mode=cache_mode
+        )
         out = root / _GRAPHIFY_OUT
         out.mkdir(parents=True, exist_ok=True)
         if cached_nodes or cached_edges or cached_hyperedges:

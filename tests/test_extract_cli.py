@@ -222,6 +222,164 @@ def test_stamped_manifest_files_normalizes_both_sides(tmp_path):
     assert out["document"] == [str(fresh_doc), str(cached_doc)]
 
 
+# --- #1894: --force and deep-mode dispatch over a warm cache -----------------
+
+def _recording_extractor(calls):
+    """extract_corpus_parallel stand-in that records each dispatch."""
+    def _extract(paths, **kwargs):
+        calls.append({"paths": [str(p) for p in paths], "kwargs": kwargs})
+        on_chunk = kwargs.get("on_chunk_done")
+        if on_chunk:
+            on_chunk(0, 1, {"nodes": [], "edges": [], "hyperedges": []})
+        return {
+            "nodes": [{"id": "readme", "source_file": "README.md",
+                       "file_type": "document"}],
+            "edges": [],
+            "hyperedges": [],
+            "input_tokens": 10,
+            "output_tokens": 5,
+        }
+    return _extract
+
+
+def _run_extract(monkeypatch, argv):
+    monkeypatch.setattr(mainmod.sys, "argv", argv)
+    try:
+        mainmod.main()
+    except SystemExit as exc:
+        assert exc.code in (None, 0), f"unexpected exit code {exc.code}"
+
+
+def test_extract_mode_deep_dispatches_over_warm_cache(monkeypatch, tmp_path):
+    """#1894 repro: over a warm manifest + warm standard semantic cache,
+    `extract --mode deep` was a silent no-op — the incremental gate dispatched
+    zero files before the cache was ever consulted, and the cache key ignored
+    mode anyway. Deep must re-dispatch on the first deep run (deep namespace
+    cold) and be served from cache/semantic-deep/ on the second."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
+    monkeypatch.delenv("GRAPHIFY_FORCE", raising=False)
+    calls: list[dict] = []
+    monkeypatch.setattr("graphify.llm.extract_corpus_parallel",
+                        _recording_extractor(calls))
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+
+    # No --out: the default layout (graphify-out/ beside the sources) keeps the
+    # CLI-level cache write's root anchored at the corpus, so the stub's
+    # root-relative source_file resolves (real runs also checkpoint per chunk
+    # inside llm.extract_corpus_parallel, which this stub replaces).
+    base = ["graphify", "extract", str(corpus), "--backend", "claude",
+            "--no-cluster"]
+
+    # Run 1: cold standard extraction — warms manifest + plain semantic cache.
+    _run_extract(monkeypatch, base)
+    assert len(calls) == 1
+
+    # Sanity: a warm standard re-run dispatches nothing (expected behavior).
+    _run_extract(monkeypatch, base)
+    assert len(calls) == 1
+
+    # The repro: warm tree + --mode deep MUST dispatch.
+    _run_extract(monkeypatch, base + ["--mode", "deep"])
+    assert len(calls) == 2, (
+        "--mode deep over a warm cache must re-dispatch (#1894)"
+    )
+    assert calls[1]["paths"] == [str(corpus / "README.md")]
+    assert calls[1]["kwargs"].get("deep_mode") is True
+
+    # Second deep run: served from the (now warm) deep namespace, no dispatch.
+    _run_extract(monkeypatch, base + ["--mode", "deep"])
+    assert len(calls) == 2, (
+        "second deep run must be served from cache/semantic-deep/"
+    )
+    # The deep entry landed in its own namespace, not cache/semantic/.
+    assert any((corpus / "graphify-out" / "cache" / "semantic-deep").glob("*.json"))
+
+
+def test_extract_force_flag_redispatches_and_stamps_manifest(monkeypatch, tmp_path):
+    """extract accepts --force: a warm tree re-dispatches every semantic file
+    (cache read skipped, incremental gate off) and the manifest is still
+    stamped afterward (#1897-compatible full coverage)."""
+    import json
+
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
+    monkeypatch.delenv("GRAPHIFY_FORCE", raising=False)
+    calls: list[dict] = []
+    monkeypatch.setattr("graphify.llm.extract_corpus_parallel",
+                        _recording_extractor(calls))
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+
+    base = ["graphify", "extract", str(corpus), "--backend", "claude",
+            "--no-cluster"]
+
+    _run_extract(monkeypatch, base)
+    assert len(calls) == 1
+    _run_extract(monkeypatch, base)  # warm: no dispatch
+    assert len(calls) == 1
+
+    _run_extract(monkeypatch, base + ["--force"])
+    assert len(calls) == 2, (
+        "--force over a warm tree must re-dispatch every semantic file"
+    )
+    assert calls[1]["paths"] == [str(corpus / "README.md")]
+
+    # The forced run still wrote the semantic cache and stamped the manifest.
+    assert any((corpus / "graphify-out" / "cache" / "semantic").glob("*.json"))
+    manifest = json.loads(
+        (corpus / "graphify-out" / "manifest.json").read_text()
+    )
+    assert manifest.get("README.md", {}).get("semantic_hash"), (
+        "forced re-dispatch must still stamp the manifest"
+    )
+    assert manifest.get("main.go", {}).get("semantic_hash")
+
+
+def test_extract_graphify_force_env_redispatches(monkeypatch, tmp_path):
+    """GRAPHIFY_FORCE=1 behaves like --force (env parity with `update`)."""
+    corpus = _make_corpus(tmp_path)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
+    monkeypatch.delenv("GRAPHIFY_FORCE", raising=False)
+    calls: list[dict] = []
+    monkeypatch.setattr("graphify.llm.extract_corpus_parallel",
+                        _recording_extractor(calls))
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+
+    base = ["graphify", "extract", str(corpus), "--backend", "claude",
+            "--no-cluster"]
+
+    _run_extract(monkeypatch, base)
+    assert len(calls) == 1
+    _run_extract(monkeypatch, base)  # warm: no dispatch
+    assert len(calls) == 1
+
+    monkeypatch.setenv("GRAPHIFY_FORCE", "1")
+    _run_extract(monkeypatch, base)
+    assert len(calls) == 2, "GRAPHIFY_FORCE=1 must force a re-dispatch"
+
+
+def test_cache_check_mode_deep_reads_deep_namespace(monkeypatch, tmp_path, capsys):
+    """cache-check --mode deep consults cache/semantic-deep/; without the flag
+    it keeps reading cache/semantic/ (deep entries are invisible to it)."""
+    from graphify.cache import save_semantic_cache
+
+    doc = tmp_path / "doc.md"
+    doc.write_text("# Doc\n")
+    save_semantic_cache([{"id": "d", "source_file": "doc.md"}], [],
+                        root=tmp_path, mode="deep")
+    files_from = tmp_path / "files.txt"
+    files_from.write_text(str(doc) + "\n")
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+
+    _run_extract(monkeypatch, ["graphify", "cache-check", str(files_from),
+                               "--root", str(tmp_path)])
+    assert "Cache: 0 hit, 1 miss" in capsys.readouterr().out
+
+    _run_extract(monkeypatch, ["graphify", "cache-check", str(files_from),
+                               "--root", str(tmp_path), "--mode", "deep"])
+    assert "Cache: 1 hit, 0 miss" in capsys.readouterr().out
+
+
 def _code_only_corpus(tmp_path):
     """A corpus with only code — no docs/papers/images."""
     (tmp_path / "auth.py").write_text(

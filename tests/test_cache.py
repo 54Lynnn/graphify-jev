@@ -570,6 +570,149 @@ def test_save_semantic_cache_rejects_out_of_scope_source_file(tmp_path):
     assert protected_cache["hyperedges"] == []
 
 
+# --- #1894: mode-namespaced semantic cache -----------------------------------
+# `extract --mode deep` produces richer results than standard extraction, so
+# deep entries live in their own namespace (cache/semantic-deep/). mode=None
+# must stay byte-identical to the historical behavior: older installed skill
+# flows call check/save without the parameter and must be unaffected.
+
+def test_semantic_cache_deep_mode_roundtrip_under_deep_namespace(tmp_path):
+    """mode='deep' saves under cache/semantic-deep/ and reads back from it."""
+    from graphify.cache import check_semantic_cache, save_semantic_cache
+
+    f = tmp_path / "doc.md"
+    f.write_text("# Doc\n\nBody.\n")
+    saved = save_semantic_cache(
+        [{"id": "deep_n", "source_file": "doc.md"}], [], root=tmp_path, mode="deep"
+    )
+    assert saved == 1
+
+    deep_dir = tmp_path / "graphify-out" / "cache" / "semantic-deep"
+    h = file_hash(f, tmp_path)
+    assert (deep_dir / f"{h}.json").exists(), (
+        "deep entry must land under cache/semantic-deep/"
+    )
+    # And NOT in the plain namespace.
+    plain_dir = tmp_path / "graphify-out" / "cache" / "semantic"
+    assert not (plain_dir / f"{h}.json").exists()
+
+    nodes, edges, hyper, uncached = check_semantic_cache(
+        [str(f)], root=tmp_path, mode="deep"
+    )
+    assert [n["id"] for n in nodes] == ["deep_n"]
+    assert uncached == []
+
+
+def test_semantic_cache_deep_invisible_to_plain_reads_and_vice_versa(tmp_path):
+    """Deep entries must not satisfy mode=None reads (and plain entries must
+    not satisfy deep reads) — the namespaces are fully isolated."""
+    from graphify.cache import check_semantic_cache, save_semantic_cache
+
+    deep_doc = tmp_path / "deep.md"
+    deep_doc.write_text("# Deep\n")
+    plain_doc = tmp_path / "plain.md"
+    plain_doc.write_text("# Plain\n")
+
+    save_semantic_cache([{"id": "d", "source_file": "deep.md"}], [],
+                        root=tmp_path, mode="deep")
+    save_semantic_cache([{"id": "p", "source_file": "plain.md"}], [],
+                        root=tmp_path)  # mode omitted: historical call shape
+
+    # Plain read: deep entry is a miss, plain entry is a hit.
+    nodes, _, _, uncached = check_semantic_cache(
+        [str(deep_doc), str(plain_doc)], root=tmp_path
+    )
+    assert [n["id"] for n in nodes] == ["p"]
+    assert uncached == [str(deep_doc)]
+
+    # Deep read: mirror image.
+    nodes, _, _, uncached = check_semantic_cache(
+        [str(deep_doc), str(plain_doc)], root=tmp_path, mode="deep"
+    )
+    assert [n["id"] for n in nodes] == ["d"]
+    assert uncached == [str(plain_doc)]
+
+
+def test_semantic_cache_mode_none_layout_unchanged(tmp_path):
+    """Omitting mode writes exactly the historical cache/semantic/ layout —
+    forward-compat for older installed callers that never pass mode."""
+    from graphify.cache import check_semantic_cache, save_semantic_cache
+
+    f = tmp_path / "doc.md"
+    f.write_text("# Doc\n")
+    save_semantic_cache([{"id": "n", "source_file": "doc.md"}], [], root=tmp_path)
+    h = file_hash(f, tmp_path)
+    assert (tmp_path / "graphify-out" / "cache" / "semantic" / f"{h}.json").exists()
+    assert not (tmp_path / "graphify-out" / "cache" / "semantic-deep").exists(), (
+        "mode=None must never create the deep namespace"
+    )
+    nodes, _, _, uncached = check_semantic_cache([str(f)], root=tmp_path)
+    assert [n["id"] for n in nodes] == ["n"] and uncached == []
+
+
+def test_clear_cache_removes_deep_namespace(tmp_path):
+    """clear_cache sweeps cache/semantic-deep/ alongside semantic/ and ast/."""
+    from graphify.cache import save_semantic_cache
+
+    f = tmp_path / "doc.md"
+    f.write_text("# Doc\n")
+    save_semantic_cache([{"id": "p", "source_file": "doc.md"}], [], root=tmp_path)
+    save_semantic_cache([{"id": "d", "source_file": "doc.md"}], [],
+                        root=tmp_path, mode="deep")
+    base = tmp_path / "graphify-out" / "cache"
+    assert list((base / "semantic").glob("*.json"))
+    assert list((base / "semantic-deep").glob("*.json"))
+
+    clear_cache(tmp_path)
+    assert not list(base.rglob("*.json")), (
+        "clear_cache must remove entries in BOTH semantic namespaces"
+    )
+
+
+def test_cached_files_includes_deep_namespace(tmp_path):
+    """cached_files reports deep-namespace entries too."""
+    from graphify.cache import save_semantic_cache
+
+    f = tmp_path / "doc.md"
+    f.write_text("# Doc\n")
+    save_semantic_cache([{"id": "d", "source_file": "doc.md"}], [],
+                        root=tmp_path, mode="deep")
+    assert file_hash(f, tmp_path) in cached_files(tmp_path)
+
+
+def test_semantic_prune_sweeps_both_namespaces_against_same_live_set(tmp_path):
+    """#1894 follow-up to #1527: prune must sweep cache/semantic/ AND
+    cache/semantic-deep/ against the SAME live-hash set (liveness is
+    content-based, mode-independent). Orphans go in both namespaces; live
+    entries survive in both."""
+    from graphify.cache import prune_semantic_cache, save_semantic_cache
+
+    f = tmp_path / "doc.md"
+    f.write_text("# A\n\nContent A.\n")
+    h_old = file_hash(f, tmp_path)
+    save_semantic_cache([{"id": "pa", "source_file": "doc.md"}], [], root=tmp_path)
+    save_semantic_cache([{"id": "da", "source_file": "doc.md"}], [],
+                        root=tmp_path, mode="deep")
+
+    f.write_text("# B\n\nContent B.\n")
+    h_live = file_hash(f, tmp_path)
+    save_semantic_cache([{"id": "pb", "source_file": "doc.md"}], [], root=tmp_path)
+    save_semantic_cache([{"id": "db", "source_file": "doc.md"}], [],
+                        root=tmp_path, mode="deep")
+
+    plain_dir = tmp_path / "graphify-out" / "cache" / "semantic"
+    deep_dir = tmp_path / "graphify-out" / "cache" / "semantic-deep"
+    for d in (plain_dir, deep_dir):
+        assert (d / f"{h_old}.json").exists()
+        assert (d / f"{h_live}.json").exists()
+
+    pruned = prune_semantic_cache(tmp_path, {h_live})
+    assert pruned == 2, "one orphan in EACH namespace must be pruned"
+    for d in (plain_dir, deep_dir):
+        assert not (d / f"{h_old}.json").exists(), f"orphan survived in {d.name}"
+        assert (d / f"{h_live}.json").exists(), f"live entry pruned from {d.name}"
+
+
 def test_save_semantic_cache_merge_existing_unions(tmp_path):
     """#1715: merge_existing=True unions with the prior entry so a file split
     across chunks (checkpointed per chunk) keeps every slice."""
