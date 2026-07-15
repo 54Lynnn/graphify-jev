@@ -222,6 +222,74 @@ def test_stamped_manifest_files_normalizes_both_sides(tmp_path):
     assert out["document"] == [str(fresh_doc), str(cached_doc)]
 
 
+def test_stamped_manifest_files_counts_hyperedge_only_docs(tmp_path):
+    """#1920: a doc whose only chunk output is a hyperedge (3+ nodes sharing a
+    concept) is valid output — the semantic cache persists it per source_file —
+    so it must be stamped. Before the fix the stamping loop only inspected
+    ``nodes``/``edges``, leaving such a doc unstamped and re-queued forever."""
+    from graphify.cli import _stamped_manifest_files
+
+    hyper_doc = tmp_path / "hyper.md"; hyper_doc.write_text("# hyper")
+    omitted_doc = tmp_path / "omitted.md"; omitted_doc.write_text("# omitted")
+
+    files_by_type = {"document": [str(hyper_doc), str(omitted_doc)]}
+    sem_result = {
+        "nodes": [],
+        "edges": [],
+        "hyperedges": [
+            {"id": "h1", "label": "L", "nodes": ["a", "b", "c"],
+             "relation": "participate_in", "source_file": "hyper.md"},
+        ],
+    }
+
+    out = _stamped_manifest_files(files_by_type, sem_result, tmp_path)
+    assert str(hyper_doc) in out["document"], (
+        "a hyperedge-only doc must be stamped (#1920)"
+    )
+    # A doc with no output at all still stays unstamped (#933).
+    assert str(omitted_doc) not in out["document"]
+
+
+def test_manifest_stamps_hyperedge_only_docs(monkeypatch, tmp_path):
+    """#1920 end-to-end: a fresh extraction whose only output for a doc is a
+    hyperedge stamps that doc's semantic_hash, so it is not re-dispatched."""
+    import json
+
+    corpus = _make_corpus(tmp_path)  # main.go + README.md
+    out_dir = tmp_path / "out"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
+
+    def _hyperedge_only(paths, **kwargs):
+        on_chunk = kwargs.get("on_chunk_done")
+        if on_chunk:
+            on_chunk(0, 1, {"nodes": [], "edges": [], "hyperedges": []})
+        return {
+            "nodes": [],
+            "edges": [],
+            "hyperedges": [{"id": "h1", "label": "Shared", "nodes": ["a", "b", "c"],
+                            "relation": "participate_in", "source_file": "README.md"}],
+            "input_tokens": 10,
+            "output_tokens": 5,
+        }
+
+    monkeypatch.setattr("graphify.llm.extract_corpus_parallel", _hyperedge_only)
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+    monkeypatch.setattr(
+        mainmod.sys, "argv",
+        ["graphify", "extract", str(corpus), "--backend", "claude",
+         "--no-cluster", "--out", str(out_dir)],
+    )
+    try:
+        mainmod.main()
+    except SystemExit as exc:
+        assert exc.code in (None, 0), f"unexpected exit code {exc.code}"
+
+    manifest = json.loads((out_dir / "graphify-out" / "manifest.json").read_text())
+    assert manifest.get("README.md", {}).get("semantic_hash"), (
+        f"hyperedge-only doc must be stamped (#1920): {sorted(manifest)}"
+    )
+
+
 # --- #1894: --force and deep-mode dispatch over a warm cache -----------------
 
 def _recording_extractor(calls):
@@ -427,6 +495,73 @@ def test_extract_codeonly_succeeds_without_api_key(monkeypatch, tmp_path):
     assert graph.exists(), "code-only extract must write graph.json without a key"
     import json
     assert len(json.loads(graph.read_text()).get("nodes", [])) > 0
+
+
+def test_missing_manifest_code_only_preserves_semantic_layer(monkeypatch, tmp_path):
+    """#1925: `graphify extract --code-only` with a MISSING manifest.json must
+    not degrade to a full scan that discards the committed semantic layer. An
+    existing graph.json is a sufficient incremental baseline, so doc/paper/image
+    nodes (excluded by --code-only, not deleted) are preserved; a genuinely
+    deleted source is still evicted (#1909 semantics retained)."""
+    import json
+
+    corpus = tmp_path / "proj"; corpus.mkdir()
+    (corpus / "keep.py").write_text("def keep():\n    return 1\n")
+    (corpus / "README.md").write_text("# Notes\nCurated docs.\n")
+    out_dir = tmp_path / "out"
+    graphify_out = out_dir / "graphify-out"
+    _clear_backend_keys(monkeypatch)
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+
+    def _sem_doc_count(g):
+        return sum(1 for n in g["nodes"] if n.get("source_file") == "README.md")
+
+    # 1) seed a code-only graph
+    _run_extract(monkeypatch, ["graphify", "extract", str(corpus),
+                               "--code-only", "--out", str(out_dir)])
+    graph_path = graphify_out / "graph.json"
+    graph = json.loads(graph_path.read_text())
+
+    # 2) inject a committed semantic layer for README.md (nodes + edge + hyperedge)
+    graph["nodes"].append({"id": "doc_readme_a", "label": "Concept A",
+                           "source_file": "README.md", "file_type": "document"})
+    graph["nodes"].append({"id": "doc_readme_b", "label": "Concept B",
+                           "source_file": "README.md", "file_type": "document"})
+    graph.setdefault("edges", []).append(
+        {"source": "doc_readme_a", "target": "doc_readme_b",
+         "relation": "relates_to", "source_file": "README.md"})
+    graph.setdefault("hyperedges", []).append(
+        {"id": "h1", "label": "Shared", "nodes": ["doc_readme_a", "doc_readme_b"],
+         "relation": "participate_in", "source_file": "README.md"})
+    graph_path.write_text(json.dumps(graph))
+    (graphify_out / ".graphify_semantic_marker").write_text(
+        json.dumps({"output_tokens": 1}))
+
+    # 3) manifest goes missing (fresh clone / deliberately untracked)
+    (graphify_out / "manifest.json").unlink()
+
+    # 4) re-run the SAME code-only extract
+    _run_extract(monkeypatch, ["graphify", "extract", str(corpus),
+                               "--code-only", "--out", str(out_dir)])
+    after = json.loads(graph_path.read_text())
+    assert _sem_doc_count(after) >= 2, (
+        "committed semantic doc nodes must survive a missing-manifest "
+        f"--code-only rebuild (#1925); got {_sem_doc_count(after)}"
+    )
+    assert any(h.get("id") == "h1" for h in after.get("hyperedges", [])), (
+        "committed hyperedge must survive the rebuild"
+    )
+    assert any("keep" in n["id"] for n in after["nodes"]), "code nodes intact"
+
+    # 5) a genuine deletion still evicts the doc's semantic nodes
+    (corpus / "README.md").unlink()
+    (graphify_out / "manifest.json").unlink(missing_ok=True)
+    _run_extract(monkeypatch, ["graphify", "extract", str(corpus),
+                               "--code-only", "--out", str(out_dir)])
+    gone = json.loads(graph_path.read_text())
+    assert _sem_doc_count(gone) == 0, (
+        "a genuinely deleted doc must still be evicted (#1909 semantics preserved)"
+    )
 
 
 def test_extract_out_keeps_project_root_clean(monkeypatch, tmp_path):

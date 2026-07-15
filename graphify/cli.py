@@ -65,11 +65,18 @@ def _stamped_manifest_files(
     empty so detect_incremental re-queues them (#933).
 
     Both sides of the membership test are resolved against the scan ``root``
-    before comparing (#1897): node/edge ``source_file`` values are
+    before comparing (#1897): node/edge/hyperedge ``source_file`` values are
     root-relative on a fresh extraction while ``files_by_type`` entries are
     absolute (from detect()), so a raw string comparison never matched and
     every freshly-extracted semantic doc was dropped from the manifest.
     Mirrors the #1890 path normalization in graphify.llm.
+
+    Hyperedges are counted as output (#1920): a chunk whose only result for a
+    document is a hyperedge (3+ nodes sharing a concept) is valid output that
+    the semantic cache persists per-``source_file`` — omitting it here left the
+    doc unstamped, so detect_incremental re-queued it on every run. The stamping
+    condition mirrors the cache-write keying (a hyperedge carries its own
+    ``source_file``); do not derive it from member nodes.
     """
     root = Path(root)
 
@@ -83,7 +90,7 @@ def _stamped_manifest_files(
             return p
 
     sem_extracted: set[Path] = set()
-    for coll in ("nodes", "edges"):
+    for coll in ("nodes", "edges", "hyperedges"):
         for item in sem_result.get(coll, []):
             sf = item.get("source_file", "")
             if sf:
@@ -2281,12 +2288,26 @@ def dispatch_command(cmd: str) -> None:
         )
         manifest_path = graphify_out / "manifest.json"
         existing_graph_path = graphify_out / "graph.json"
-        incremental_mode = manifest_path.exists() and existing_graph_path.exists() if has_path else False
+        # #1925: a missing manifest.json must not degrade to a full scan that
+        # discards the existing graph's semantic layer. An existing graph.json
+        # is a sufficient incremental baseline: detect_incremental treats an
+        # absent manifest as "everything is new" (re-extract all, nothing
+        # deleted), and build_merge + _stale_graph_sources reconcile replaced
+        # and genuinely-deleted sources against the current corpus, so doc/
+        # paper/image nodes survive a --code-only rebuild instead of being
+        # dropped with the rest of the committed graph.
+        incremental_mode = existing_graph_path.exists() if has_path else False
         # --force: full scan, not the manifest-gated incremental diff — a warm
         # unchanged tree would otherwise dispatch zero files (#1894).
         incremental_mode = incremental_mode and not force
         if force:
             print("[graphify extract] --force: full re-scan, semantic cache reads skipped")
+        elif incremental_mode and not manifest_path.exists():
+            print(
+                "[graphify extract] manifest.json missing; using existing "
+                "graph.json as the incremental baseline (all files re-checked; "
+                "nodes for files outside this run's scope are preserved)"
+            )
 
         if not has_path:
             code_files = []

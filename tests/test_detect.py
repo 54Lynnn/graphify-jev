@@ -1853,6 +1853,33 @@ def test_nested_gitignore_patterns_still_apply_inside_their_dir(tmp_path):
     assert result["total_files"] == 2  # main.py + sub/keep.py; sub/noise.log ignored
 
 
+def test_nested_gitignore_does_not_govern_sibling_project(tmp_path):
+    """A nested .gitignore ('data/') in one project must not drop a sibling
+    project's data/ files, and the drop must be recorded in the `ignored`
+    diagnostic field rather than silently vanishing (#1922)."""
+    (tmp_path / "run.py").write_text("x = 1")
+    pa = tmp_path / "project_a" / "data"
+    pa.mkdir(parents=True)
+    (pa / "loader.py").write_text("def load(): pass")
+    pb = tmp_path / "project_b"
+    (pb / "data").mkdir(parents=True)
+    (pb / ".gitignore").write_text("data/\n")
+    (pb / "data" / "dump.csv").write_text("a,b\n1,2\n")
+
+    result = detect(tmp_path)
+
+    all_paths = [f for v in result["files"].values() for f in v]
+    assert any(
+        f.endswith(os.path.join("project_a", "data", "loader.py")) for f in all_paths
+    ), "sibling project_a/data/loader.py must survive project_b's nested ignore"
+    assert not any(f.endswith("dump.csv") for f in all_paths)
+    # The legitimately-ignored subtree is recorded, not silently dropped.
+    assert any(
+        e.rstrip(os.sep).endswith(os.path.join("project_b", "data"))
+        for e in result["ignored"]
+    ), f"ignored subtree should be recorded in detect()['ignored']: {result['ignored']}"
+
+
 # ---------------------------------------------------------------------------
 # #1908: manifest must not retain scan-excluded files as permanent
 # "deleted" entries. Full-scan saves prune excluded-but-alive rows; subset

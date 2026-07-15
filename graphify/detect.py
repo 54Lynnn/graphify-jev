@@ -1151,6 +1151,11 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
 
     skipped_sensitive: list[str] = []
     unclassified: list[str] = []
+    # Files/dirs dropped by a .gitignore/.graphifyignore rule. Recorded so an
+    # over-broad ignore (or a legitimately-ignored subtree) is visible instead
+    # of silently vanishing from the graph (#1922). Directory-level entries keep
+    # this bounded — a pruned `data/` is one entry, not one per contained file.
+    ignored: list[str] = []
     ignore_patterns = _load_graphifyignore(root)
     ignore_cache: dict[Path, bool] = {}  # shared across all _is_ignored calls in this scan
     # CLI --exclude patterns are anchored at the scan root and appended last
@@ -1222,11 +1227,15 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
                 # any `!` rule existed — e.g. a single `!docs/**` made the walk descend
                 # bin/, obj/, wwwroot/, generated/, … : a pathological slowdown on large
                 # repos for no correctness gain.
-                dirnames[:] = [
-                    d for d in dirnames
-                    if not _is_noise_dir(d, dp)
-                    and not _is_ignored(dp / d, root, ignore_patterns, _cache=ignore_cache)
-                ]
+                kept_dirs: list[str] = []
+                for d in dirnames:
+                    if _is_noise_dir(d, dp):
+                        continue
+                    if _is_ignored(dp / d, root, ignore_patterns, _cache=ignore_cache):
+                        ignored.append(str(dp / d) + os.sep)
+                        continue
+                    kept_dirs.append(d)
+                dirnames[:] = kept_dirs
                 if follow_symlinks:
                     safe_dirs: list[str] = []
                     for d in dirnames:
@@ -1256,6 +1265,7 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
             if str(p).startswith(str(converted_dir)):
                 continue
         if not in_memory and _is_ignored(p, root, ignore_patterns, _cache=ignore_cache):
+            ignored.append(str(p))
             continue
         if not _resolves_under_root(p, root):
             skipped_sensitive.append(str(p) + " [symlink target outside scan root]")
@@ -1338,6 +1348,7 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
         "skipped_sensitive": skipped_sensitive,
         "unclassified": sorted(unclassified),
         "walk_errors": walk_errors,
+        "ignored": sorted(ignored),
         "graphifyignore_patterns": len(ignore_patterns),
         "scan_root": str(root.resolve()),
     }

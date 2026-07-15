@@ -113,6 +113,7 @@ from graphify.extractors.resolution import (  # noqa: E402,F401
     _resolve_cross_file_java_imports,
     _resolve_export_target,
     _resolve_java_type_references,
+    _resolve_php_type_references,
     _resolve_js_import_path,
     _resolve_js_import_target,
     _resolve_js_module_path,
@@ -4581,6 +4582,22 @@ def extract(
     _merge_swift_extensions(per_file, all_nodes, all_edges)
     _disambiguate_colliding_node_ids(all_nodes, all_edges, all_raw_calls, root)
     _canonicalize_csharp_namespace_nodes(all_nodes, all_edges)
+    # PHP namespace/use disambiguation must run BEFORE the unique-stub rewire:
+    # the false merge (#1923) happens inside the rewire when a bare-name stub
+    # matches a unique internal class from a different namespace.
+    _php_exts = {".php", ".phtml", ".php3", ".php4", ".php5", ".php7", ".phps"}
+    _php_sel = [
+        (r, p) for r, p in zip(per_file, paths)
+        if p.suffix.lower() in _php_exts and not p.name.lower().endswith(".blade.php")
+    ]
+    if _php_sel:
+        try:
+            _resolve_php_type_references(
+                [r for r, _ in _php_sel], [p for _, p in _php_sel], all_nodes, all_edges
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("PHP type-reference resolution failed, skipping: %s", exc)
     _rewire_unique_stub_nodes(all_nodes, all_edges)
 
     # Add cross-file class-level edges (Python only - uses Python parser internally)
