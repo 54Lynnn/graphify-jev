@@ -287,6 +287,16 @@ def _semantic_id_remap(nodes: list, root: str | None) -> dict:
         if not new_stem:
             continue
         norm_nid = _normalize_id(nid)
+        # Idempotency guard (#1917): an id already carrying its canonical stem is
+        # done — do not re-run the legacy branch on it. When the canonical stem
+        # contains a shorter legacy stem as a prefix (parent dir name == file
+        # stem, e.g. `.claude/CLAUDE.md` -> `claude_claude` over legacy `claude`),
+        # an already-migrated id like `claude_claude_x` still matches the legacy
+        # `claude_` prefix below and would gain another stem segment on every
+        # build, defeating the same_topology/no_change short-circuits. Mirrors the
+        # canonical check in graph_has_legacy_ids.
+        if norm_nid == new_stem or norm_nid.startswith(new_stem + "_"):
+            continue
         new_id: str | None = None
         for old_stem in _old_file_stems(rel):
             if old_stem == new_stem:
