@@ -393,7 +393,11 @@ def test_pick_seeds_german_query_seeds_content_node_not_heading_noise():
 
     q = "Wie funktioniert die Authentifizierung?"
     terms = _query_terms(q)
-    seeds = _pick_seeds(_score_nodes(G, terms), G=G, terms=terms)
+    # #1918: _score_query does combined scoring + per-term singleton winners in
+    # one traversal; _pick_seeds consumes best_seed_by_term for the per-term
+    # guarantee (replaces the old terms= per-term rescoring).
+    qs = _score_query(G, terms, collect_per_term_seeds=True)
+    seeds = _pick_seeds(qs.ranked, G=G, best_seed_by_term=qs.best_seed_by_term)
     assert "auth" in seeds
     assert "cfg" not in seeds
     assert "sec" not in seeds
