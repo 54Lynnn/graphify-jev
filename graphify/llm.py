@@ -1655,9 +1655,28 @@ def _mark_partial(result: dict) -> None:
                 item["_partial"] = True
 
 
+def _chunk_partial_files(chunk) -> list[str]:
+    """Source paths covered by a chunk, for marking a chunk that truncated to an
+    EMPTY parse partial (#1950 gap): a mid-JSON cut yields zero items, so
+    ``_mark_partial`` has nothing to tag and the file it covered would be stamped
+    complete. Recording the chunk's own paths closes that. ``unit_path`` folds a
+    FileSlice back to its parent file so one truncated slice marks the whole doc."""
+    return sorted({str(unit_path(u)) for u in chunk})
+
+
+def _merged_partial_files(*results: dict) -> list[str]:
+    """Union of the ``_partial_files`` carried by each result (survives merges)."""
+    out: set[str] = set()
+    for r in results:
+        out.update(r.get("_partial_files", []) or [])
+    return sorted(out)
+
+
 def _partial_source_files(result: dict) -> list[str]:
-    """Source files that carry at least one ``_partial`` item in ``result``."""
-    seen: set[str] = set()
+    """Source files known partial: those carrying a ``_partial`` item marker, plus
+    any recorded in ``_partial_files`` (a chunk that truncated to an empty parse
+    and so has no items to mark)."""
+    seen: set[str] = set(result.get("_partial_files", []) or [])
     for bucket in ("nodes", "edges", "hyperedges"):
         for item in result.get(bucket, []):
             if isinstance(item, dict) and item.get("_partial"):
@@ -1739,6 +1758,7 @@ def _extract_with_adaptive_retry(
             "output_tokens": left.get("output_tokens", 0) + right.get("output_tokens", 0),
             "model": model,
             "finish_reason": "stop",
+            "_partial_files": _merged_partial_files(left, right),
         }
 
     def _split_lone_slice() -> "tuple[FileSlice, FileSlice] | None":
@@ -1797,6 +1817,7 @@ def _extract_with_adaptive_retry(
             "output_tokens": left.get("output_tokens", 0) + right.get("output_tokens", 0),
             "model": model,
             "finish_reason": "stop",
+            "_partial_files": _merged_partial_files(left, right),
         }
 
     if result.get("finish_reason") != "length":
@@ -1817,8 +1838,13 @@ def _extract_with_adaptive_retry(
             file=sys.stderr,
         )
         # The node set is incomplete; mark it so it is not promoted to the
-        # semantic cache as authoritative and is re-dispatched next run.
+        # semantic cache as authoritative and is re-dispatched next run. Also
+        # record the chunk's files so a truncation that parsed to nothing (an
+        # empty item set) still marks the file partial (#1950 empty-parse gap).
         _mark_partial(result)
+        result["_partial_files"] = sorted(
+            set(_chunk_partial_files(chunk)) | set(result.get("_partial_files", []) or [])
+        )
         return result
 
     if _depth >= max_depth:
@@ -1832,6 +1858,9 @@ def _extract_with_adaptive_retry(
         # re-extraction next run; under-marking would serve a truncated file as
         # complete, so err toward re-extraction.
         _mark_partial(result)
+        result["_partial_files"] = sorted(
+            set(_chunk_partial_files(chunk)) | set(result.get("_partial_files", []) or [])
+        )
         return result
 
     print(
@@ -1859,6 +1888,7 @@ def _extract_with_adaptive_retry(
         # truncation warning; the merged result is no longer truncated as a
         # logical unit.
         "finish_reason": "stop",
+        "_partial_files": _merged_partial_files(left, right),
     }
 
 
@@ -2154,6 +2184,14 @@ def _merge_into(merged: dict, result: dict) -> None:
     merged["hyperedges"].extend(result.get("hyperedges", []))
     merged["input_tokens"] += result.get("input_tokens", 0)
     merged["output_tokens"] += result.get("output_tokens", 0)
+    # Carry forward files a chunk truncated to an empty parse (#1950): these have
+    # no items to ride the merge, so they'd otherwise be lost from the run-level
+    # partial set the manifest stamp consults.
+    incoming = result.get("_partial_files")
+    if incoming:
+        merged["_partial_files"] = sorted(
+            set(merged.get("_partial_files", []) or []) | set(incoming)
+        )
 
 
 def _call_llm(

@@ -2675,6 +2675,16 @@ def dispatch_command(cmd: str) -> None:
                 # graph without an explicit --allow-partial override.
                 if _chunk_stats["total"] and _chunk_stats["succeeded"] < _chunk_stats["total"]:
                     _extraction_incomplete = True
+                # Which files truncated this run (item markers + the empty-parse
+                # _partial_files set). Computed BEFORE the save so it can be passed
+                # as partial_source_files: without it, a file whose only truncated
+                # chunk parsed empty (so it has no item markers here) would be
+                # written as a complete cache entry, re-promoting it (#1950).
+                from graphify.llm import (
+                    _partial_source_files as _partial_sf,
+                    _strip_partial_markers as _strip_partial,
+                )
+                _partial_semantic_files = set(_partial_sf(fresh))
                 try:
                     _save_semantic_cache(
                         fresh.get("nodes", []),
@@ -2684,19 +2694,12 @@ def dispatch_command(cmd: str) -> None:
                         allowed_source_files=uncached_paths,
                         mode=sem_cache_mode,
                         prompt=sem_prompt,
+                        partial_source_files=_partial_semantic_files or None,
                     )
                 except Exception as exc:
                     print(f"[graphify extract] warning: could not write semantic cache: {exc}", file=sys.stderr)
-                # Record which files truncated (before the markers are stripped)
-                # so they are left unstamped in the manifest and re-queued on the
-                # next incremental run. The save above consumed the marker to
-                # stamp affected cache entries partial: True; strip it before the
-                # corpus feeds the graph so it never leaks into graph.json.
-                from graphify.llm import (
-                    _partial_source_files as _partial_sf,
-                    _strip_partial_markers as _strip_partial,
-                )
-                _partial_semantic_files = set(_partial_sf(fresh))
+                # Strip the markers before the corpus feeds the graph so the
+                # internal flag never leaks into graph.json.
                 _strip_partial(fresh)
                 sem_result["nodes"].extend(fresh.get("nodes", []))
                 sem_result["edges"].extend(fresh.get("edges", []))

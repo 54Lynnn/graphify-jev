@@ -83,6 +83,52 @@ def test_merge_existing_accumulates_slices_and_stays_partial(tmp_path):
     assert {n["id"] for n in peek["nodes"]} == {"n1", "n2"}
 
 
+def test_save_stamps_partial_file_with_no_items(tmp_path):
+    """#1950 empty-parse gap: a chunk that truncates to an empty parse produces
+    NO items, so partial-ness can only come from partial_source_files. save must
+    still stamp such a file partial (seeding an empty group) — even when a prior
+    clean slice already cached it — so it is re-dispatched instead of served."""
+    doc = _doc(tmp_path)
+    # A clean slice cached first.
+    save_semantic_cache([{"id": "n1", "source_file": "doc.md"}], [], root=tmp_path, prompt="P")
+    assert load_cached(doc, root=tmp_path, kind="semantic", prompt="P") is not None
+    # Now an empty-parse truncation covering the same file: no items, only the
+    # named partial file. The entry must flip to a miss.
+    save_semantic_cache([], [], root=tmp_path, prompt="P",
+                        merge_existing=True, partial_source_files=["doc.md"])
+    assert load_cached(doc, root=tmp_path, kind="semantic", prompt="P") is None
+    # The earlier slice's node is not lost — it stays in the partial entry.
+    peek = load_cached(doc, root=tmp_path, kind="semantic", prompt="P", allow_partial=True)
+    assert peek is not None and {n["id"] for n in peek["nodes"]} == {"n1"}
+
+
+def test_clean_slice_does_not_repromote_empty_parse_partial(tmp_path):
+    """Ordering guard: once a file is partial (from an empty-parse truncation,
+    so no item markers), a later clean slice merging over it must keep it partial
+    via the carried-forward prev flag — not silently promote it to complete."""
+    doc = _doc(tmp_path)
+    # Empty-parse partial first (no markers, only the named file).
+    save_semantic_cache([], [], root=tmp_path, prompt="P", partial_source_files=["doc.md"])
+    assert load_cached(doc, root=tmp_path, kind="semantic", prompt="P") is None
+    # A later clean slice checkpoints with merge_existing and no partial arg.
+    save_semantic_cache([{"id": "n2", "source_file": "doc.md"}], [], root=tmp_path,
+                        prompt="P", merge_existing=True)
+    # Must still be a miss — the prior truncation is unresolved.
+    assert load_cached(doc, root=tmp_path, kind="semantic", prompt="P") is None
+
+
+def test_partial_files_carries_empty_parse_truncation():
+    """_partial_source_files must surface a file recorded in _partial_files even
+    when the result has zero items (the empty-parse case)."""
+    import graphify.llm as llm
+    result = {"nodes": [], "edges": [], "hyperedges": [], "_partial_files": ["big.md"]}
+    assert llm._partial_source_files(result) == ["big.md"]
+    # And it unions with intrinsic item markers.
+    result2 = {"nodes": [{"id": "a", "source_file": "x.md", "_partial": True}],
+               "edges": [], "hyperedges": [], "_partial_files": ["big.md"]}
+    assert llm._partial_source_files(result2) == ["big.md", "x.md"]
+
+
 def test_stamped_manifest_excludes_partial_files():
     """A truncated file produced output this run but is left unstamped in the
     manifest (like a failed chunk) so detect_incremental re-queues it."""

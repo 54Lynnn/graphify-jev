@@ -864,6 +864,16 @@ def save_semantic_cache(
     partial_paths = None
     if partial_source_files is not None:
         partial_paths = {resolved_source_path(path) for path in partial_source_files}
+        # A chunk that truncated to an EMPTY parse contributes no grouped items,
+        # so its file is absent from by_file and the write loop below would never
+        # stamp it partial — leaving a prior clean slice looking complete (#1950
+        # empty-parse gap). Seed an empty group for each named partial file that
+        # isn't already present, so the loop merges its existing entry and stamps
+        # it partial. Keyed by the resolved path (deduped against present groups).
+        _present = {resolved_source_path(k) for k in by_file}
+        for _pp in partial_paths:
+            if _pp not in _present:
+                by_file[str(_pp)]  # defaultdict: create an empty {nodes,edges,hyperedges}
 
     def group_skipped(fpath: str) -> bool:
         """Mirror the write-loop skip condition for one source_file group."""
@@ -948,20 +958,27 @@ def save_semantic_cache(
                 prev = load_cached(p, root, kind=kind, prompt=prompt,
                                    prompt_file=prompt_file, allow_legacy=False,
                                    allow_partial=True)
+                _prev_partial = bool(prev.get("partial")) if prev else False
                 if prev:
                     result = {
                         "nodes": (prev.get("nodes", []) or []) + result["nodes"],
                         "edges": (prev.get("edges", []) or []) + result["edges"],
                         "hyperedges": (prev.get("hyperedges", []) or []) + result["hyperedges"],
                     }
-            # A file is partial if the caller named it OR any of its grouped
-            # items carries the intrinsic ``_partial`` marker. Stamp the flag
-            # load_cached keys off; copy so the caller's dict is never mutated.
-            # A later complete extraction overwrites this same content-hash key
-            # with a non-partial entry that then serves normally.
+            else:
+                _prev_partial = False
+            # A file is partial if the caller named it, any of its grouped items
+            # carries the intrinsic ``_partial`` marker, OR the entry it merged
+            # onto was already partial (an empty-parse truncation leaves a
+            # ``partial: True`` entry with no item markers, so a later clean slice
+            # merging over it must NOT silently promote the half-file to complete
+            # — #1950). Copy so the caller's dict is never mutated. A genuine
+            # complete re-extraction (merge_existing=False) overwrites the
+            # content-hash key with a non-partial entry that then serves normally.
             is_partial = (
                 (partial_paths is not None and p in partial_paths)
                 or _group_has_partial_marker(result)
+                or _prev_partial
             )
             if is_partial:
                 result = {**result, "partial": True}
