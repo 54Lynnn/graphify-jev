@@ -1400,7 +1400,8 @@ def dispatch_command(cmd: str) -> None:
             encoding="utf-8",
         )
         to_json(G, communities, str(out / "graph.json"), community_labels=labels)
-        labels_path.write_text(json.dumps({str(k): v for k, v in labels.items()}, ensure_ascii=False), encoding="utf-8")
+        from graphify.paths import write_json_atomic as _wja
+        _wja(labels_path, {str(k): v for k, v in labels.items()}, ensure_ascii=False)
         # Membership signatures beside the labels so a later cluster-only can detect
         # which communities changed and avoid reusing a stale label (see reuse above).
         from graphify.cluster import community_member_sigs as _cms
@@ -1690,7 +1691,8 @@ def dispatch_command(cmd: str) -> None:
         except TypeError:
             out_data = _jg.node_link_data(merged)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(out_data, indent=2), encoding="utf-8")
+        from graphify.paths import write_json_atomic as _wja
+        _wja(out_path, out_data, indent=2)
         print(f"Merged {len(graphs)} graphs -> {merged.number_of_nodes()} nodes, {merged.number_of_edges()} edges")
         print(f"Written to: {out_path}")
 
@@ -2846,9 +2848,8 @@ def dispatch_command(cmd: str) -> None:
                     )
                     sys.exit(1)
             _backup(graphify_out)
-            graph_json_path.write_text(
-                json.dumps(merged, indent=2), encoding="utf-8"
-            )
+            from graphify.paths import write_json_atomic as _write_json_atomic
+            _write_json_atomic(graph_json_path, merged, indent=2)
             stages.mark("write")
             cost = _estimate_cost(
                 backend, merged["input_tokens"], merged["output_tokens"]
@@ -3000,7 +3001,8 @@ def dispatch_command(cmd: str) -> None:
                 "output": merged["output_tokens"],
             },
         }
-        analysis_path.write_text(json.dumps(analysis, indent=2), encoding="utf-8")
+        from graphify.paths import write_json_atomic as _wja
+        _wja(analysis_path, analysis, indent=2)
         try:
             _save_manifest(_manifest_files, manifest_path=str(manifest_path), kind="both", root=target, scan_corpus=_scan_corpus)
         except Exception as exc:
@@ -3158,7 +3160,8 @@ def dispatch_command(cmd: str) -> None:
                 _v = chunk.get(_tok, 0)
                 merged[_tok] += _v if isinstance(_v, (int, float)) else 0
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
+        from graphify.paths import write_json_atomic as _wja
+        _wja(out_path, merged, ensure_ascii=False)
         print(
             f"Merged {len(chunk_files)} chunks: {len(merged['nodes'])} nodes, {len(merged['edges'])} edges, "
             f"{merged['input_tokens']:,} in / {merged['output_tokens']:,} out tokens"
@@ -3202,7 +3205,8 @@ def dispatch_command(cmd: str) -> None:
             "hyperedges": cached_data.get("hyperedges", []) + new_data.get("hyperedges", []),
         }
         out_path2.parent.mkdir(parents=True, exist_ok=True)
-        out_path2.write_text(json.dumps(merged2, ensure_ascii=False), encoding="utf-8")
+        from graphify.paths import write_json_atomic as _wja
+        _wja(out_path2, merged2, ensure_ascii=False)
         print(f"Merged: {len(merged2['nodes'])} nodes, {len(merged2['edges'])} edges")
 
     elif Path(cmd).exists() or cmd in (".", "..") or cmd.startswith(("./", "../", "/", "~")):

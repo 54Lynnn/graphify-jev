@@ -99,3 +99,36 @@ def test_save_manifest_writes_atomically(tmp_path):
                   kind="both", root=tmp_path)
     assert json.loads(mpath.read_text())  # non-empty, valid JSON
     assert not any(x.name.endswith(".tmp") for x in mpath.parent.iterdir())
+
+
+def test_write_text_atomic_windows_permission_fallback(tmp_path, monkeypatch):
+    """On Windows os.replace raises PermissionError when the destination is
+    briefly locked (antivirus, an open reader); the copy-then-delete fallback
+    must still land the new content and leave no temp file."""
+    p = tmp_path / "graph.json"
+    p.write_text("original", encoding="utf-8")
+
+    real_replace = os.replace
+    calls = {"n": 0}
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        raise PermissionError("simulated WinError 5")
+
+    monkeypatch.setattr(os, "replace", flaky_replace)
+    write_text_atomic(p, "new-content")
+
+    assert calls["n"] == 1  # the fallback path was actually exercised
+    assert p.read_text() == "new-content"
+    assert sorted(x.name for x in tmp_path.iterdir()) == ["graph.json"]
+
+
+def test_write_json_atomic_ensure_ascii_false_preserves_utf8(tmp_path):
+    from graphify.paths import write_json_atomic
+
+    p = tmp_path / "g.json"
+    write_json_atomic(p, {"label": "Wörker 数据"}, ensure_ascii=False)
+    raw = p.read_text(encoding="utf-8")
+    assert "Wörker 数据" in raw  # raw UTF-8, not \\uXXXX escapes
+    assert "\\u" not in raw
+    assert json.loads(raw) == {"label": "Wörker 数据"}
