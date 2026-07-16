@@ -1,7 +1,7 @@
 """Tests for semantic evidence-binding in graphify.llm.
 
 A code node the model returns whose symbol name has no evidence in the dispatched
-source is downgraded to ``confidence = "UNVERIFIED"`` (never dropped). This closes
+source is flagged ``verification = "unverified"`` (never dropped). This closes
 the intra-file hallucination gap that ``_out_of_scope`` (#1895) — which only
 rejects nodes attributed to a file that was NOT dispatched — cannot see.
 """
@@ -50,11 +50,11 @@ def test_fabricated_code_symbol_is_downgraded(tmp_path):
     ]
     out = _by_label(_run([src], nodes, tmp_path))
     # The fabricated symbol has no evidence in the source -> flagged.
-    assert out["totally_fabricated_symbol()"]["confidence"] == "UNVERIFIED"
+    assert out["totally_fabricated_symbol()"]["verification"] == "unverified"
     # A symbol that IS in the source is verified -> untouched (no confidence key).
-    assert "confidence" not in out["real_function()"]
+    assert "verification" not in out["real_function()"]
     # A concept node is prose, never checked.
-    assert "confidence" not in out["Payments Overview"]
+    assert "verification" not in out["Payments Overview"]
 
 
 def test_qualified_and_prettified_labels_do_not_false_positive(tmp_path):
@@ -66,8 +66,8 @@ def test_qualified_and_prettified_labels_do_not_false_positive(tmp_path):
     ]
     out = _by_label(_run([src], nodes, tmp_path))
     # Any label identifier present in the source verifies the whole label.
-    assert "confidence" not in out["PaymentProcessor.charge_card()"]
-    assert "confidence" not in out["charge_card(amount, token)"]
+    assert "verification" not in out["PaymentProcessor.charge_card()"]
+    assert "verification" not in out["charge_card(amount, token)"]
 
 
 def test_document_and_sourceless_nodes_are_never_flagged(tmp_path):
@@ -78,8 +78,8 @@ def test_document_and_sourceless_nodes_are_never_flagged(tmp_path):
         {"id": "b", "label": "orphan_symbol()", "file_type": "code"},  # no source_file
     ]
     out = _by_label(_run([src], nodes, tmp_path))
-    assert "confidence" not in out["Nonexistent Heading"]
-    assert "confidence" not in out["orphan_symbol()"]
+    assert "verification" not in out["Nonexistent Heading"]
+    assert "verification" not in out["orphan_symbol()"]
 
 
 def test_node_attributed_to_undispatched_file_is_left_to_out_of_scope(tmp_path):
@@ -92,7 +92,7 @@ def test_node_attributed_to_undispatched_file_is_left_to_out_of_scope(tmp_path):
     ]
     out = _by_label(_run([src], nodes, tmp_path))
     # Not in the dispatched set -> #1895's domain, not evidence-binding's.
-    assert "confidence" not in out["ghost_func()"]
+    assert "verification" not in out["ghost_func()"]
 
 
 def test_uncheckable_short_label_is_not_flagged(tmp_path):
@@ -103,7 +103,7 @@ def test_uncheckable_short_label_is_not_flagged(tmp_path):
     ]
     out = _by_label(_run([src], nodes, tmp_path))
     # "id" is < 3 chars, so there is no checkable identifier -> leave as-is.
-    assert "confidence" not in out["id()"]
+    assert "verification" not in out["id()"]
 
 
 def test_existing_lower_confidence_is_not_overwritten(tmp_path):
@@ -113,8 +113,10 @@ def test_existing_lower_confidence_is_not_overwritten(tmp_path):
         {"id": "a", "label": "made_up()", "file_type": "code", "source_file": "mod.py", "confidence": "INFERRED"},
     ]
     out = _by_label(_run([src], nodes, tmp_path))
-    # The model already flagged it lower; the downgrade never clobbers that.
+    # The model already hedged it (INFERRED); evidence-binding leaves it entirely
+    # alone — no verification flag added, and its confidence is never clobbered.
     assert out["made_up()"]["confidence"] == "INFERRED"
+    assert "verification" not in out["made_up()"]
 
 
 def test_label_identifiers_helper():
@@ -156,8 +158,8 @@ def test_evidence_binding_handles_file_slice(tmp_path):
     n = llm._bind_node_evidence(result, [fs], tmp_path)
     by = {x["label"]: x for x in result["nodes"]}
     assert n == 1
-    assert "confidence" not in by["real_function()"]
-    assert by["ghost_symbol()"]["confidence"] == "UNVERIFIED"
+    assert "verification" not in by["real_function()"]
+    assert by["ghost_symbol()"]["verification"] == "unverified"
 
 
 def test_evidence_binding_handles_absolute_source_file(tmp_path):
@@ -169,7 +171,7 @@ def test_evidence_binding_handles_absolute_source_file(tmp_path):
     ]}
     n = llm._bind_node_evidence(result, [src], tmp_path)
     assert n == 1
-    assert result["nodes"][0]["confidence"] == "UNVERIFIED"
+    assert result["nodes"][0]["verification"] == "unverified"
 
 
 def test_downgrade_emits_stderr_summary(tmp_path, capsys):
@@ -178,18 +180,37 @@ def test_downgrade_emits_stderr_summary(tmp_path, capsys):
     nodes = [{"id": "b", "label": "totally_made_up_symbol()", "file_type": "code", "source_file": "mod.py"}]
     _run([src], nodes, tmp_path)
     err = capsys.readouterr().err
-    assert "UNVERIFIED" in err
+    assert "unverified" in err
 
 
-def test_unverified_confidence_does_not_fail_validation():
-    # The downgrade must never make an otherwise-valid node fail validation
-    # (node-level confidence is not part of the validated schema).
+def test_unverified_flag_does_not_fail_validation():
+    # The flag lives on its own ``verification`` field, deliberately NOT on the
+    # validated ``confidence`` key (whose vocabulary is edge-only), so it must
+    # never make an otherwise-valid node fail validation.
     from graphify.validate import validate_extraction
 
     extraction = {
         "nodes": [{"id": "n1", "label": "foo", "file_type": "code",
-                   "source_file": "a.md", "confidence": "UNVERIFIED"}],
+                   "source_file": "a.md", "verification": "unverified"}],
         "edges": [],
     }
     errors = validate_extraction(extraction)
-    assert not any("confidence" in str(e).lower() for e in errors)
+    assert not any("verification" in str(e).lower() for e in errors)
+
+
+def test_diagnostics_reports_unverified_node_count():
+    # The consumer: diagnose_extraction surfaces the persisted verification flag
+    # so it is not a dead field.
+    from graphify.diagnostics import diagnose_extraction, format_diagnostic_report
+
+    extraction = {
+        "nodes": [
+            {"id": "n1", "label": "ghost", "file_type": "code",
+             "source_file": "a.md", "verification": "unverified"},
+            {"id": "n2", "label": "real", "file_type": "code", "source_file": "a.md"},
+        ],
+        "edges": [],
+    }
+    summary = diagnose_extraction(extraction)
+    assert summary["unverified_node_count"] == 1
+    assert "unverified_code_nodes: 1" in format_diagnostic_report(summary)

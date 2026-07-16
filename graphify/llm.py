@@ -565,13 +565,18 @@ def _read_files(units: "list[Path | FileSlice]", root: Path) -> str:
 # `_out_of_scope` (#1895) only rejects a node attributed to a real file that was
 # NOT dispatched; a fabricated symbol attributed to a file that WAS dispatched
 # slips through it. This closes that intra-file gap with a lenient substring
-# check and DOWNGRADES (never drops) an unverifiable node's confidence to
-# UNVERIFIED, surfaced by the caller (stderr) and left on the node in graph.json.
+# check and FLAGS (never drops) an unverifiable node with ``verification =
+# "unverified"``, surfaced by the caller (stderr), reported by the diagnostics,
+# and left on the node in graph.json.
 # Short tokens (len < 3) are ignored: they match too readily to be evidence and
 # their absence is not a reliable fabrication signal, so skipping them avoids
 # false positives.
 _LABEL_IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_UNVERIFIED_CONFIDENCE = "UNVERIFIED"
+# A dedicated node field — deliberately NOT the ``confidence`` key, whose
+# validated vocabulary ({EXTRACTED, INFERRED, AMBIGUOUS}, and only on edges)
+# this value does not belong to. Downstream (diagnostics) counts it.
+_VERIFICATION_FIELD = "verification"
+_UNVERIFIED_VALUE = "unverified"
 
 
 def _label_identifiers(label: str) -> list[str]:
@@ -611,23 +616,32 @@ def _bind_node_evidence(result: dict, text_units: "list[Path | FileSlice]", root
 
     For every ``file_type == "code"`` node whose ``source_file`` resolves to one
     of the (document/paper/image) files sent in THIS call, verify that at least
-    one identifier from its label occurs in that file's source bytes. If none
-    does, mark the node ``confidence = "UNVERIFIED"`` rather than dropping it.
+    one identifier from its label OR id occurs in that file's source bytes. If
+    none does, set ``verification = "unverified"`` rather than dropping it.
 
     Precision-first, to avoid false-positives on legitimately-derived names:
       - Only ``code`` nodes are checked — code labels are verbatim symbol names,
         whereas document/paper/concept labels are prose and would false-positive.
+      - Both the label AND the id are checked: the id (``stem_entityname``)
+        usually carries the verbatim symbol even when the label is prettified,
+        cutting false flags on human-readable labels.
       - Nodes without a ``source_file``, and nodes attributed to a file not
         dispatched in this call (left to #1895), are never touched.
-      - Verification is lenient: any label identifier occurring as a substring
+      - Verification is lenient: any identifier occurring as a substring
         (case-insensitive) passes; a node is flagged only when NONE occur.
-      - A label with no checkable identifier (all short / non-ASCII) is left as-is.
-      - The action is a reversible confidence downgrade, never a drop. A code
-        symbol a document only describes in prose (no verbatim occurrence) is
-        legitimately UNVERIFIED — the model inferred it rather than read it.
+      - A node with no checkable identifier (all short / non-ASCII) is left as-is.
+      - The action is a reversible flag, never a drop. A code symbol a document
+        only describes in prose (no verbatim occurrence) is legitimately
+        unverified — the model inferred it rather than read it.
     """
     nodes = result.get("nodes")
     if not nodes:
+        return 0
+    # Perf: skip the (potentially expensive, e.g. PDF re-extraction) source read
+    # entirely when the result has no code-typed node with a source_file — the
+    # common case for a document/paper batch.
+    if not any(isinstance(n, dict) and n.get("file_type") == "code" and n.get("source_file")
+               for n in nodes):
         return 0
     source_by_path = _dispatched_source_text(text_units, root)
     if not source_by_path:
@@ -649,14 +663,16 @@ def _bind_node_evidence(result: dict, text_units: "list[Path | FileSlice]", root
         src = source_by_path.get(key)
         if src is None:
             continue  # not dispatched in this call — #1895's out-of-scope domain
-        idents = _label_identifiers(str(n.get("label", "")))
+        idents = _label_identifiers(str(n.get("label", ""))) + _label_identifiers(str(n.get("id", "")))
         if not idents:
             continue  # nothing checkable — do not flag
         if any(ident.lower() in src for ident in idents):
             continue  # symbol name is present in the source — verified
-        # No evidence: downgrade unless the model already flagged it lower.
-        if n.get("confidence") in (None, "", "EXTRACTED"):
-            n["confidence"] = _UNVERIFIED_CONFIDENCE
+        # No evidence. Flag only a node the model itself presented as solid
+        # (EXTRACTED/unset) — one it already hedged (INFERRED/AMBIGUOUS) needs no
+        # second flag. Idempotent: never overwrites an existing verification.
+        if n.get("confidence") in (None, "", "EXTRACTED") and not n.get(_VERIFICATION_FIELD):
+            n[_VERIFICATION_FIELD] = _UNVERIFIED_VALUE
             downgraded += 1
     return downgraded
 
@@ -1638,7 +1654,7 @@ def extract_files_direct(
             if _n_unverified:
                 print(
                     f"[graphify] {_n_unverified} semantic node(s) had no evidence in "
-                    "the source and were marked confidence=UNVERIFIED",
+                    "the source and were flagged verification=unverified",
                     file=sys.stderr,
                 )
         except Exception as _exc:  # noqa: BLE001 — evidence-binding is advisory
