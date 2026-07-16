@@ -180,14 +180,27 @@ def _git_head() -> str | None:
         return None
 
 
-def existing_graph_node_count(path: "str | Path") -> int | None:
-    """Node count of an existing graph.json, or None when it can't be compared
-    (absent, empty, unreadable, malformed, or over the size cap).
+# Sentinel: an existing graph.json is present and non-empty but cannot be parsed
+# into a node count (corrupt, mid-write, or structurally wrong). The caller must
+# fail CLOSED on this — the same way to_json's #479 guard refuses to overwrite
+# such a file — because we cannot prove the new graph isn't a silent shrink.
+MALFORMED_GRAPH = object()
+
+
+def existing_graph_node_count(path: "str | Path"):
+    """Node count of an existing graph.json.
+
+    Returns:
+      - an ``int`` node count when the file parses;
+      - ``None`` when there is verifiably nothing to protect — absent, empty, or
+        over the size cap (matching how :func:`to_json` lets the new graph
+        replace an empty/oversized file);
+      - :data:`MALFORMED_GRAPH` when the file is present and non-empty but
+        unparseable — the caller must treat this as fail-closed (refuse to
+        overwrite), mirroring to_json's #479 handling of a corrupt/mid-write file.
 
     The raw ``--no-cluster`` write path uses this to apply the same #479 shrink
-    guard that :func:`to_json` applies inline for the clustered path. None means
-    "can't verify — let the write proceed", matching how ``to_json`` treats an
-    empty/oversized/unreadable existing file.
+    guard that :func:`to_json` applies inline for the clustered path.
     """
     p = Path(path)
     if not p.exists():
@@ -201,15 +214,19 @@ def existing_graph_node_count(path: "str | Path") -> int | None:
     try:
         raw = p.read_text(encoding="utf-8")
     except Exception:
-        return None
+        # Present but unreadable: fail closed if it has bytes, else nothing to lose.
+        try:
+            return MALFORMED_GRAPH if p.stat().st_size > 0 else None
+        except Exception:
+            return None
     if not raw.strip():
         return None
     try:
         data = json.loads(raw)
     except Exception:
-        return None
+        return MALFORMED_GRAPH
     nodes = data.get("nodes") if isinstance(data, dict) else None
-    return len(nodes) if isinstance(nodes, list) else None
+    return len(nodes) if isinstance(nodes, list) else MALFORMED_GRAPH
 
 
 def to_json(G: nx.Graph, communities: dict[int, list[str]], output_path: str, *, force: bool = False, built_at_commit: str | None = None, community_labels: dict[int, str] | None = None) -> bool:

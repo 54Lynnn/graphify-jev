@@ -2527,6 +2527,12 @@ def dispatch_command(cmd: str) -> None:
         # be force-written over a good complete graph — the final write falls back
         # to the #479 shrink guard unless --allow-partial is set.
         _extraction_incomplete = False
+        # A walk that couldn't fully enumerate the corpus (permission-denied
+        # subtree, I/O error) yields a legitimately smaller graph that must not
+        # be force-written over a complete one — same failure class as a crashed
+        # pass. detect()/detect_incremental() already record these; consume them.
+        if detection.get("walk_errors"):
+            _extraction_incomplete = True
 
         # AST extraction on code files. Empty code list (docs-only corpus) is
         # the issue #698 case — skip cleanly instead of crashing inside extract().
@@ -2817,14 +2823,22 @@ def dispatch_command(cmd: str) -> None:
             # to_json, so replicate the shrink check against the existing file and
             # exit before the write/manifest unless --allow-partial is set.
             if _extraction_incomplete and not cli_allow_partial:
+                from graphify.export import MALFORMED_GRAPH as _MALFORMED_GRAPH
                 _existing_n = _existing_graph_node_count(graph_json_path)
-                if _existing_n is not None and len(merged["nodes"]) < _existing_n:
+                _malformed = _existing_n is _MALFORMED_GRAPH
+                _shrinks = isinstance(_existing_n, int) and len(merged["nodes"]) < _existing_n
+                if _malformed or _shrinks:
+                    _detail = (
+                        f"the existing {graph_json_path} is present but unparseable "
+                        "(corrupt or a mid-write), so a shrink cannot be ruled out"
+                        if _malformed
+                        else f"smaller than the existing {graph_json_path} "
+                        f"({len(merged['nodes'])} < {_existing_n} nodes)"
+                    )
                     print(
                         "[graphify extract] error: extraction was incomplete (an AST/"
-                        "semantic pass failed) and the resulting --no-cluster graph is "
-                        f"smaller than the existing {graph_json_path} "
-                        f"({len(merged['nodes'])} < {_existing_n} nodes). Refusing to "
-                        "overwrite a complete graph with a partial one. Re-run after "
+                        f"semantic pass failed) and the resulting --no-cluster graph is {_detail}. "
+                        "Refusing to overwrite a complete graph with a partial one. Re-run after "
                         "fixing the failures, or pass --allow-partial to overwrite anyway.",
                         file=sys.stderr,
                     )

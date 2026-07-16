@@ -167,3 +167,22 @@ def test_no_cluster_allow_partial_overwrites(tmp_path, monkeypatch):
 
     assert exc.value.code == 0  # the raw --no-cluster path exits 0 on success
     assert len(json.loads(graph.read_text())["nodes"]) == 1
+
+
+def test_no_cluster_incomplete_build_fails_closed_on_malformed_existing_graph(
+    tmp_path, monkeypatch, capsys
+):
+    """A present-but-unparseable existing graph.json (corrupt or mid-write) could
+    be hiding a complete graph, so an incomplete --no-cluster build must refuse
+    to overwrite it — matching to_json's #479 fail-closed handling, not the
+    fail-open 'proceed when we can't count' path."""
+    graph = _arm_no_cluster(monkeypatch, tmp_path)
+    graph.write_text("{corrupt json", encoding="utf-8")  # non-empty, unparseable
+
+    with pytest.raises(SystemExit) as exc:
+        mainmod.main()
+
+    assert exc.value.code == 1
+    assert "unparseable" in capsys.readouterr().err
+    # The corrupt file is left untouched rather than clobbered by the partial build.
+    assert graph.read_text() == "{corrupt json"
