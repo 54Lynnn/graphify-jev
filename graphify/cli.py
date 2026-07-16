@@ -3064,8 +3064,12 @@ def dispatch_command(cmd: str) -> None:
                     merged["nodes"].append(n)
             merged["edges"].extend(chunk.get("edges", []))
             merged["hyperedges"].extend(chunk.get("hyperedges", []))
-            merged["input_tokens"] += chunk.get("input_tokens", 0)
-            merged["output_tokens"] += chunk.get("output_tokens", 0)
+            # Coerce token counts: a chunk is untrusted, so a non-numeric
+            # input_tokens/output_tokens must not abort the whole merge with a
+            # TypeError after other chunks already merged.
+            for _tok in ("input_tokens", "output_tokens"):
+                _v = chunk.get(_tok, 0)
+                merged[_tok] += _v if isinstance(_v, (int, float)) else 0
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(merged, ensure_ascii=False), encoding="utf-8")
         print(
