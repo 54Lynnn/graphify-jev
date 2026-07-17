@@ -58,6 +58,48 @@ def test_build_from_json_edge_count():
     G = build_from_json(load_extraction())
     assert G.number_of_edges() == 4
 
+def test_null_weight_edge_builds_and_clusters(tmp_path):
+    """#1960: an explicit ``"weight": null`` (JSON null -> None) used to survive
+    ``.get("weight", 1.0)`` and crash Louvain/Leiden modularity with a TypeError.
+    It must now coerce to the 1.0 default, build, and cluster without raising."""
+    from graphify.cluster import cluster
+    extraction = {
+        "nodes": [
+            {"id": "a", "label": "A", "file_type": "code", "source_file": "a.py"},
+            {"id": "b", "label": "B", "file_type": "code", "source_file": "b.py"},
+            {"id": "c", "label": "C", "file_type": "code", "source_file": "c.py"},
+        ],
+        "edges": [
+            {"source": "a", "target": "b", "relation": "references", "weight": None,
+             "confidence_score": None},
+            {"source": "b", "target": "c", "relation": "references", "weight": 2.5},
+        ],
+    }
+    G = build_from_json(extraction)
+    assert G["a"]["b"]["weight"] == 1.0            # null coerced to default
+    assert G["a"]["b"]["confidence_score"] == 1.0  # null confidence_score too
+    assert G["b"]["c"]["weight"] == 2.5            # a valid weight is preserved
+    cluster(G)  # must not raise (Louvain/Leiden modularity)
+
+
+def test_malformed_weights_normalize():
+    """Non-numeric / NaN / inf / negative weights fall back to 1.0 (the backends
+    reject them); a missing weight key is left absent (backends default it)."""
+    extraction = {
+        "nodes": [{"id": f"n{i}", "label": str(i), "file_type": "code",
+                   "source_file": f"{i}.py"} for i in range(4)],
+        "edges": [
+            {"source": "n0", "target": "n1", "relation": "references", "weight": "3.5"},
+            {"source": "n1", "target": "n2", "relation": "references", "weight": float("nan")},
+            {"source": "n2", "target": "n3", "relation": "references", "weight": -4},
+        ],
+    }
+    G = build_from_json(extraction)
+    assert G["n0"]["n1"]["weight"] == 3.5     # numeric string coerces
+    assert G["n1"]["n2"]["weight"] == 1.0     # NaN -> default
+    assert G["n2"]["n3"]["weight"] == 1.0     # negative -> default
+
+
 def test_nodes_have_label():
     G = build_from_json(load_extraction())
     assert G.nodes["n_transformer"]["label"] == "Transformer"
