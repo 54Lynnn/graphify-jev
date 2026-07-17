@@ -285,7 +285,7 @@ def _print_project_git_add_hint(paths: list[Path]) -> None:
     print()
     print("Project-scoped install. Add to version control:")
     print(f"  git add {' '.join(unique)}")
-def _claude_pretooluse_hooks() -> "list[dict]":
+def _claude_pretooluse_hooks(strict: bool = False) -> "list[dict]":
     """graphify's Claude/Codebuddy PreToolUse hooks, resolved at install time.
 
     The command invokes `graphify hook-guard <search|read>` via the absolute exe
@@ -293,15 +293,20 @@ def _claude_pretooluse_hooks() -> "list[dict]":
     alike — this is the #522 fix, and mirrors the codex hook. Matchers stay "Bash"
     and "Read|Glob" and the command always contains "graphify", so the existing
     install/uninstall filters find and replace both old bash hooks and these.
+
+    When ``strict`` is set, the read hook carries ``--strict`` so it blocks the
+    first raw read per session (Claude Code only). The ``GRAPHIFY_HOOK_STRICT`` env
+    var can force it on or off at runtime without a reinstall.
     """
     exe = _resolve_graphify_exe()
     if " " in exe and not exe.startswith('"'):
         exe = f'"{exe}"'
+    read_cmd = f"{exe} hook-guard read" + (" --strict" if strict else "")
     return [
         {"matcher": "Bash",
          "hooks": [{"type": "command", "command": f"{exe} hook-guard search"}]},
         {"matcher": "Read|Glob",
-         "hooks": [{"type": "command", "command": f"{exe} hook-guard read"}]},
+         "hooks": [{"type": "command", "command": read_cmd}]},
     ]
 def _skill_registration(skill_path: str = "~/.claude/skills/graphify/SKILL.md") -> str:
     return (
@@ -622,8 +627,10 @@ def install(platform: str = "claude", *, project: bool = False, project_dir: Pat
     print()
 def _print_install_usage() -> None:
     platforms = ", ".join([*_PLATFORM_CONFIG, "gemini", "cursor"])
-    print("Usage: graphify install [--project] [--platform P|P]")
+    print("Usage: graphify install [--project] [--strict] [--platform P|P]")
     print(f"Platforms: {platforms}")
+    print("  --strict  block the first raw file read per session until one "
+          "`graphify query` runs (Claude Code project hook only; needs --project)")
 _CLAUDE_MD_MARKER = "## graphify"
 _CODEBUDDY_MD_MARKER = "## graphify"
 _AGENTS_MD_MARKER = "## graphify"
@@ -1424,13 +1431,13 @@ def _agents_platform_uninstall(project_dir: Path | None = None) -> None:
     if removed:
         print("skill removed")
     _agents_uninstall(project_dir or Path("."), platform="agents")
-def _project_install(platform_name: str, project_dir: Path | None = None) -> None:
+def _project_install(platform_name: str, project_dir: Path | None = None, strict: bool = False) -> None:
     """Install platform skill/config files in the current project."""
     project_dir = project_dir or Path(".")
     platform_name = _canonical_platform(platform_name)
     if platform_name in ("claude", "windows"):
         install(platform=platform_name, project=True, project_dir=project_dir)
-        claude_install(project_dir)
+        claude_install(project_dir, strict=strict)
         _print_project_git_add_hint([project_dir / ".claude", project_dir / "CLAUDE.md"])
     elif platform_name == "gemini":
         gemini_install(project_dir, project=True)
@@ -1586,7 +1593,7 @@ def _kilo_uninstall(project_dir: Path) -> None:
     _agents_uninstall(project_dir or Path("."), platform="kilo")
     removed = _kilo_uninstall_global()
     print("; ".join(removed) if removed else "nothing to remove")
-def claude_install(project_dir: Path | None = None) -> None:
+def claude_install(project_dir: Path | None = None, strict: bool = False) -> None:
     """Write the graphify section to the local CLAUDE.md."""
     target = (project_dir or Path(".")) / "CLAUDE.md"
 
@@ -1606,12 +1613,15 @@ def claude_install(project_dir: Path | None = None) -> None:
 
     # Always re-install the Claude Code PreToolUse hook so an old hook
     # payload (e.g. pre-issue-#580 wording) is replaced on upgrade.
-    _install_claude_hook(project_dir or Path("."))
+    _install_claude_hook(project_dir or Path("."), strict=strict)
 
     print()
     print("Claude Code will now check the knowledge graph before answering")
     print("codebase questions and rebuild it after code changes.")
-def _install_claude_hook(project_dir: Path) -> None:
+    if strict:
+        print("Strict mode: the first raw file read per session is blocked until")
+        print("one `graphify query` runs (toggle with GRAPHIFY_HOOK_STRICT=0).")
+def _install_claude_hook(project_dir: Path, strict: bool = False) -> None:
     """Add graphify PreToolUse hook to .claude/settings.json."""
     settings_path = project_dir / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1628,9 +1638,10 @@ def _install_claude_hook(project_dir: Path) -> None:
     pre_tool = hooks.setdefault("PreToolUse", [])
 
     hooks["PreToolUse"] = [h for h in pre_tool if not (h.get("matcher") in ("Glob|Grep", "Bash", "Read|Glob") and "graphify" in str(h))]
-    hooks["PreToolUse"].extend(_claude_pretooluse_hooks())
+    hooks["PreToolUse"].extend(_claude_pretooluse_hooks(strict=strict))
     settings_path.write_text(json.dumps(settings, indent=2), encoding="utf-8")
-    print(f"  .claude/settings.json  ->  PreToolUse hooks registered (Bash search + Read/Glob)")
+    _mode = " (strict)" if strict else ""
+    print(f"  .claude/settings.json  ->  PreToolUse hooks registered (Bash search + Read/Glob){_mode}")
 def _uninstall_claude_hook(project_dir: Path) -> None:
     """Remove the graphify PreToolUse hook from .claude/settings.json and its
     local-only sibling .claude/settings.local.json.
@@ -1894,6 +1905,7 @@ def dispatch_install_cli(cmd: str) -> bool:
         default_platform = "windows" if platform.system() == "Windows" else "claude"
         selected_platform: str | None = None
         project_scope = False
+        strict = False
         args = sys.argv[2:]
         i = 0
         while i < len(args):
@@ -1903,6 +1915,9 @@ def dispatch_install_cli(cmd: str) -> bool:
                 return True
             if arg == "--project":
                 project_scope = True
+                i += 1
+            elif arg == "--strict":
+                strict = True
                 i += 1
             elif arg.startswith("--platform="):
                 candidate = arg.split("=", 1)[1]
@@ -1932,8 +1947,14 @@ def dispatch_install_cli(cmd: str) -> bool:
                 i += 1
         chosen_platform = selected_platform or default_platform
         if project_scope:
-            _project_install(chosen_platform, Path("."))
+            _project_install(chosen_platform, Path("."), strict=strict)
         else:
+            if strict:
+                print(
+                    "note: --strict applies to the project PreToolUse hook; run "
+                    "`graphify install --project --strict` or `graphify claude install --strict`.",
+                    file=sys.stderr,
+                )
             install(platform=chosen_platform)
     elif cmd == "uninstall":
         args = sys.argv[2:]
@@ -1970,10 +1991,11 @@ def dispatch_install_cli(cmd: str) -> bool:
     elif cmd == "claude":
         subcmd = sys.argv[2] if len(sys.argv) > 2 else ""
         if subcmd == "install":
+            _strict = "--strict" in sys.argv[3:]
             if "--project" in sys.argv[3:]:
-                _project_install("claude", Path("."))
+                _project_install("claude", Path("."), strict=_strict)
             else:
-                claude_install()
+                claude_install(strict=_strict)
         elif subcmd == "uninstall":
             if "--project" in sys.argv[3:]:
                 _project_uninstall("claude", Path("."))
