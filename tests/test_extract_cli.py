@@ -212,6 +212,57 @@ def test_incremental_partial_run_preserves_untouched_semantic_hash(
     )
 
 
+def test_truncated_doc_semantic_hash_is_cleared_for_requeue(monkeypatch, tmp_path):
+    """#1948 x #1950 interaction: a doc stamped complete on a prior run that
+    TRUNCATES (partial) this run must have its stale semantic_hash cleared, so
+    detect_incremental re-queues it — not inherit the old hash and look
+    unchanged. Partial files are dropped by _stamped_manifest_files, so they
+    land in clear_semantic (dispatched-but-not-stamped)."""
+    import json
+
+    corpus = _make_corpus(tmp_path)  # main.go + README.md
+    out_dir = tmp_path / "out"
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-fake-key")
+    partial_run = {"on": False}
+
+    def _extract(paths, **kwargs):
+        rels = sorted(os.path.relpath(str(p), str(corpus)) for p in paths)
+        on_chunk = kwargs.get("on_chunk_done")
+        if on_chunk:
+            on_chunk(0, 1, {"nodes": [], "edges": [], "hyperedges": []})
+        node = {"id": "n-readme", "source_file": "README.md", "file_type": "document"}
+        if partial_run["on"] and "README.md" in rels:
+            node["_partial"] = True  # this run truncated README.md
+        return {"nodes": [node] if "README.md" in rels else [],
+                "edges": [], "hyperedges": [], "input_tokens": 10, "output_tokens": 5}
+
+    monkeypatch.setattr("graphify.llm.extract_corpus_parallel", _extract)
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+
+    def _run():
+        monkeypatch.setattr(mainmod.sys, "argv",
+                            ["graphify", "extract", str(corpus), "--backend", "claude",
+                             "--no-cluster", "--out", str(out_dir)])
+        try:
+            mainmod.main()
+        except SystemExit as exc:
+            assert exc.code in (None, 0)
+
+    manifest_path = out_dir / "graphify-out" / "manifest.json"
+    _run()  # run 1: complete
+    assert json.loads(manifest_path.read_text())["README.md"].get("semantic_hash")
+
+    # run 2: README.md changes and truncates (partial) this time.
+    (corpus / "README.md").write_text("# Notes\nNew, longer content that truncated.\n")
+    partial_run["on"] = True
+    _run()
+    m2 = json.loads(manifest_path.read_text())
+    assert not m2.get("README.md", {}).get("semantic_hash"), (
+        "a truncated doc's stale semantic_hash must be cleared so it is "
+        "re-queued next run (#1948 x #1950)"
+    )
+
+
 def test_manifest_stamps_freshly_extracted_semantic_docs(monkeypatch, tmp_path):
     """#1897: fresh extraction returns nodes with ROOT-RELATIVE source_file,
     while the #933 manifest filter compared them against detect()'s ABSOLUTE
