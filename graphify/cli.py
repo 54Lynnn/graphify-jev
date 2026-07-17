@@ -2325,6 +2325,7 @@ def dispatch_command(cmd: str) -> None:
             print(
                 "Usage: graphify extract <path> [--backend gemini|kimi|claude|openai|deepseek|ollama] "
                 "[--model M] [--mode deep] [--out DIR] [--google-workspace] [--no-cluster] "
+                "[--no-gitignore] "
                 "[--max-workers N] [--token-budget N] [--max-concurrency N] "
                 "[--api-timeout S] [--postgres DSN] [--cargo] [--allow-partial] [--timing]",
                 file=sys.stderr,
@@ -2353,6 +2354,7 @@ def dispatch_command(cmd: str) -> None:
         google_workspace = False
         global_merge = False
         code_only = False
+        no_gitignore = False
         global_repo_tag: str | None = None
         # Performance/tuning knobs (issue #792). None means "use library default".
         cli_max_workers: int | None = None
@@ -2418,6 +2420,8 @@ def dispatch_command(cmd: str) -> None:
                 code_only = True; i += 1
             elif a == "--google-workspace":
                 google_workspace = True; i += 1
+            elif a == "--no-gitignore":
+                no_gitignore = True; i += 1
             elif a == "--global":
                 global_merge = True; i += 1
             elif a == "--as" and i + 1 < len(args):
@@ -2495,10 +2499,14 @@ def dispatch_command(cmd: str) -> None:
         out_root = (out_dir.resolve() if out_dir else target)
         graphify_out = out_root / _GRAPHIFY_OUT
         graphify_out.mkdir(parents=True, exist_ok=True)
-        # Persist --exclude so later update/watch/hook rebuilds re-apply it
-        # instead of silently re-including the excluded paths (#1886).
+        # Persist corpus-shaping options so later update/watch/hook rebuilds
+        # use the same file set as the initial extraction (#1886).
         from graphify.watch import _write_build_config as _write_build_cfg
-        _write_build_cfg(graphify_out, excludes=cli_excludes or None)
+        _write_build_cfg(
+            graphify_out,
+            excludes=cli_excludes or None,
+            gitignore=not no_gitignore,
+        )
 
         stages = _StageTimer(cli_timing)
 
@@ -2547,6 +2555,7 @@ def dispatch_command(cmd: str) -> None:
                 manifest_path=str(manifest_path),
                 google_workspace=google_workspace or None,
                 extra_excludes=cli_excludes or None,
+                gitignore=not no_gitignore,
             )
             files_by_type = detection.get("files", {})
             new_by_type = detection.get("new_files", {})
@@ -2569,7 +2578,13 @@ def dispatch_command(cmd: str) -> None:
             )
         else:
             print(f"[graphify extract] scanning {target}")
-            detection = _detect(target, google_workspace=google_workspace or None, extra_excludes=cli_excludes or None, cache_root=out_root)
+            detection = _detect(
+                target,
+                google_workspace=google_workspace or None,
+                extra_excludes=cli_excludes or None,
+                cache_root=out_root,
+                gitignore=not no_gitignore,
+            )
             files_by_type = detection.get("files", {})
             code_files = [Path(p) for p in files_by_type.get("code", [])]
             doc_files = [Path(p) for p in files_by_type.get("document", [])]
