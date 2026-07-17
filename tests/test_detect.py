@@ -1108,6 +1108,16 @@ def test_sensitive_dir_carveout_does_not_bypass_name_screens():
     assert _is_sensitive(Path("credentials/id_rsa"))           # extensionless key
 
 
+def test_sensitive_dir_carveout_still_drops_tfvars_values_store():
+    # #1943 follow-up: genuine source under secrets/ is rescued, but .tfvars is
+    # Terraform's canonical values store (real secrets), not source — it stays
+    # dropped, while the real code file beside it is kept.
+    assert _is_sensitive(Path("secrets/prod.tfvars"))
+    assert not _is_sensitive(Path("secrets/loader.py"))
+    # .tf / .hcl are genuine infra source and remain graphable under secrets/.
+    assert not _is_sensitive(Path("secrets/main.tf"))
+
+
 # ── Generic keywords must be load-bearing: topic slugs are not secret stores ──
 # A keyword buried mid-phrase in a >=3-word descriptive name is a note ABOUT
 # the topic, not a credential file. It must not be silently dropped.
