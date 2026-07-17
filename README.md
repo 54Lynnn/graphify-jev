@@ -553,6 +553,9 @@ PowerShell treats a leading `/` as a path separator. Use `graphify .` (no slash)
 **Graph has fewer nodes after `--update` or rebuild**
 If a refactor deleted files, the old nodes linger. Pass `--force` (or set `GRAPHIFY_FORCE=1`) to overwrite even when the rebuild has fewer nodes.
 
+**`extract` exits with "extraction was incomplete ... refusing to overwrite"**
+When an extraction pass crashes or a walk can't fully read the corpus, the run would be smaller than a complete one, so `graphify extract` refuses to overwrite a larger existing graph with the partial result (protecting your `graph.json`). Fix the underlying failure and re-run, or pass `--allow-partial` to overwrite anyway.
+
 **Graph has duplicate nodes for the same entity (ghost duplicates)**
 Ghost duplicates (same symbol appearing twice — once from AST extraction with a source location, once from semantic extraction without) are now automatically merged at build time. If you see this in a graph built before v0.8.33, run a full re-extract to clean up:
 ```bash

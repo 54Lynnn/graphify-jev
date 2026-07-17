@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.18 (unreleased)
+## 0.9.18 (2026-07-17)
 
 - Fix: an incomplete extraction no longer force-writes a partial graph over a complete one (#1951, thanks @TPAteeq). A crashed AST/semantic pass, a some-chunks-failed run, or a walk that couldn't fully enumerate the corpus (permission-denied subtree) produced a smaller graph that the `to_json(force=True)` path wrote anyway, bypassing the #479 shrink guard; the `--no-cluster` raw dump had no guard at all. Both paths now refuse to overwrite a larger existing graph when the run was incomplete (exit 1, nothing written) unless `--allow-partial` is passed, and a present-but-unparseable existing graph fails closed (a corrupt/mid-write file could be hiding a complete graph). `detect()`'s `walk_errors` now count as incomplete too.
 - Fix: `graph.json`, `manifest.json`, and the other JSON artifacts are now written atomically (#1952, thanks @TPAteeq). A kill, OOM, or ENOSPC mid-write used to leave a truncated file — and a truncated `graph.json` then wedged every later run via the shrink guard's fail-safe. Writes now go to a temp file in the same directory and `os.replace` into place (writing *through* a symlink so shared-store setups keep working); the writers the original change missed (the `--no-cluster` dump, `merge-graphs`/`merge-chunks`/`merge-semantic`, the analysis/labels sidecars, and the global graph/manifest) are routed through it too.
