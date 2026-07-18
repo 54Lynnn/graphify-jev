@@ -779,13 +779,13 @@ graphify label ./my-project --backend=openai --model gpt-4o   # force a specific
 
 ---
 
-## Built on graphify: Penpax
+## graphify Enterprise
 
-[**Penpax**](https://graphify.com) is the always-on layer built on top of graphify — it applies the same graph approach to your entire working life: meetings, browser history, emails, files, and code, updating continuously in the background.
+[**graphify Enterprise**](https://graphify.com) is the always-on layer built on top of graphify — it applies the same graph approach to your entire working context: meetings, files, docs, and code, updating continuously in the background.
 
-Built for people whose work lives across hundreds of conversations and documents they can never fully reconstruct. No cloud, fully on-device.
+Built for people and teams whose work lives across hundreds of conversations and documents they can never fully reconstruct.
 
-**Free trial launching soon.** [Join the waitlist →](https://www.graphify.com)
+**Learn more at [graphify.com](https://graphify.com).** Free trial launching soon.
 
 ---
 
@@ -853,6 +853,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for module responsibilities and how to ad
 ## Community and links
 
 <p align="center">
+  <a href="https://graphify.com"><img src="https://img.shields.io/badge/Website-graphify.com-4c1?style=flat&logo=googlechrome&logoColor=white" alt="Website"/></a>
   <a href="https://discord.gg/598Ad9zQZ"><img src="https://img.shields.io/badge/Discord-Join-5865F2?style=flat&logo=discord&logoColor=white" alt="Discord"/></a>
   <a href="https://x.com/graphify"><img src="https://img.shields.io/badge/X-graphify-000000?logo=x&logoColor=white" alt="X"/></a>
   <a href="https://github.com/sponsors/safishamsi"><img src="https://img.shields.io/badge/sponsor-safishamsi-ea4aaa?logo=github-sponsors" alt="Sponsor"/></a>
