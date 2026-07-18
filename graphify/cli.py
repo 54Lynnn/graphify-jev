@@ -2501,11 +2501,22 @@ def dispatch_command(cmd: str) -> None:
         graphify_out.mkdir(parents=True, exist_ok=True)
         # Persist corpus-shaping options so later update/watch/hook rebuilds
         # use the same file set as the initial extraction (#1886).
-        from graphify.watch import _write_build_config as _write_build_cfg
+        from graphify.watch import (
+            _write_build_config as _write_build_cfg,
+            _read_build_gitignore as _read_build_gi,
+        )
+        # #1971 persistence: an explicit --no-gitignore persists False; a later
+        # flag-less `graphify extract` must NOT clobber it back to True, which
+        # would make the git-ignored code silently disappear again (the exact
+        # complaint #1971 is about). Honor the persisted value for THIS run when
+        # the flag is absent (read before the write below), and write False only
+        # when the flag is set — None leaves the setting as-is, mirroring how
+        # #1886 persists --exclude.
+        _effective_gitignore = False if no_gitignore else _read_build_gi(graphify_out)
         _write_build_cfg(
             graphify_out,
             excludes=cli_excludes or None,
-            gitignore=not no_gitignore,
+            gitignore=False if no_gitignore else None,
         )
 
         stages = _StageTimer(cli_timing)
@@ -2555,7 +2566,7 @@ def dispatch_command(cmd: str) -> None:
                 manifest_path=str(manifest_path),
                 google_workspace=google_workspace or None,
                 extra_excludes=cli_excludes or None,
-                gitignore=not no_gitignore,
+                gitignore=_effective_gitignore,
             )
             files_by_type = detection.get("files", {})
             new_by_type = detection.get("new_files", {})
@@ -2583,7 +2594,7 @@ def dispatch_command(cmd: str) -> None:
                 google_workspace=google_workspace or None,
                 extra_excludes=cli_excludes or None,
                 cache_root=out_root,
-                gitignore=not no_gitignore,
+                gitignore=_effective_gitignore,
             )
             files_by_type = detection.get("files", {})
             code_files = [Path(p) for p in files_by_type.get("code", [])]
