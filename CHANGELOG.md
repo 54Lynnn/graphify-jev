@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.20 (unreleased)
+## 0.9.20 (2026-07-18)
 
 - Fix: the graphify-first search nudge now fires on Claude Code's dedicated **Grep tool**, not just Bash (#1986, thanks @mdshzb04). The installed PreToolUse hook only matched `Bash`, so a `Grep` tool call (whose `tool_input` is `{pattern, path, glob, ...}`, not `{command}`) slipped through and never got nudged toward `graphify query`. The matcher is now `Bash|Grep` and the search guard recognizes the Grep shape; it stays nudge-only (never the strict deny), and the uninstall filters + #1840 gating are unchanged.
 - Fix: installed hook commands now use forward slashes in the graphify exe path so Git Bash doesn't strip them (#1987, thanks @varuntej07). On Windows the resolved exe path had backslashes, which Git Bash (how Claude Code shells hooks) treats as escapes and drops, breaking the hook with "command not found". `_resolve_graphify_exe` now normalizes `\` to `/` at the single choke point, covering every emitter (Claude/CodeBuddy PreToolUse, Gemini BeforeTool, Codex); quoting and the `--strict` suffix are preserved and POSIX is unaffected.
