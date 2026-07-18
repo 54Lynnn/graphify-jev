@@ -278,16 +278,34 @@ def file_hash(path: Path, root: Path = Path("."), cache_root: "Path | None" = No
     # graphify-out/cache/stat-index.json inside the analyzed source tree even when
     # the AST cache itself is redirected to CWD (#1774 completion).
     _ensure_stat_index(root, cache_root=cache_root)
-    abs_key = str(p.resolve())
+    resolved = p.resolve()
+    abs_key = str(resolved)
+    # The salt is the path component that enters the digest (relative to root, or
+    # the absolute-path fallback). The stat-index memo MUST be keyed by it too:
+    # the same file hashed under two different roots yields two different digests
+    # (this happens within one `--out` run), and a memo keyed only by absolute
+    # path served whichever was computed first — making file_hash order-dependent
+    # and poisoning the persisted stat-index across runs (#1989). Store one digest
+    # per salt so alternating roots don't force re-reads.
+    try:
+        salt = resolved.relative_to(Path(root).resolve()).as_posix().lower()
+    except ValueError:
+        salt = resolved.as_posix().lower()
+
     st: "os.stat_result | None" = None
     try:
         st = p.stat()
         entry = _stat_index.get(abs_key)
-        if (entry
-                and entry.get("hash") is not None  # word-count-only entries carry no hash
+        if (isinstance(entry, dict)
                 and entry.get("size") == st.st_size
                 and entry.get("mtime_ns") == st.st_mtime_ns):
-            return entry["hash"]
+            hashes = entry.get("hashes")
+            if isinstance(hashes, dict):
+                cached = hashes.get(salt)
+                if isinstance(cached, str):
+                    return cached
+            # Legacy single-digest entries ("hash") don't record which salt
+            # produced them, so they are never trusted (#1989) — recompute once.
     except OSError:
         pass
 
@@ -296,21 +314,23 @@ def file_hash(path: Path, root: Path = Path("."), cache_root: "Path | None" = No
     h = hashlib.sha256()
     h.update(content)
     h.update(b"\x00")
-    try:
-        rel = p.resolve().relative_to(Path(root).resolve())
-        h.update(rel.as_posix().lower().encode())
-    except ValueError:
-        h.update(p.resolve().as_posix().lower().encode())
+    h.update(salt.encode())
     digest = h.hexdigest()
 
     if st is not None:
         entry = _stat_index.get(abs_key)
-        if (entry is not None
+        if (isinstance(entry, dict)
                 and entry.get("size") == st.st_size
                 and entry.get("mtime_ns") == st.st_mtime_ns):
-            entry["hash"] = digest  # preserve a co-located word_count
+            hashes = entry.get("hashes")
+            if not isinstance(hashes, dict):
+                hashes = {}
+                entry["hashes"] = hashes
+            hashes[salt] = digest       # preserve a co-located word_count / other salts
+            entry.pop("hash", None)     # retire the un-salted legacy digest
         else:
-            _stat_index[abs_key] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "hash": digest}
+            _stat_index[abs_key] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns,
+                                    "hashes": {salt: digest}}
         _stat_index_dirty = True
 
     return digest
