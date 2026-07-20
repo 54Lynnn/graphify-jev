@@ -4698,9 +4698,19 @@ def extract(
                     return canonical, target[len(pref) + 1:]
             return None
 
-        # (canonical file id, symbol) → owned target, learned from symbol-level
-        # re_exports edges that already point at a real node.
-        chain: dict[tuple[str, str], str] = {}
+        # (canonical file id, symbol) → set of owned targets, learned from
+        # symbol-level re_exports edges that already point at a real node. A set
+        # (not last-write-wins): when a barrel re-exports the SAME local name
+        # from two different modules (`export {x} from './a'; export {x as y}
+        # from './b'` — both key on local name `x`), the key becomes ambiguous
+        # and must NOT be guessed, or we fabricate a wrong edge. Ambiguous keys
+        # resolve to None so the edge falls to the dangling-canonical fallback
+        # (dropped at build), while the shared resolver's correct edge survives.
+        chain: dict[tuple[str, str], set] = {}
+
+        def _resolve1(key) -> "str | None":
+            targets = chain.get(key)
+            return next(iter(targets)) if targets and len(targets) == 1 else None
 
         def _learn(e: dict) -> None:
             tf = e.get("target_file")
@@ -4708,7 +4718,7 @@ def extract(
                 return
             dec = _decompose(e.get("target", ""), tf)
             if dec is not None:
-                chain[(e.get("source"), dec[1])] = e["target"]
+                chain.setdefault((e.get("source"), dec[1]), set()).add(e["target"])
 
         for e in all_edges:
             if e.get("relation") == "re_exports":
@@ -4725,7 +4735,7 @@ def extract(
             still: list[dict] = []
             for e in pending:
                 dec = _decompose(e.get("target", ""), e["target_file"])
-                resolved_target = chain.get((dec[0], dec[1])) if dec else None
+                resolved_target = _resolve1((dec[0], dec[1])) if dec else None
                 if resolved_target is None:
                     still.append(e)
                     continue
@@ -4735,7 +4745,7 @@ def extract(
                     # directly — decomposing the repointed target against this
                     # edge's own target_file would fail, since the target now
                     # carries the DEFINING file's stem, not the barrel's.
-                    chain[(e.get("source"), dec[1])] = resolved_target
+                    chain.setdefault((e.get("source"), dec[1]), set()).add(resolved_target)
                 progressed = True
             pending = still
             if not progressed:

@@ -1543,3 +1543,47 @@ def test_no_symbol_edge_target_contains_checkout_prefix(tmp_path, monkeypatch):
         and str(edge.get("target", "")).startswith(abs_prefix)
     ]
     assert offenders == [], f"checkout path leaked into edge targets: {offenders}"
+
+
+def test_ambiguous_barrel_reexport_chain_does_not_guess(tmp_path, monkeypatch):
+    """When a barrel re-exports the SAME local name from two different modules,
+    the barrel-chain resolver must NOT collapse an importer's edge onto one of
+    them by last-write-wins (#2034 follow-up). With the ambiguity guard the chain
+    leaves the import unresolved at the barrel symbol (dangling, dropped at build)
+    rather than fabricating a specific target; without it the chain repoints to
+    whichever module was learned last."""
+    _write(
+        tmp_path / "tsconfig.json",
+        json.dumps({"compilerOptions": {"baseUrl": ".", "paths": {"@/*": ["src/*"]}}}),
+    )
+    _write(tmp_path / "src/lib/a.ts", "export function dup() { return 'a' }\n")
+    _write(tmp_path / "src/lib/b.ts", "export function dup() { return 'b' }\n")
+    _write(tmp_path / "src/lib/index.ts",
+           "export { dup } from '@/lib/a'\nexport { dup } from '@/lib/b'\n")
+    _write(tmp_path / "src/consumer.ts",
+           "import { dup } from '@/lib'\nexport function useIt() { return dup() }\n")
+
+    monkeypatch.chdir(tmp_path)
+    result = extract(sorted(Path("src").rglob("*.ts")), cache_root=Path("."))
+
+    barrel_sym = _make_id(_file_stem(Path("src/lib/index.ts")), "dup")
+    consumer = _file_node_id(Path("src/consumer.ts"))
+    consumer_imports = [
+        e for e in result["edges"]
+        if e.get("source") == consumer and e.get("relation") == "imports"
+    ]
+    # The chain-produced import edge stays at the barrel symbol (unresolved) —
+    # proof the chain refused to guess. Without the fix it would be repointed to
+    # src_lib_a_dup / src_lib_b_dup (last-write-wins), so this edge would vanish.
+    assert any(e.get("target") == barrel_sym for e in consumer_imports), (
+        f"ambiguous barrel import was chain-resolved instead of left unresolved: "
+        f"{[e.get('target') for e in consumer_imports]}"
+    )
+    # Both legitimate barrel re-exports still resolve to their own module.
+    barrel = _file_node_id(Path("src/lib/index.ts"))
+    reexport_targets = {
+        e.get("target") for e in result["edges"]
+        if e.get("source") == barrel and e.get("relation") == "re_exports"
+    }
+    assert _make_id(_file_stem(Path("src/lib/a.ts")), "dup") in reexport_targets
+    assert _make_id(_file_stem(Path("src/lib/b.ts")), "dup") in reexport_targets
