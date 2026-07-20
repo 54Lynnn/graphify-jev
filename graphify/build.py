@@ -205,26 +205,46 @@ def _shortest_unique_suffix(sf: str, all_sfs: "set[str]") -> str:
     return "/".join(parts)
 
 
-def _disambiguate_file_node_labels(G: "nx.Graph") -> None:
-    """Give file nodes that share a basename a directory-qualified label so
-    `explain`/discovery can tell them apart (#2032). Repos where every basename
-    is unique are untouched (labels stay bare). Ids/edges are never changed —
-    only display labels. Idempotent: labels derive from source_file, not the
-    current (possibly already-qualified) label."""
+def _file_label_reassignments(items: "list[tuple]") -> dict:
+    """Given (key, label, source_file) triples, return {key: new_label} for file
+    nodes whose basename collides with another's — the shortest unique
+    directory-qualified suffix (#2032). Keys of non-colliding/basename-unique file
+    nodes are omitted (their label stays bare)."""
     from collections import defaultdict
-    groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
-    for nid, attrs in G.nodes(data=True):
-        sf = attrs.get("source_file")
-        label = attrs.get("label")
+    groups: dict[str, list[tuple]] = defaultdict(list)
+    for key, label, sf in items:
         if sf and label and _is_file_node_label(str(label), str(sf)):
             basename = str(sf).replace("\\", "/").rsplit("/", 1)[-1]
-            groups[basename].append((nid, str(sf)))
+            groups[basename].append((key, str(sf)))
+    out: dict = {}
     for members in groups.values():
         distinct = {sf for _, sf in members}
         if len(distinct) < 2:
             continue  # no collision — leave the bare basename label
-        for nid, sf in members:
-            G.nodes[nid]["label"] = _shortest_unique_suffix(sf, distinct)
+        for key, sf in members:
+            out[key] = _shortest_unique_suffix(sf, distinct)
+    return out
+
+
+def _disambiguate_file_node_labels(G: "nx.Graph") -> None:
+    """Relabel colliding-basename file nodes on a graph (#2032). Ids/edges are
+    never changed — only display labels. Idempotent (labels derive from
+    source_file, not the current possibly-qualified label)."""
+    items = [(nid, a.get("label"), a.get("source_file")) for nid, a in G.nodes(data=True)]
+    for nid, new_label in _file_label_reassignments(items).items():
+        G.nodes[nid]["label"] = new_label
+
+
+def disambiguate_file_labels_in_nodes(nodes: "list") -> None:
+    """Relabel colliding-basename file nodes on a raw node-dict list, in place
+    (#2032). Used by the extract --no-cluster path, which writes the merged
+    extraction directly without going through build_from_json."""
+    items = [
+        (i, n.get("label"), n.get("source_file"))
+        for i, n in enumerate(nodes) if isinstance(n, dict)
+    ]
+    for i, new_label in _file_label_reassignments(items).items():
+        nodes[i]["label"] = new_label
 
 
 def _infer_merge_root(graph_path: Path) -> str | None:

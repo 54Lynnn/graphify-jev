@@ -14,7 +14,25 @@ from graphify.build import (
     _disambiguate_file_node_labels,
     _is_file_node_label,
     _shortest_unique_suffix,
+    disambiguate_file_labels_in_nodes,
 )
+
+
+def test_disambiguate_raw_node_list_for_no_cluster_path():
+    """The extract --no-cluster path writes the merged node dicts directly
+    (bypassing build_from_json), so the list-based variant must relabel too."""
+    nodes = [
+        {"id": "po", "label": "index.ts", "file_type": "code", "source_file": "fn/process-order/index.ts"},
+        {"id": "sr", "label": "index.ts", "file_type": "code", "source_file": "fn/send-receipt/index.ts"},
+        {"id": "m", "label": "main.ts", "file_type": "code", "source_file": "main.ts"},
+        {"id": "sym", "label": "handler", "file_type": "code", "source_file": "fn/process-order/index.ts"},
+    ]
+    disambiguate_file_labels_in_nodes(nodes)
+    by_id = {n["id"]: n["label"] for n in nodes}
+    assert by_id["po"] == "process-order/index.ts"
+    assert by_id["sr"] == "send-receipt/index.ts"
+    assert by_id["m"] == "main.ts"
+    assert by_id["sym"] == "handler"
 
 
 def test_is_file_node_label_and_suffix_helpers():
