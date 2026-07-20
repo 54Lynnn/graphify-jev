@@ -174,6 +174,59 @@ def _abs_identity(p: str | None, root: str | None = None) -> str | None:
         return pp.as_posix()
 
 
+def _is_file_node_label(label: "str | None", source_file: "str | None") -> bool:
+    """Whether *label* is a file node's label for *source_file* — the bare
+    basename, OR a directory-qualified suffix produced by the disambiguation pass
+    below (#2032). Used both to recognize file nodes when relabeling and by the
+    downstream file-node predicates (analyze/tree/serve)."""
+    if not label or not source_file:
+        return False
+    sf = str(source_file).replace("\\", "/")
+    lbl = str(label)
+    if lbl == sf.rsplit("/", 1)[-1]:
+        return True
+    return "/" in lbl and (sf == lbl or sf.endswith("/" + lbl))
+
+
+def _shortest_unique_suffix(sf: str, all_sfs: "set[str]") -> str:
+    """Shortest trailing path suffix (basename + k parent dirs) of *sf* that is
+    unique among *all_sfs*. `a/b/index.ts` vs `c/b/index.ts` -> `a/b/index.ts`;
+    `x/index.ts` vs `y/index.ts` -> `x/index.ts`. Derived from the path (never the
+    current label) so relabeling is idempotent across incremental rebuilds."""
+    parts = [p for p in sf.replace("\\", "/").split("/") if p]
+    others = [
+        [p for p in o.replace("\\", "/").split("/") if p]
+        for o in all_sfs if o != sf
+    ]
+    for k in range(1, len(parts) + 1):
+        suffix = parts[-k:]
+        if all(o[-k:] != suffix for o in others):
+            return "/".join(suffix)
+    return "/".join(parts)
+
+
+def _disambiguate_file_node_labels(G: "nx.Graph") -> None:
+    """Give file nodes that share a basename a directory-qualified label so
+    `explain`/discovery can tell them apart (#2032). Repos where every basename
+    is unique are untouched (labels stay bare). Ids/edges are never changed —
+    only display labels. Idempotent: labels derive from source_file, not the
+    current (possibly already-qualified) label."""
+    from collections import defaultdict
+    groups: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for nid, attrs in G.nodes(data=True):
+        sf = attrs.get("source_file")
+        label = attrs.get("label")
+        if sf and label and _is_file_node_label(str(label), str(sf)):
+            basename = str(sf).replace("\\", "/").rsplit("/", 1)[-1]
+            groups[basename].append((nid, str(sf)))
+    for members in groups.values():
+        distinct = {sf for _, sf in members}
+        if len(distinct) < 2:
+            continue  # no collision — leave the bare basename label
+        for nid, sf in members:
+            G.nodes[nid]["label"] = _shortest_unique_suffix(sf, distinct)
+
+
 def _infer_merge_root(graph_path: Path) -> str | None:
     """Best-effort scan root for relativizing paths in build_merge when the caller
     passes no ``root`` (#1571).
@@ -860,6 +913,11 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
             kept_hyperedges.append(he)
         if kept_hyperedges:
             G.graph["hyperedges"] = kept_hyperedges
+    # Runs LAST, after the alias-competition above (which relies on file-node
+    # labels still being bare basenames): give colliding-basename file nodes a
+    # directory-qualified display label so lookup/discovery can disambiguate
+    # them (#2032). Labels only — ids and edges are untouched.
+    _disambiguate_file_node_labels(G)
     return G
 
 

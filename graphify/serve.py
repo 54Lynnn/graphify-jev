@@ -947,13 +947,15 @@ def _find_node(G: nx.Graph, label: str) -> list[str]:
 
     if source_exact:
         query_basename = _strip_diacritics(Path(label).name).lower()
-        preferred = [
-            nid
-            for nid in source_exact
-            if str(G.nodes[nid].get("source_location", "")) == "L1"
-            and _strip_diacritics(str(G.nodes[nid].get("label") or "")).lower()
-            == query_basename
-        ]
+        preferred = []
+        for nid in source_exact:
+            if str(G.nodes[nid].get("source_location", "")) != "L1":
+                continue
+            # File-node label is the bare basename OR a directory-qualified form
+            # from the #2032 disambiguation pass (e.g. "process-order/index.ts").
+            lbl = _strip_diacritics(str(G.nodes[nid].get("label") or "")).lower()
+            if lbl == query_basename or lbl.endswith("/" + query_basename):
+                preferred.append(nid)
         if len(preferred) == 1:
             source_exact = preferred + [nid for nid in source_exact if nid != preferred[0]]
 
