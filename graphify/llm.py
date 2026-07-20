@@ -58,18 +58,43 @@ _TOKENIZER = _get_tokenizer()
 
 
 def _resolve_ollama_base_url(default: str) -> str:
+    """Resolve the Ollama base URL. Honors an explicit OLLAMA_BASE_URL first
+    (verbatim), else falls back to Ollama's own OLLAMA_HOST (#1940), else the
+    default. OLLAMA_HOST may be a bare host, host:port, ``:port`` or bare port —
+    normalized the way the ollama client does: add ``http://`` when the scheme is
+    missing, default the port to 11434 when absent, and append the OpenAI-compat
+    ``/v1`` suffix."""
     ollama_base_url = os.environ.get("OLLAMA_BASE_URL")
     if ollama_base_url is not None:
         return ollama_base_url
     ollama_host = os.environ.get("OLLAMA_HOST")
     if ollama_host is None:
         return default
-    if not ollama_host.startswith(("http://", "https://")):
-        ollama_host = f"http://{ollama_host}"
-    ollama_host = ollama_host.rstrip("/")
-    if not ollama_host.endswith("/v1"):
-        ollama_host = f"{ollama_host}/v1"
-    return ollama_host
+    host = ollama_host.strip()
+    if not host:
+        return default
+    # Bare port ("11434") or ":port" (":11434") -> localhost on that port.
+    if host.isdigit():
+        host = f"localhost:{host}"
+    elif host.startswith(":") and host[1:].isdigit():
+        host = f"localhost{host}"
+    if not host.startswith(("http://", "https://")):
+        host = f"http://{host}"
+    # Default the port to Ollama's 11434 when the host omits it (bare hostname
+    # would otherwise resolve to port 80 and silently fail to connect).
+    from urllib.parse import urlsplit, urlunsplit
+    try:
+        parts = urlsplit(host)
+        if parts.hostname and parts.port is None:
+            hostname = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
+            userinfo = parts.netloc.rsplit("@", 1)[0] + "@" if "@" in parts.netloc else ""
+            host = urlunsplit(parts._replace(netloc=f"{userinfo}{hostname}:11434"))
+    except (ValueError, TypeError):
+        pass
+    host = host.rstrip("/")
+    if not host.endswith("/v1"):
+        host = f"{host}/v1"
+    return host
 
 
 BACKENDS: dict[str, dict] = {
@@ -2641,7 +2666,11 @@ def detect_backend() -> str | None:
         return "azure"
     if os.environ.get("AWS_PROFILE") or os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION"):
         return "bedrock"
-    ollama_url = os.environ.get("OLLAMA_BASE_URL")
+    # Honor Ollama's own OLLAMA_HOST here too, not just OLLAMA_BASE_URL (#1940) —
+    # otherwise a user who set the standard Ollama var but no --backend still
+    # gets "no LLM API key found". Empty default -> falsy when neither is set,
+    # so ollama stays opt-in and never shadows a paid key (checked first above).
+    ollama_url = _resolve_ollama_base_url("")
     if ollama_url:
         _validate_ollama_base_url(ollama_url)
         return "ollama"
