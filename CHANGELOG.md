@@ -2,7 +2,11 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.21 (unreleased)
+## 0.9.22 (unreleased)
+
+- Fix: a node whose `source_file` is a URL/virtual scheme (`gdoc://`, `s3://`, `http://`, ...) is no longer evicted on the second `graphify update` (follow-up to #2051). The #2051 disk-absence sweep guarded such sources with a literal `"://"` check, but write-side path normalization collapses the double slash (`gdoc://x` becomes `gdoc:/x`), so the guard missed the node on the next run and dropped it into the disk-absence eviction branch. The scheme is now matched tolerantly (and a Windows drive letter like `C:/` is not misread as remote).
+
+## 0.9.21 (2026-07-20)
 
 - Fix: `graphify extract` (headless, no `--backend`) now auto-detects Ollama from the standard `OLLAMA_HOST` env var, not only graphify's `OLLAMA_BASE_URL` (#1940, thanks @kimdzhekhon). An explicit `OLLAMA_BASE_URL` still wins; `OLLAMA_HOST` is normalized the way the Ollama client does (adds `http://`, defaults the port to 11434 when omitted, appends the `/v1` OpenAI-compat suffix). Wired through both the client base URL and backend auto-detection, so ollama stays opt-in and never shadows a configured paid key. (Supersedes the vendored-bulk #1966.)
 - Fix: a flag-less `graphify extract` now honors the persisted `--exclude` patterns instead of silently re-including them (#2027, thanks @oleksii-tumanov). Mirrors the #1971 gitignore-persistence fix: the exclude set is read from `.graphify_build.json` when `--exclude` is absent and applied to the scan, and a flag-less run no longer clobbers it; an explicit `--exclude` still replaces the persisted list.
