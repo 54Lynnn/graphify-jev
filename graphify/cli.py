@@ -3158,6 +3158,16 @@ def dispatch_command(cmd: str) -> None:
             _invalidate_file_manifest_for_db_graph()
             from graphify.paths import write_json_atomic as _write_json_atomic
             _write_json_atomic(graph_json_path, merged, indent=2)
+            try:
+                # Record the scan root so a later build_merge / update runbook can
+                # relativize deleted-file paths correctly even for a custom --out
+                # (its grandparent-of-graph.json fallback points at the wrong dir
+                # otherwise, and deleted files never prune — #2012/#1571).
+                (graphify_out / ".graphify_root").write_text(
+                    str(Path(target).resolve()), encoding="utf-8"
+                )
+            except OSError:
+                pass
             stages.mark("write")
             cost = _estimate_cost(
                 backend, merged["input_tokens"], merged["output_tokens"]
@@ -3284,6 +3294,14 @@ def dispatch_command(cmd: str) -> None:
                 file=sys.stderr,
             )
             sys.exit(1)
+        try:
+            # See the --no-cluster path above: persist the scan root so build_merge
+            # can relativize deleted-file paths under a custom --out (#2012/#1571).
+            (graphify_out / ".graphify_root").write_text(
+                str(Path(target).resolve()), encoding="utf-8"
+            )
+        except OSError:
+            pass
         stages.mark("export")
         if merged.get("output_tokens", 0) > 0:
             (graphify_out / ".graphify_semantic_marker").write_text(
