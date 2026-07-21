@@ -1260,7 +1260,13 @@ def dispatch_command(cmd: str) -> None:
                 rel = edata.get("relation", "")
                 conf = edata.get("confidence", "")
                 arrow = "-->" if direction == "out" else "<--"
-                print(f"  {arrow} {G.nodes[nb].get('label', nb)} [{rel}] [{conf}]")
+                # Append the edge's location — the actual call/import/reference
+                # SITE (in the caller's file for an incoming call), not a def
+                # line (#BUG1). Labeled by [rel] so the meaning is unambiguous.
+                loc = edata.get("source_location") or ""
+                sfile = edata.get("source_file") or ""
+                at = f" {sfile}:{loc}" if loc else ""
+                print(f"  {arrow} {G.nodes[nb].get('label', nb)} [{rel}] [{conf}]{at}")
             if len(connections) > 20:
                 print(f"  ... and {len(connections) - 20} more")
         from graphify import querylog

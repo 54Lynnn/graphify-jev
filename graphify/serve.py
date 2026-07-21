@@ -805,8 +805,34 @@ def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_bu
     # Empty when no sidecar exists, so un-annotated output stays byte-identical.
     overlay = getattr(G, "graph", {}).get("_learning_overlay", {}) or {}
     seed_set = set(seeds or [])
-    ordered = [n for n in (seeds or []) if n in nodes] + \
-              sorted(nodes - seed_set, key=lambda n: G.degree(n), reverse=True)
+    seed_hits = [n for n in (seeds or []) if n in nodes]
+    # Rank non-seed nodes by hop distance from the seeds so the node that answers
+    # the query (a direct hit or its close neighbors) survives the budget cut
+    # instead of being pushed past it by incidental high-degree hubs (#BUG2). BFS
+    # discovery order was discarded upstream (_bfs returns a set), so recompute
+    # layers here over BOTH edge directions. Deterministic: neighbor iteration is
+    # insertion-ordered and the sort key ends in str(n) (no hash-order).
+    def _adj(n):
+        if G.is_directed():
+            yield from G.successors(n)
+            yield from G.predecessors(n)
+        else:
+            yield from G.neighbors(n)
+    dist: dict[str, int] = {n: 0 for n in seed_hits}
+    frontier, hop = seed_hits, 0
+    while frontier:
+        hop += 1
+        nxt = []
+        for n in frontier:
+            for nb in _adj(n):
+                if nb in nodes and nb not in dist:
+                    dist[nb] = hop
+                    nxt.append(nb)
+        frontier = nxt
+    ordered = seed_hits + sorted(
+        nodes - seed_set,
+        key=lambda n: (dist.get(n, 1 << 30), -G.degree(n), str(n)),
+    )
     for nid in ordered:
         d = G.nodes[nid]
         # Every LLM-derived field passes through sanitize_label before being
@@ -836,22 +862,46 @@ def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_bu
             d = next(iter(raw.values()), {}) if isinstance(G, (nx.MultiGraph, nx.MultiDiGraph)) else raw
             context = d.get("context")
             context_suffix = f" context={sanitize_label(str(context))}" if context else ""
+            # The relation SITE (call/import/reference line in the source's
+            # file), not a def line — so "who calls X" cites a clickable call
+            # location, not the caller's def (#BUG1).
+            _loc = str(d.get("source_location") or "")
+            at_suffix = (
+                f" at={sanitize_label(str(d.get('source_file') or ''))}:{sanitize_label(_loc)}"
+                if _loc else ""
+            )
             line = (
                 f"EDGE {sanitize_label(G.nodes[u].get('label', u))} "
                 f"--{sanitize_label(str(d.get('relation', '')))} "
                 f"[{sanitize_label(str(d.get('confidence', '')))}{context_suffix}]--> "
-                f"{sanitize_label(G.nodes[v].get('label', v))}"
+                f"{sanitize_label(G.nodes[v].get('label', v))}{at_suffix}"
             )
             lines.append(line)
     output = "\n".join(lines)
     if len(output) > char_budget:
         cut_at = output[:char_budget].rfind("\n")
         cut_at = cut_at if cut_at > 0 else char_budget
+        # Never cut the seed nodes: they render first, so if the budget lands
+        # inside the seed block, extend the cut to cover it. The symbol the
+        # question named must always be in the answer (#BUG2). Seeds are bounded
+        # (_pick_seeds max_k + one per term), so the overshoot is a few lines.
+        if seed_hits:
+            seed_block_end = sum(len(lines[i]) + 1 for i in range(len(seed_hits))) - 1
+            cut_at = max(cut_at, min(seed_block_end, len(output)))
         total_nodes = sum(1 for l in lines if l.startswith("NODE "))
         shown_nodes = output[:cut_at].count("\nNODE ") + (1 if output.startswith("NODE ") else 0)
         cut_count = total_nodes - shown_nodes
+        # Prominent notice at the TOP so a truncated answer can never be mistaken
+        # for a complete one — silence used to read as absence (#BUG2). The
+        # notice + end marker sit OUTSIDE char_budget by design (two bounded
+        # wrapper lines, like the existing end marker).
         output = (
-            output[:cut_at]
+            f"[!] TRUNCATED: showing {shown_nodes} of {total_nodes} nodes "
+            f"(~{token_budget}-token budget). The answer may be among the "
+            f"{cut_count} cut nodes — raise the token budget (CLI: --budget) or "
+            f"narrow the query (e.g. context_filter=['call'], or get_node for a "
+            f"specific symbol).\n\n"
+            + output[:cut_at]
             + f"\n... (truncated — {cut_count} more nodes cut by ~{token_budget}-token budget."
             f" Narrow with context_filter=['call'] or use get_node for a specific symbol)"
         )
@@ -889,7 +939,10 @@ def _query_graph_text(
         header_parts.append(f"Context: {', '.join(resolved_filters)} ({filter_source})")
     header_parts.append(f"{len(nodes)} nodes found")
     header = " | ".join(header_parts) + "\n\n"
-    return header + _subgraph_to_text(traversal_graph, nodes, edges, token_budget)
+    # Pass the seeds so the queried symbol renders first and survives truncation
+    # (#BUG2): a branch merge had silently dropped this argument, leaving the
+    # seed-first ordering as dead code.
+    return header + _subgraph_to_text(traversal_graph, nodes, edges, token_budget, seeds=start_nodes)
 
 
 def _find_node(G: nx.Graph, label: str) -> list[str]:
@@ -1288,6 +1341,14 @@ def _build_server(graph_path: str):
             return f"No node matching '{label}' found."
         nid = matches[0]
         lines = [f"Neighbors of {sanitize_label(G.nodes[nid].get('label', nid))}:"]
+        def _edge_at(d: dict) -> str:
+            # Edge location = the relation SITE (call/import line) in the source
+            # node's file, not a def line (#BUG1).
+            loc = str(d.get("source_location") or "")
+            return (
+                f" at={sanitize_label(str(d.get('source_file') or ''))}:{sanitize_label(loc)}"
+                if loc else ""
+            )
         for nb in G.successors(nid):
             d = edge_data(G, nid, nb)
             rel = d.get("relation", "")
@@ -1295,7 +1356,7 @@ def _build_server(graph_path: str):
                 continue
             lines.append(
                 f"  --> {sanitize_label(G.nodes[nb].get('label', nb))} "
-                f"[{sanitize_label(str(rel))}] [{sanitize_label(str(d.get('confidence', '')))}]"
+                f"[{sanitize_label(str(rel))}] [{sanitize_label(str(d.get('confidence', '')))}]{_edge_at(d)}"
             )
         for nb in G.predecessors(nid):
             d = edge_data(G, nb, nid)
@@ -1304,7 +1365,7 @@ def _build_server(graph_path: str):
                 continue
             lines.append(
                 f"  <-- {sanitize_label(G.nodes[nb].get('label', nb))} "
-                f"[{sanitize_label(str(rel))}] [{sanitize_label(str(d.get('confidence', '')))}]"
+                f"[{sanitize_label(str(rel))}] [{sanitize_label(str(d.get('confidence', '')))}]{_edge_at(d)}"
             )
         return "\n".join(lines)
 

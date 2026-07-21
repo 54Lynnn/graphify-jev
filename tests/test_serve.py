@@ -1270,3 +1270,68 @@ def test_score_query_collect_per_term_seeds_false_omits_tracking(monkeypatch):
     assert qs.best_seed_by_term == {}
     # And the combined output is still byte-identical to _score_nodes.
     assert qs.ranked == _score_nodes(G, ["foo", "bar", "baz"])
+
+
+# --- BUG2: seed survival, truncation notice, deterministic ordering ----------
+
+def _star_graph(n_spokes=40):
+    """A high-degree hub plus a low-degree answer node, to force the answer past
+    a pure degree-sorted / BFS cut unless seed-first ordering protects it."""
+    G = nx.Graph()
+    G.add_node("hub", label="Hub", source_file="hub.py", source_location="L1", community=0)
+    for i in range(n_spokes):
+        G.add_node(f"s{i}", label=f"spoke{i}", source_file=f"s{i}.py", source_location="L1", community=0)
+        G.add_edge("hub", f"s{i}", relation="calls", confidence="EXTRACTED")
+    # low-degree answer node, attached to one spoke
+    G.add_node("answer", label="CompanySpacingGate", source_file="gate.py",
+               source_location="L12", community=0)
+    G.add_edge("s0", "answer", relation="calls", confidence="EXTRACTED")
+    return G
+
+
+def test_subgraph_to_text_seed_survives_truncation():
+    """BUG2: a low-degree answer node passed as a seed is rendered first and
+    survives a tiny budget, and truncation is announced."""
+    G = _star_graph()
+    nodes = set(G.nodes)
+    text = _subgraph_to_text(G, nodes, list(G.edges()), token_budget=30, seeds=["answer"])
+    assert "CompanySpacingGate" in text, "seed node was cut (BUG2)"
+    node_lines = [l for l in text.splitlines() if l.startswith("NODE ")]
+    assert "CompanySpacingGate" in node_lines[0], "seed must render first"
+    assert "TRUNCATED" in text
+
+
+def test_query_graph_text_passes_seeds_so_answer_survives():
+    """BUG2 regression guard: the query path must pass seeds to the renderer (a
+    branch merge had dropped the argument), so a queried low-degree symbol
+    appears in the body even when the output is truncated."""
+    G = _star_graph()
+    text = _query_graph_text(G, "CompanySpacingGate", mode="bfs", depth=2, token_budget=40)
+    # Present in the body, not merely the Start: header.
+    body = text.split("\n\n", 1)[-1]
+    assert "CompanySpacingGate" in body
+
+
+def test_subgraph_to_text_truncation_notice_at_top():
+    G = _star_graph()
+    text = _subgraph_to_text(G, set(G.nodes), list(G.edges()), token_budget=30, seeds=["answer"])
+    assert text.startswith("[!] TRUNCATED"), f"notice not at top: {text[:60]!r}"
+    assert "of" in text.splitlines()[0] and "nodes" in text.splitlines()[0]
+    assert "truncated" in text  # end marker still present
+
+
+def test_subgraph_to_text_no_notice_when_under_budget():
+    G = _make_graph()
+    text = _subgraph_to_text(G, {"n1", "n2"}, [("n1", "n2")], token_budget=2000)
+    assert "TRUNCATED" not in text and "truncated" not in text
+
+
+def test_subgraph_to_text_order_is_deterministic():
+    """Equal-degree nodes render in a stable order regardless of set iteration."""
+    G = nx.Graph()
+    for i in range(10):
+        G.add_node(f"z{i}", label=f"z{i}", source_file=f"z{i}.py", source_location="L1", community=0)
+    nodes = set(G.nodes)
+    a = _subgraph_to_text(G, nodes, [])
+    b = _subgraph_to_text(G, set(reversed(list(nodes))), [])
+    assert a == b

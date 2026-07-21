@@ -123,3 +123,30 @@ def test_explain_no_lesson_line_for_unannotated_node(monkeypatch, tmp_path, caps
     p = _write_graph(tmp_path)
     out = _run(monkeypatch, p, "validateSanitySession", capsys)
     assert "Lesson:" not in out
+
+
+def test_explain_connection_shows_call_site_line(monkeypatch, tmp_path, capsys):
+    """BUG1: an explain connection shows the edge's call-SITE line (in the
+    caller's file), not the caller's def line."""
+    graph_data = {
+        "directed": False, "multigraph": False, "graph": {},
+        "nodes": [
+            {"id": "loader", "label": "load_state()",
+             "source_file": "apollo.py", "source_location": "L90", "community": 0},
+            {"id": "trans", "label": "transition_state()",
+             "source_file": "state.py", "source_location": "L56", "community": 0},
+        ],
+        "links": [
+            {"source": "loader", "target": "trans", "relation": "calls",
+             "confidence": "EXTRACTED", "source_file": "apollo.py", "source_location": "L158"},
+        ],
+    }
+    p = tmp_path / "graph.json"
+    p.write_text(json.dumps(graph_data))
+    out = _run(monkeypatch, p, "transition_state", capsys)
+    # The inbound caller line must cite the call site apollo.py:L158.
+    caller_line = next(l for l in out.splitlines() if "<-- load_state()" in l)
+    assert "apollo.py:L158" in caller_line, f"call site missing from: {caller_line!r}"
+    assert "apollo.py:L90" not in caller_line  # never the caller's def line
+    # The queried node's own header still shows its def line (correct).
+    assert "state.py" in out and "L56" in out
