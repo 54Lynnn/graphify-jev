@@ -120,6 +120,34 @@ def test_ambiguous_package_alias_is_not_repointed(tmp_path):
     # repointed onto either file — no fabricated cross-tree import edge.
     imports = _import_edges(G)
     targets = {v for _, _, v in imports}
-    assert "a_src_pkg_mod" not in targets or "b_src_pkg_mod" not in targets, (
+    # Neither file may be chosen — an ambiguous alias must stay dangling.
+    assert "a_src_pkg_mod" not in targets and "b_src_pkg_mod" not in targets, (
         f"ambiguous alias was repointed to a specific file: {imports}"
+    )
+
+
+def test_non_python_import_edge_is_not_repointed(tmp_path):
+    """#2072 review: the alias map is Python-only, but a non-Python import edge
+    whose dangling target coincides with a Python alias must NOT be repointed
+    onto a Python file (that would fabricate a cross-language import)."""
+    pkg = tmp_path / "src" / "pkg"
+    pkg.mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "mod.py").write_text("def f():\n    return 1\n")
+    # Simulate a non-Python (C#) import edge whose target string collides with the
+    # Python alias `pkg_mod`, by hand-building the extraction the way extract emits.
+    result = extract([pkg / "__init__.py", pkg / "mod.py"], cache_root=tmp_path / "c",
+                     root=tmp_path, parallel=False)
+    result["nodes"].append(
+        {"id": "app_cs", "label": "app.cs", "file_type": "code", "source_file": "app.cs"}
+    )
+    result["edges"].append(
+        {"source": "app_cs", "target": "pkg_mod", "relation": "imports",
+         "confidence": "EXTRACTED", "source_file": "app.cs"}
+    )
+    G = build_from_json(result, root=str(tmp_path))
+    # The C# edge's target must remain the (dangling, dropped) `pkg_mod`, never
+    # repointed to the Python file node src_pkg_mod.
+    assert not any(v == "src_pkg_mod" and u == "app_cs" for _, u, v in _import_edges(G)), (
+        "non-Python import edge was repointed onto a Python file (#2072 review)"
     )

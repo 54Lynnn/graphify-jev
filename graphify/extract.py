@@ -212,7 +212,9 @@ def _repoint_python_package_imports(paths, all_nodes, all_edges, root) -> None:
             continue  # top-level file: scan-root-relative id already matches
         d = Path(p).resolve().parent
         levels = 0
-        while (d / "__init__.py").is_file():
+        # Bounded by the number of dirs between the file and the scan root, so a
+        # pathological `/__init__.py` chain can't loop forever.
+        while levels < len(parts) - 1 and (d / "__init__.py").is_file():
             levels += 1
             d = d.parent
         if levels == 0:
@@ -235,7 +237,15 @@ def _repoint_python_package_imports(paths, all_nodes, all_edges, root) -> None:
     if not alias_map:
         return
     for e in all_edges:
-        if isinstance(e, dict) and e.get("relation") in ("imports", "imports_from"):
+        # Only repoint edges emitted from a Python file: a non-Python import edge
+        # (e.g. C# `using Pkg.Mod;`, Java/Go dotted imports) can have a dangling
+        # target string that coincides with a Python alias, and repointing it
+        # would fabricate a cross-language import edge (#2072 review).
+        if (
+            isinstance(e, dict)
+            and e.get("relation") in ("imports", "imports_from")
+            and str(e.get("source_file", "")).lower().endswith((".py", ".pyi"))
+        ):
             tgt = e.get("target")
             if tgt in alias_map:
                 e["target"] = alias_map[tgt]
