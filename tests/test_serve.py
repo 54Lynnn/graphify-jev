@@ -1361,3 +1361,28 @@ def test_cut_lines_to_budget_over_budget_announces_at_top():
     shown = int(re.search(r"showing (\d+) of", first).group(1))
     body = out.split("\n\n", 1)[1].split("\n... (truncated", 1)[0]
     assert body.count("\n") + 1 == shown
+
+
+def test_subgraph_to_text_ignores_dangling_src_tgt(monkeypatch):
+    """#2080 review: a stray/dangling _src/_tgt on an edge (hand-edited or
+    adversarial graph.json) must NOT crash rendering; fall back to (u, v)."""
+    G = nx.Graph()
+    G.add_node("a", label="Alpha", source_file="a.py", source_location="L1", community=0)
+    G.add_node("b", label="Beta", source_file="b.py", source_location="L2", community=0)
+    # _src names a node that doesn't exist -> must be ignored, no KeyError.
+    G.add_edge("a", "b", relation="calls", confidence="EXTRACTED", _src="ghost", _tgt="b")
+    out = _subgraph_to_text(G, {"a", "b"}, [("a", "b")])
+    assert "EDGE" in out and "Alpha" in out and "Beta" in out  # rendered, didn't crash
+
+
+def test_subgraph_to_text_honors_valid_src_tgt_direction():
+    """#2080: a valid _src/_tgt (the stored direction) is honored even when the
+    traversal tuple is reversed."""
+    G = nx.Graph()
+    G.add_node("caller", label="caller", source_file="c.py", source_location="L1", community=0)
+    G.add_node("callee", label="callee", source_file="d.py", source_location="L2", community=0)
+    # Edge collected as (callee, caller) by traversal, but stored direction is caller->callee.
+    G.add_edge("callee", "caller", relation="calls", confidence="EXTRACTED", _src="caller", _tgt="callee")
+    out = _subgraph_to_text(G, {"caller", "callee"}, [("callee", "caller")])
+    edge_line = next(l for l in out.splitlines() if l.startswith("EDGE"))
+    assert "caller --calls" in edge_line and "--> callee" in edge_line
