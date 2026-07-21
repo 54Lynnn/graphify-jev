@@ -2,6 +2,13 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.24 (unreleased)
+
+- Fix: `graphify query` no longer prints `calls` edges backwards (#2080, thanks @Yyunozor). The graph on disk is correct, but the CLI loads it undirected and BFS/DFS collect edges in traversal order, so seeding on the callee rendered `callee --calls--> caller`. The renderer now recovers the stored direction from the edge's `_src`/`_tgt` (ignoring stray/dangling values), and both CLI `query` and MCP `query_graph` show the real direction.
+- Feat: `get_neighbors` and `get_community` (MCP) now honor a `token_budget` (default 2000) instead of rendering unbounded, so one call on a god node or large community can't flood the client's context (#2069, thanks @ojmucianski). Truncation is announced at the top of the output (matching `query`), with a line count and a narrowing hint.
+- Docs: `--code-only` is now surfaced in the `extract` usage text and README (#2071, thanks @HerenderKumar); documented as an `extract` flag rather than a `/graphify` skill flag.
+- Docs: README troubleshooting note for an older `graphifyy` in system site-packages shadowing `uv run --with graphifyy`, which silently runs the old version (#1540, thanks @HerenderKumar).
+
 ## 0.9.23 (2026-07-21)
 
 - Fix: caller / "call sites" listings now report the actual call-site line, not the caller function's definition line. `explain`, `affected`, and the MCP `get_neighbors`/`query` tools printed the caller node's `source_location` (its `def` line) for an incoming call, so a precise-looking citation sent users to the wrong line. The `calls` edge already carries the true call-site line; every caller/relation listing now reads the traversed edge's `source_file`:`source_location`, falling back to the node's own line only when the edge has none.
