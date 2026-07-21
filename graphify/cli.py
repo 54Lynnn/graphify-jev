@@ -1568,6 +1568,10 @@ def dispatch_command(cmd: str) -> None:
         # reports real cost instead of a hardcoded zero (#1694). Stays {0, 0} on
         # the reuse / no-label paths, which make no LLM calls.
         label_token_usage = {"input": 0, "output": 0}
+        # #2073: a --no-label run produces only "Community N" placeholders.
+        # Persisting them (plus a matching .sig) made the reuse branch treat them
+        # as fresh forever, permanently blocking real labeling on later runs.
+        placeholder_only = False
         if labels_path.exists() and not force_relabel:
             # Reuse saved labels, but don't blindly trust them: the graph may have
             # been re-scoped/re-clustered since labeling, in which case a cid now
@@ -1596,7 +1600,14 @@ def dispatch_command(cmd: str) -> None:
             hub_labels: dict[int, str] | None = None
             changed = 0
             for cid in communities:
-                have_label = cid in existing_labels
+                # A persisted "Community {cid}" is a placeholder, not an earned
+                # label — treat it as absent so the hub labeler replaces it and an
+                # already-polluted sidecar (e.g. from a prior --no-label run) heals
+                # instead of suppressing real labels forever (#2073).
+                have_label = (
+                    cid in existing_labels
+                    and existing_labels[cid] != f"Community {cid}"
+                )
                 if saved_sigs:
                     # Precise: the membership signature tells us if this exact
                     # community changed since it was labeled.
@@ -1624,6 +1635,7 @@ def dispatch_command(cmd: str) -> None:
                 )
         elif no_label and not force_relabel:
             labels = {cid: f"Community {cid}" for cid in communities}
+            placeholder_only = True
         else:
             # No labels file yet (or `graphify label` forced a refresh). When run
             # standalone there is no orchestrating agent to do skill.md Step 5, so
@@ -1687,13 +1699,18 @@ def dispatch_command(cmd: str) -> None:
             encoding="utf-8",
         )
         to_json(G, communities, str(out / "graph.json"), community_labels=labels)
-        from graphify.paths import write_json_atomic as _wja
-        _wja(labels_path, {str(k): v for k, v in labels.items()}, ensure_ascii=False)
-        # Membership signatures beside the labels so a later cluster-only can detect
-        # which communities changed and avoid reusing a stale label (see reuse above).
-        from graphify.cluster import community_member_sigs as _cms
-        (labels_path.parent / (labels_path.name + ".sig")).write_text(
-            json.dumps({str(k): v for k, v in _cms(communities).items()}), encoding="utf-8")
+        # Don't persist placeholder-only labels (or their .sig): leaving the
+        # sidecar absent lets a later run generate real labels instead of reading
+        # back "Community N" as authoritative (#2073).
+        if not placeholder_only:
+            from graphify.paths import write_json_atomic as _wja
+            _wja(labels_path, {str(k): v for k, v in labels.items()}, ensure_ascii=False)
+            # Membership signatures beside the labels so a later cluster-only can
+            # detect which communities changed and avoid reusing a stale label
+            # (see reuse above).
+            from graphify.cluster import community_member_sigs as _cms
+            (labels_path.parent / (labels_path.name + ".sig")).write_text(
+                json.dumps({str(k): v for k, v in _cms(communities).items()}), encoding="utf-8")
 
         # Mirror watch.py pattern: gate to_html so core outputs (graph.json +
         # GRAPH_REPORT.md) always land. Honor --no-viz explicitly; otherwise
