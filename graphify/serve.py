@@ -860,6 +860,20 @@ def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_bu
         if u in nodes and v in nodes:
             raw = G[u][v]
             d = next(iter(raw.values()), {}) if isinstance(G, (nx.MultiGraph, nx.MultiDiGraph)) else raw
+            # (u, v) is BFS/DFS visit order, not necessarily the true edge
+            # direction: on an undirected graph G.neighbors() walks callers
+            # and callees alike, so a caller->callee edge renders backwards
+            # whenever the callee is visited first. _src/_tgt (stashed on the
+            # edge data by the `query` CLI loader) carry the real direction;
+            # fall back to (u, v) for graphs/edges that don't set them.
+            src = d.get("_src", u)
+            tgt = d.get("_tgt", v)
+            # Guard against a stray/dangling _src/_tgt (hand-edited or adversarial
+            # graph.json): only trust them when they name exactly this edge's
+            # endpoints, else fall back to (u, v). Without this, G.nodes[src]
+            # would KeyError on an unknown id (#2080 review).
+            if {src, tgt} != {u, v}:
+                src, tgt = u, v
             context = d.get("context")
             context_suffix = f" context={sanitize_label(str(context))}" if context else ""
             # The relation SITE (call/import/reference line in the source's
@@ -871,10 +885,10 @@ def _subgraph_to_text(G: nx.Graph, nodes: set[str], edges: list[tuple], token_bu
                 if _loc else ""
             )
             line = (
-                f"EDGE {sanitize_label(G.nodes[u].get('label', u))} "
+                f"EDGE {sanitize_label(G.nodes[src].get('label', src))} "
                 f"--{sanitize_label(str(d.get('relation', '')))} "
                 f"[{sanitize_label(str(d.get('confidence', '')))}{context_suffix}]--> "
-                f"{sanitize_label(G.nodes[v].get('label', v))}{at_suffix}"
+                f"{sanitize_label(G.nodes[tgt].get('label', tgt))}{at_suffix}"
             )
             lines.append(line)
     output = "\n".join(lines)
