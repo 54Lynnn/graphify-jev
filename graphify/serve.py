@@ -10,7 +10,7 @@ from typing import NamedTuple
 import networkx as nx
 from networkx.readwrite import json_graph
 from graphify.security import sanitize_label, check_graph_file_size_cap
-from graphify.build import edge_data
+from graphify.build import edge_data, edge_datas
 from graphify.paths import default_graph_json as _default_graph_json
 
 try:
@@ -1376,8 +1376,14 @@ def _build_server(graph_path: str):
                     )
         max_hops = int(arguments.get("max_hops", 8))
         try:
-            # Use undirected view for path-finding (works regardless of query src/tgt order)
-            path_nodes = nx.shortest_path(G.to_undirected(as_view=True), src_nid, tgt_nid)
+            # Deterministic path (#2074): the hash-seeded undirected view picked an
+            # arbitrary route among equal-length paths. Build a sorted, materialized
+            # undirected graph so the chosen path is canonical. Serve's shared G is
+            # left untouched (its degree feeds query-seed tie-breaks).
+            _und = nx.Graph()
+            _und.add_nodes_from(sorted(G.nodes))
+            _und.add_edges_from(sorted((min(u, v), max(u, v)) for u, v in G.edges()))
+            path_nodes = nx.shortest_path(_und, src_nid, tgt_nid)
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             return f"No path found between '{G.nodes[src_nid].get('label', src_nid)}' and '{G.nodes[tgt_nid].get('label', tgt_nid)}'."
         hops = len(path_nodes) - 1
@@ -1386,15 +1392,18 @@ def _build_server(graph_path: str):
         segments = []
         for i in range(len(path_nodes) - 1):
             u, v = path_nodes[i], path_nodes[i + 1]
+            # Report the actual stored relation(s), never a fabricated `calls`;
+            # fall back to an honest "related" when the edge has no relation (#2074).
             if G.has_edge(u, v):
-                edata = edge_data(G, u, v)
+                datas = edge_datas(G, u, v)
                 forward = True
             else:
-                edata = edge_data(G, v, u)
+                datas = edge_datas(G, v, u)
                 forward = False
-            rel = edata.get("relation", "")
-            conf = edata.get("confidence", "")
-            conf_str = f" [{conf}]" if conf else ""
+            rels = sorted({d.get("relation") for d in datas if d.get("relation")})
+            rel = "/".join(rels) if rels else "related"
+            confs = sorted({d.get("confidence") for d in datas if d.get("confidence")})
+            conf_str = f" [{'/'.join(confs)}]" if confs else ""
             if i == 0:
                 segments.append(G.nodes[u].get("label", u))
             if forward:

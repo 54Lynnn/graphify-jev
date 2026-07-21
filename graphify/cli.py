@@ -1088,8 +1088,13 @@ def dispatch_command(cmd: str) -> None:
         _raw = json.loads(gp.read_text(encoding="utf-8"))
         if "links" not in _raw and "edges" in _raw:
             _raw = dict(_raw, links=_raw["edges"])
-        # Force directed so the renderer can recover stored caller→callee direction.
-        _raw = {**_raw, "directed": True}
+        # Force directed so the renderer can recover stored caller→callee
+        # direction, and multigraph so exact-pair parallel links (e.g. a
+        # `references` and a `calls` edge between the same two nodes) survive load
+        # instead of being silently collapsed last-writer-wins — otherwise the
+        # printed relation could be one the traversed pair doesn't actually
+        # carry (#2074). Local to this read; serve's shared graph is untouched.
+        _raw = {**_raw, "directed": True, "multigraph": True}
         try:
             G = json_graph.node_link_graph(_raw, edges="links")
         except TypeError:
@@ -1129,26 +1134,38 @@ def dispatch_command(cmd: str) -> None:
                         f"(top score {_top:g}, runner-up {_runner:g})",
                         file=sys.stderr,
                     )
+        # Deterministic shortest path (#2074): to_undirected(as_view=True)
+        # iterates neighbors via a hash-seeded set union, so among equal-length
+        # paths BFS returned an arbitrary route that varied per process. Build a
+        # sorted, materialized undirected graph so neighbor order — and thus the
+        # chosen path — is canonical for a given graph.json.
+        _und = _nx.Graph()
+        _und.add_nodes_from(sorted(G.nodes))
+        _und.add_edges_from(sorted((min(u, v), max(u, v)) for u, v in G.edges()))
         try:
-            path_nodes = _nx.shortest_path(G.to_undirected(as_view=True), src_nid, tgt_nid)
+            path_nodes = _nx.shortest_path(_und, src_nid, tgt_nid)
         except (_nx.NetworkXNoPath, _nx.NodeNotFound):
             print(f"No path found between '{source_label}' and '{target_label}'.")
             sys.exit(0)
         hops = len(path_nodes) - 1
         segments = []
-        from graphify.build import edge_data
+        from graphify.build import edge_datas
         for i in range(len(path_nodes) - 1):
             u, v = path_nodes[i], path_nodes[i + 1]
-            # Check which direction the stored edge points.
+            # Report the ACTUAL stored relation(s) of the traversed pair and
+            # direction — never a fabricated `calls` (#2074). A pair may carry
+            # several parallel relations; show all, and fall back to an honest
+            # "related" when the stored edge has no relation.
             if G.has_edge(u, v):
-                edata = edge_data(G, u, v)
+                datas = edge_datas(G, u, v)
                 forward = True
             else:
-                edata = edge_data(G, v, u)
+                datas = edge_datas(G, v, u)
                 forward = False
-            rel = edata.get("relation", "")
-            conf = edata.get("confidence", "")
-            conf_str = f" [{conf}]" if conf else ""
+            rels = sorted({d.get("relation") for d in datas if d.get("relation")})
+            rel = "/".join(rels) if rels else "related"
+            confs = sorted({d.get("confidence") for d in datas if d.get("confidence")})
+            conf_str = f" [{'/'.join(confs)}]" if confs else ""
             if i == 0:
                 segments.append(G.nodes[u].get("label", u))
             if forward:
