@@ -1605,15 +1605,9 @@ def _python_imported_names(node, source: bytes) -> list[tuple[str, str]]:
             names.append((name, local))
     return names
 
-def _resolve_python_module_path(module_name: str, current_path: Path, root: Path, level: int) -> Path | None:
-    if level > 0:
-        base = current_path.parent
-        for _ in range(level - 1):
-            base = base.parent
-        candidate = base / module_name.replace(".", "/") if module_name else base
-    else:
-        candidate = root / module_name.replace(".", "/")
-
+def _probe_python_module_candidate(candidate: Path) -> Path | None:
+    """Resolve one module-path candidate to a .py file (dir+__init__, exact, or
+    with a .py suffix), or None."""
     if candidate.is_dir():
         init_path = candidate / "__init__.py"
         if init_path.is_file():
@@ -1623,6 +1617,37 @@ def _resolve_python_module_path(module_name: str, current_path: Path, root: Path
     py_candidate = candidate.with_suffix(".py")
     if py_candidate.is_file():
         return py_candidate
+    return None
+
+
+def _resolve_python_module_path(module_name: str, current_path: Path, root: Path, level: int) -> Path | None:
+    if level > 0:
+        base = current_path.parent
+        for _ in range(level - 1):
+            base = base.parent
+        candidate = base / module_name.replace(".", "/") if module_name else base
+        return _probe_python_module_candidate(candidate)
+
+    # Absolute import. Probe the scan root first (unchanged for the common
+    # root-is-package-root layout), then walk up from the importing file toward
+    # the root so a `src/` (or otherwise nested) package root resolves regardless
+    # of where the scan started — `import pkg.mod` from src/pkg/app.py must find
+    # src/pkg/mod.py whether the scan root is the repo or src/ (#2072). Mirrors
+    # the upward walk already used for Lua (_resolve_lua_import_target, #1075).
+    rel = module_name.replace(".", "/")
+    hit = _probe_python_module_candidate(root / rel)
+    if hit is not None:
+        return hit
+    for anc in current_path.parents:
+        try:
+            anc.relative_to(root)
+        except ValueError:
+            break  # left the scan root; stop walking up
+        if anc == root:
+            continue  # already probed root/rel above
+        cand = _probe_python_module_candidate(anc / rel)
+        if cand is not None:
+            return cand
     return None
 
 def _python_top_level_function_bodies(path: Path, root_node, source: bytes) -> list[tuple[str, object]]:

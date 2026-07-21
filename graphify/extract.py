@@ -179,6 +179,68 @@ def _file_node_id(rel_path: Path) -> str:
     return _make_id(_file_stem(rel_path))
 
 
+def _repoint_python_package_imports(paths, all_nodes, all_edges, root) -> None:
+    """Repoint Python absolute-import edges to the real file node under a nested
+    (e.g. ``src/``) package root (#2072).
+
+    Absolute imports target an id derived from the dotted module path
+    (``_make_id('pkg.mod')`` -> ``pkg_mod``), but file-node ids are
+    scan-root-relative (``src_pkg_mod`` when the code lives under ``src/``), so
+    the edge dangles and is silently dropped — the graph loses most ``imports``
+    edges purely because of where the scan started. Build an alias map from the
+    dotted-module id to the real file-node id by detecting each ``.py`` file's
+    package root (the contiguous run of ancestor dirs carrying ``__init__.py``)
+    and rewrite matching ``imports``/``imports_from`` edge targets. Guards: never
+    shadow an existing node id, and drop an alias claimed by more than one file
+    (ambiguous -> leave dangling, as before). Files whose package root IS the
+    scan root are skipped (ids already coincide)."""
+    try:
+        root = Path(root).resolve()
+    except OSError:
+        root = Path(root)
+    node_ids = {n.get("id") for n in all_nodes if isinstance(n, dict)}
+    alias_to_files: dict[str, set[str]] = {}
+    for p in paths:
+        if p.suffix.lower() not in (".py", ".pyi"):
+            continue
+        try:
+            rel = Path(p).resolve().relative_to(root)
+        except (ValueError, OSError):
+            continue
+        parts = rel.parts
+        if len(parts) < 2:
+            continue  # top-level file: scan-root-relative id already matches
+        d = Path(p).resolve().parent
+        levels = 0
+        while (d / "__init__.py").is_file():
+            levels += 1
+            d = d.parent
+        if levels == 0:
+            continue  # not inside a package (namespace pkg / loose module)
+        mod_parts = parts[-(levels + 1):]  # package dirs + the file itself
+        if len(mod_parts) == len(parts):
+            continue  # package root == scan root: file-node id already coincides
+        file_node = _file_node_id(rel)
+        alias = _make_id(str(Path(*mod_parts).with_suffix("")))
+        alias_to_files.setdefault(alias, set()).add(file_node)
+        if p.name in ("__init__.py", "__init__.pyi") and len(mod_parts) > 1:
+            # `import pkg` / `from pkg import x` targets the package-dir id.
+            pkg_alias = _make_id(str(Path(*mod_parts[:-1])))
+            alias_to_files.setdefault(pkg_alias, set()).add(file_node)
+    alias_map = {
+        a: next(iter(fs))
+        for a, fs in alias_to_files.items()
+        if len(fs) == 1 and a not in node_ids
+    }
+    if not alias_map:
+        return
+    for e in all_edges:
+        if isinstance(e, dict) and e.get("relation") in ("imports", "imports_from"):
+            tgt = e.get("target")
+            if tgt in alias_map:
+                e["target"] = alias_map[tgt]
+
+
 SEMANTIC_RELATIONS = frozenset({
     "inherits", "implements", "mixes_in", "embeds", "references",
     "calls", "imports", "imports_from", "re_exports", "contains", "method",
@@ -4755,6 +4817,10 @@ def extract(
             if dec is not None:
                 e["target"] = f"{dec[0]}_{dec[1]}"
 
+    # Repoint Python absolute imports onto the real file nodes under a nested
+    # (src/) package root before the resolver/import-evidence passes run, so the
+    # graph is identical regardless of scan root (#2072).
+    _repoint_python_package_imports(paths, all_nodes, all_edges, root)
     _merge_swift_extensions(per_file, all_nodes, all_edges)
     _disambiguate_colliding_node_ids(all_nodes, all_edges, all_raw_calls, root)
     _canonicalize_csharp_namespace_nodes(all_nodes, all_edges)
