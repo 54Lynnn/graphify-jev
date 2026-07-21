@@ -25,6 +25,7 @@ from graphify.serve import (
     _query_graph_text,
     _resolve_context_filters,
     _subgraph_to_text,
+    _cut_lines_to_budget,
     _load_graph,
     _community_header,
     _search_tokens,
@@ -1335,3 +1336,28 @@ def test_subgraph_to_text_order_is_deterministic():
     a = _subgraph_to_text(G, nodes, [])
     b = _subgraph_to_text(G, set(reversed(list(nodes))), [])
     assert a == b
+
+
+# --- #2069: token budget on get_neighbors / get_community line lists ----------
+
+def test_cut_lines_to_budget_under_budget_is_byte_identical():
+    lines = ["Neighbors of X:", "  --> a [calls] [EXTRACTED]", "  --> b [calls] [EXTRACTED]"]
+    out = _cut_lines_to_budget(lines, token_budget=2000, narrow_hint="use relation_filter")
+    assert out == "\n".join(lines)
+    assert "TRUNCATED" not in out and "truncated" not in out
+
+
+def test_cut_lines_to_budget_over_budget_announces_at_top():
+    lines = [f"  --> node{i} [calls] [EXTRACTED]" for i in range(200)]
+    out = _cut_lines_to_budget(lines, token_budget=20, narrow_hint="use get_node for a specific symbol")
+    # Top notice (silence must not read as absence) + accurate counts + bottom marker + hint.
+    assert out.startswith("[!] TRUNCATED: showing ")
+    first = out.splitlines()[0]
+    assert "of 200 lines" in first
+    assert "use get_node for a specific symbol" in out
+    assert "truncated" in out  # end marker retained
+    # shown count in the notice matches the actual kept line count.
+    import re
+    shown = int(re.search(r"showing (\d+) of", first).group(1))
+    body = out.split("\n\n", 1)[1].split("\n... (truncated", 1)[0]
+    assert body.count("\n") + 1 == shown

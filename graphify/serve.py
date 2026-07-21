@@ -919,9 +919,15 @@ def _cut_lines_to_budget(lines: list[str], token_budget: int, narrow_hint: str) 
     cut_at = output[:char_budget].rfind("\n")
     cut_at = cut_at if cut_at > 0 else char_budget
     kept = output[:cut_at]
-    cut_count = len(lines) - kept.count("\n") - 1
+    shown = kept.count("\n") + 1
+    cut_count = len(lines) - shown
+    # Announce truncation at the TOP as well, matching _subgraph_to_text — a
+    # bottom-only marker reads as silence/absence (the BUG-2 fix rationale). The
+    # notice sits outside char_budget by design (one bounded wrapper line).
     return (
-        kept
+        f"[!] TRUNCATED: showing {shown} of {len(lines)} lines "
+        f"(~{token_budget}-token budget). {narrow_hint}\n\n"
+        + kept
         + f"\n... (truncated — {cut_count} more lines cut by ~{token_budget}-token budget. "
         + narrow_hint
         + ")"
