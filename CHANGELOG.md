@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.23 (unreleased)
+## 0.9.23 (2026-07-21)
 
 - Fix: caller / "call sites" listings now report the actual call-site line, not the caller function's definition line. `explain`, `affected`, and the MCP `get_neighbors`/`query` tools printed the caller node's `source_location` (its `def` line) for an incoming call, so a precise-looking citation sent users to the wrong line. The `calls` edge already carries the true call-site line; every caller/relation listing now reads the traversed edge's `source_file`:`source_location`, falling back to the node's own line only when the edge has none.
 - Fix: `query` no longer silently drops the answer past its output budget. Rendered nodes were ordered by degree (so a low-degree definition node ranked last and was cut first), the queried symbol was not guaranteed to appear, and the truncation marker sat only at the end so silence read as absence. Nodes are now ranked by hop distance from the query seeds (deterministically), the seed the question named is always rendered first and never truncated, and a prominent notice at the TOP states how many of how many nodes were shown and how to widen the budget. (A branch merge had also silently dropped the seed-first ordering the renderer already supported; it is rewired.)
