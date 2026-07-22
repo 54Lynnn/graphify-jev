@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.25 (unreleased)
+
+- Removed: `.graphifyinclude` handling is gone (#2112). The file has been non-functional since dot directories became indexed by default (#873): the loader and its matchers had no consumers, so `detect` parsed the file on every run and then ignored it, and a `.graphifyinclude` was silently a no-op. The dead loader and matchers are deleted, a leftover `.graphifyinclude` no longer shows up in the `unclassified` list, and `detect` prints a one-time stderr note when one is present at the scan root. To re-include ignored paths, use `!` negation patterns in `.graphifyignore`.
+
 ## 0.9.24 (2026-07-22)
 
 - Fix: the XAML code-behind `.cs` scan is now bounded and prunes noise dirs, so it can't hang. `_xaml_csharp_class_nodes` used `rglob("*.cs")` over a project root resolved by walking up for a `.csproj`/`.sln`; a standalone `extract_xaml` on a `.xaml` under a large or shared parent (a temp dir, a big monorepo) could resolve the root to a broad ancestor and then recursively scan the whole tree. It now walks with `node_modules`/`.venv`/`.git`/dot-dir pruning and a directory cap, so a real project scans fully while a runaway root degrades to a fast partial scan.

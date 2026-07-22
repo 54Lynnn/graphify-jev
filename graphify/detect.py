@@ -797,6 +797,9 @@ _SKIP_FILES = {
     "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
     "Cargo.lock", "poetry.lock", "Gemfile.lock",
     "composer.lock", "go.sum", "go.work.sum",
+    # Removed allowlist config (#2112) — no longer consumed, so keep a leftover
+    # file out of the unclassified list instead of surfacing it as scan input.
+    ".graphifyinclude",
 }
 
 # A bare "snapshots" dir is a Jest/Vitest artifact only when it actually holds
@@ -1137,117 +1140,6 @@ def _is_ignored(
     return _eval(path)
 
 
-def _load_graphifyinclude(root: Path) -> list[tuple[Path, str]]:
-    """Read .graphifyinclude allowlist patterns from root and ancestors.
-
-    Include patterns opt matching hidden files/dirs into traversal. Sensitive
-    files and hard-skipped noise directories are still excluded later.
-    Uses the same VCS-root ceiling logic as _load_graphifyignore.
-    """
-    root = root.resolve()
-    ceiling = _find_vcs_root(root) or root
-
-    dirs: list[Path] = []
-    current = root
-    while True:
-        dirs.append(current)
-        if current == ceiling:
-            break
-        current = current.parent
-    dirs.reverse()
-
-    patterns: list[tuple[Path, str]] = []
-    for d in dirs:
-        include_file = d / ".graphifyinclude"
-        if include_file.exists():
-            for raw in include_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-                line = _parse_gitignore_line(raw)
-                if line:
-                    patterns.append((d, line))
-    return patterns
-
-
-def _is_included(path: Path, root: Path, patterns: list[tuple[Path, str]]) -> bool:
-    """Return True if path matches any .graphifyinclude allowlist pattern."""
-    if not patterns:
-        return False
-
-    def _matches(rel: str, p: str, anchored: bool) -> bool:
-        if anchored:
-            return fnmatch.fnmatch(rel, p)
-        parts = rel.split("/")
-        if fnmatch.fnmatch(rel, p):
-            return True
-        if fnmatch.fnmatch(path.name, p):
-            return True
-        for i, part in enumerate(parts):
-            if fnmatch.fnmatch(part, p):
-                return True
-            if fnmatch.fnmatch("/".join(parts[:i + 1]), p):
-                return True
-        return False
-
-    for anchor, pattern in patterns:
-        anchored = pattern.startswith("/")
-        p = pattern.strip("/")
-        if not p:
-            continue
-        if anchored:
-            try:
-                rel_anchor = str(path.relative_to(anchor)).replace(os.sep, "/")
-                if _matches(rel_anchor, p, anchored=True):
-                    return True
-            except ValueError:
-                pass
-        else:
-            try:
-                rel = str(path.relative_to(root)).replace(os.sep, "/")
-                if _matches(rel, p, anchored=False):
-                    return True
-            except ValueError:
-                pass
-            if anchor != root:
-                try:
-                    rel_anchor = str(path.relative_to(anchor)).replace(os.sep, "/")
-                    if _matches(rel_anchor, p, anchored=False):
-                        return True
-                except ValueError:
-                    pass
-    return False
-
-
-def _could_contain_included_path(path: Path, root: Path, patterns: list[tuple[Path, str]]) -> bool:
-    """Return True if a directory may contain files matched by .graphifyinclude."""
-    if not patterns:
-        return False
-
-    rels: list[str] = []
-    try:
-        rels.append(str(path.relative_to(root)).replace(os.sep, "/"))
-    except ValueError:
-        pass
-    for anchor, _ in patterns:
-        if anchor != root:
-            try:
-                rels.append(str(path.relative_to(anchor)).replace(os.sep, "/"))
-            except ValueError:
-                pass
-
-    for rel in rels:
-        rel = rel.strip("/")
-        if not rel:
-            return True
-        for _, pattern in patterns:
-            p = pattern.strip("/")
-            if not p:
-                continue
-            if p == rel or p.startswith(rel + "/"):
-                return True
-            if fnmatch.fnmatch(rel, p):
-                return True
-    return False
-
-
 def _auto_follow_symlinks(root: Path) -> bool:
     """Return whether ``root`` has any direct symlinked child.
 
@@ -1275,6 +1167,19 @@ def _resolves_under_root(path: Path, root: Path) -> bool:
 
 def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace: bool | None = None, extra_excludes: list[str] | None = None, cache_root: Path | None = None, gitignore: bool = True) -> dict:
     root = root.resolve()
+    # .graphifyinclude support was removed (#2112): its loader and matchers had
+    # no consumers, so the file has been a silent no-op since dot directories
+    # became indexed by default (#873). Surface that once per scan so a
+    # leftover allowlist file is not a silent behavior change.
+    if (root / ".graphifyinclude").is_file():
+        import sys as _sys
+        print(
+            "[graphify] WARNING: .graphifyinclude is no longer supported "
+            "(it has been non-functional since dot directories became indexed "
+            "by default); to re-include ignored paths, use ! negation patterns "
+            "in .graphifyignore.",
+            file=_sys.stderr,
+        )
     if follow_symlinks is None:
         follow_symlinks = False
     google_workspace = google_workspace_enabled() if google_workspace is None else google_workspace
@@ -1312,7 +1217,6 @@ def detect(root: Path, *, follow_symlinks: bool | None = None, google_workspace:
             line = _parse_gitignore_line(pat)
             if line:
                 ignore_patterns.append((root, line))
-    include_patterns = _load_graphifyinclude(root)
 
     # Always include graphify-out/memory/ - query results filed back into the graph
     memory_dir = root / GRAPHIFY_OUT / "memory"

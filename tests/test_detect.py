@@ -2043,6 +2043,31 @@ def test_detect_unclassified_empty_when_all_supported(tmp_path):
     assert res.get("unclassified", []) == []
 
 
+def test_graphifyinclude_is_inert_and_not_unclassified(tmp_path, capsys):
+    """#2112: .graphifyinclude support was removed (dead since #873).
+
+    A leftover .graphifyinclude must not error, must not surface in the
+    unclassified list, and must not change which real files are indexed.
+    detect() prints a one-time stderr note so the removal is not silent.
+    """
+    (tmp_path / "main.py").write_text("x = 1\n")
+
+    baseline = detect(tmp_path)
+    capsys.readouterr()  # discard any baseline output
+
+    (tmp_path / ".graphifyinclude").write_text(".github/\ndocs/**\n")
+    result = detect(tmp_path)
+
+    # not surfaced as an unclassified scan input
+    assert not any(".graphifyinclude" in p for p in result["unclassified"])
+    # real files are indexed exactly as before; the file changes nothing
+    assert result["files"] == baseline["files"]
+    assert any("main.py" in f for f in result["files"]["code"])
+    # one-time stderr note, matching the [graphify] warning convention
+    err = capsys.readouterr().err
+    assert err.count("[graphify] WARNING: .graphifyinclude is no longer supported") == 1
+
+
 def test_detect_reports_walk_errors_key():
     """detect() always surfaces a walk_errors list so callers can tell whether
     enumeration was complete."""
