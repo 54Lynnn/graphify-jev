@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.25 (unreleased)
+## 0.9.25 (2026-07-22)
 
 - License: the project is now licensed under the Apache License, Version 2.0 (previously MIT). Apache 2.0 adds an explicit patent grant and patent-retaliation clause and explicit contribution terms. Contributions made before the relicensing were submitted under MIT and remain available under those terms; the original MIT license text is retained in `LICENSE-MIT` and referenced from `NOTICE`.
 - Removed: `.graphifyinclude` handling is gone (#2112). The file has been non-functional since dot directories became indexed by default (#873): the loader and its matchers had no consumers, so `detect` parsed the file on every run and then ignored it, and a `.graphifyinclude` was silently a no-op. The dead loader and matchers are deleted, a leftover `.graphifyinclude` no longer shows up in the `unclassified` list, and `detect` prints a one-time stderr note when one is present at the scan root. To re-include ignored paths, use `!` negation patterns in `.graphifyignore`.
