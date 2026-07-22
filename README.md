@@ -856,14 +856,6 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for module responsibilities and how to ad
 
 ---
 
-<p align="center">
-  <a href="https://star-history.com/#Graphify-Labs/graphify&Date">
-    <img src="https://api.star-history.com/svg?repos=Graphify-Labs/graphify&type=Date" alt="Star History Chart" width="370"/>
-  </a>
-</p>
-
----
-
 ## Community and links
 
 <p align="center">
