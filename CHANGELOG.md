@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.24 (unreleased)
+## 0.9.24 (2026-07-22)
 
 - Fix: the XAML code-behind `.cs` scan is now bounded and prunes noise dirs, so it can't hang. `_xaml_csharp_class_nodes` used `rglob("*.cs")` over a project root resolved by walking up for a `.csproj`/`.sln`; a standalone `extract_xaml` on a `.xaml` under a large or shared parent (a temp dir, a big monorepo) could resolve the root to a broad ancestor and then recursively scan the whole tree. It now walks with `node_modules`/`.venv`/`.git`/dot-dir pruning and a directory cap, so a real project scans fully while a runaway root degrades to a fast partial scan.
 
