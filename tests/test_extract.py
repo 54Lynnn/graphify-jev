@@ -1245,6 +1245,62 @@ def test_python_relative_from_import_alias_module_call_resolves(tmp_path):
     assert edges[0]["confidence"] == "EXTRACTED"
 
 
+def test_python_external_aliased_import_fabricates_no_call_edge(tmp_path):
+    """#2082 must not over-resolve: an aliased import of an EXTERNAL/uncorpus
+    module (`import numpy as np; np.array()`) has no in-corpus callee, so it must
+    produce NO `calls` edge — the alias resolution stays inside the member-call
+    carve-out (in-corpus target required)."""
+    caller = tmp_path / "app.py"
+    caller.write_text(
+        "import numpy as np\n"
+        "from os import path as p\n\n"
+        "def build(rows):\n"
+        "    p.join('a', 'b')\n"
+        "    return np.array(rows)\n"
+    )
+    result = extract([caller], cache_root=tmp_path, root=tmp_path)
+    nodes = {n["id"]: n for n in result["nodes"]}
+    fabricated = [
+        e for e in result["edges"]
+        if e["relation"] in ("calls", "indirect_call")
+        and ("array" in nodes.get(e["target"], {}).get("label", "")
+             or "join" in nodes.get(e["target"], {}).get("label", ""))
+    ]
+    assert fabricated == [], f"external aliased calls must not fabricate edges: {fabricated}"
+
+
+def test_python_aliased_call_survives_warm_cache(tmp_path):
+    """#2082: the aliased `calls` edge must survive a warm (cache-hit) re-extract.
+    The fix threads a transient `local_alias` hint that is popped after the
+    resolver runs; the per-file cache must serialize it BEFORE the pop, or the
+    edge would resolve only on a cold run and silently vanish on the next."""
+    pkg = tmp_path / "pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "gate.py").write_text("def validate(rows):\n    return bool(rows)\n")
+    caller = pkg / "caller.py"
+    caller.write_text(
+        "from pkg import gate as m_gate\n\n"
+        "def use_alias(rows):\n"
+        "    return m_gate.validate(rows)\n"
+    )
+    paths = [caller, pkg / "gate.py", pkg / "__init__.py"]
+
+    def _alias_edges(result):
+        nodes = {n["id"]: n for n in result["nodes"]}
+        return [
+            e for e in result["edges"]
+            if e["relation"] == "calls"
+            and "use_alias" in nodes[e["source"]]["label"]
+            and "validate" in nodes[e["target"]]["label"]
+        ]
+
+    cold = extract(paths, cache_root=tmp_path, root=tmp_path)
+    assert len(_alias_edges(cold)) == 1, "cold run must resolve the aliased call"
+    warm = extract(paths, cache_root=tmp_path, root=tmp_path)  # cache-hit
+    assert len(_alias_edges(warm)) == 1, "aliased call edge vanished on warm cache (#2082)"
+
+
 def test_python_qualified_call_resolves_when_method_name_collides_with_caller(tmp_path):
     """The real #1446 shape: a viewset action `approve()` delegates to a SERVICE
     action of the SAME name via `Service.approve()`. The bare-name in-file lookup
