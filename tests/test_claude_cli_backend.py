@@ -349,3 +349,35 @@ def test_simple_completion_resolves_cmd_shim_on_windows(monkeypatch):
 
     assert out == "ok"
     assert captured["argv0"] == r"C:\npm\claude.cmd"
+
+
+def test_prefers_structured_output_over_prose_result(monkeypatch):
+    """#2076 review: with --json-schema the CLI puts the constrained object in
+    `structured_output` while `result` may be prose (a 'reporting' turn). The
+    backend must parse the structured object; parsing the prose would read as an
+    empty/hollow extraction and bisect forever."""
+    envelope = {
+        "type": "result", "subtype": "success", "is_error": False,
+        "result": "Knowledge graph extracted successfully: 2 nodes, 1 edge.",  # prose only
+        "structured_output": {
+            "nodes": [
+                {"id": "foo_module", "label": "Foo", "file_type": "document", "source_file": "foo.md"},
+                {"id": "foo_greet", "label": "greet", "file_type": "code", "source_file": "foo.md"},
+            ],
+            "edges": [
+                {"source": "foo_module", "target": "foo_greet",
+                 "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0},
+            ],
+            "hyperedges": [],
+        },
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 6, "output_tokens": 11},
+        "modelUsage": {"claude-opus-4-7[1m]": {}},
+    }
+    completed = MagicMock(returncode=0, stdout=json.dumps(envelope), stderr="")
+    with patch("shutil.which", return_value="/fake/bin/claude"), \
+         patch("subprocess.run", return_value=completed):
+        result = llm._call_claude_cli("dummy", max_tokens=8192)
+    assert len(result["nodes"]) == 2, "must parse structured_output, not the prose result"
+    assert len(result["edges"]) == 1
+    assert result["finish_reason"] == "stop"

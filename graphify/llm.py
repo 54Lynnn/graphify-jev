@@ -1509,7 +1509,17 @@ def _call_claude_cli(user_message: str, max_tokens: int = 8192, *, deep_mode: bo
 
     envelope = _claude_cli_envelope(proc.stdout)
 
-    raw_content = envelope.get("result", "")
+    # When --json-schema is in effect the CLI puts the CONSTRAINED object in the
+    # `structured_output` envelope field; `result` stays the model's discretionary
+    # text, which on a "reporting" turn is prose even with the flag set (verified
+    # live on Claude Code 2.1.185). Prefer the structured channel and route it
+    # through the same _parse_llm_json normalizer; fall back to parsing `result`
+    # for older CLIs that don't emit structured_output (#2076 review).
+    structured = envelope.get("structured_output")
+    if isinstance(structured, dict):
+        raw_content = json.dumps(structured)
+    else:
+        raw_content = envelope.get("result", "")
     result = _parse_llm_json(raw_content or "{}")
     usage = envelope.get("usage") or {}
     result["input_tokens"] = (
