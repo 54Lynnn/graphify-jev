@@ -626,3 +626,69 @@ def test_defines_id_helper():
     # A path that is merely a string-prefix of the ID's path does not define it.
     assert not _defines_id({"id": "agents_foo", "source_file": "agent/foo.md"})
     assert not _defines_id({"id": "docs_intro_foo", "source_file": ""})
+
+
+# ── #2091 review: attribute-merge correctness (fixes A-D) ─────────────────────
+
+def test_dedup_gapfill_is_order_independent_with_multiple_losers():
+    """(fix A) With 3+ same-ID same-source records, the merged attributes must not
+    depend on arrival order — the best loser by collision rank supplies each
+    missing key deterministically, preserving the #1851 order-independence."""
+    import itertools
+    base = [
+        {"id": "f", "label": "f", "file_type": "code", "source_file": "m.py",
+         "source_location": "L1"},                                  # shortest label -> survivor
+        {"id": "f", "label": "f helper beta", "file_type": "code",
+         "source_file": "m.py", "summary": "BETA"},
+        {"id": "f", "label": "f helper alpha", "file_type": "code",
+         "source_file": "m.py", "summary": "ALPHA"},
+    ]
+    seen = set()
+    for perm in itertools.permutations(base):
+        nodes, _ = deduplicate_entities([dict(n) for n in perm], [], communities={})
+        assert len(nodes) == 1
+        seen.add(nodes[0].get("summary"))
+    assert len(seen) == 1, f"merged summary depends on arrival order: {seen}"
+
+
+def test_dedup_no_attribute_merge_when_source_file_missing():
+    """(fix B) Two provenance-less records sharing an ID must NOT cross-pollinate
+    attributes — '' == '' is not proof of the same symbol (#1178)."""
+    nodes = [
+        {"id": "c", "label": "c", "file_type": "concept", "summary": "A"},
+        {"id": "c", "label": "c", "file_type": "concept", "notes": "B"},
+    ]
+    result, _ = deduplicate_entities([dict(n) for n in nodes], [], communities={})
+    assert len(result) == 1
+    surv = result[0]
+    assert not ("summary" in surv and "notes" in surv), (
+        "provenance-less same-id records must not merge attributes"
+    )
+
+
+def test_dedup_survivor_does_not_inherit_false_origin_ast():
+    """(fix C) An LLM survivor must not inherit _origin='ast' from a dropped
+    same-source AST record — a false authority tag is read by ghost-merge/watch."""
+    nodes = [
+        {"id": "x", "label": "run", "file_type": "code", "source_file": "m.py",
+         "source_location": "L9"},                                   # shorter label -> survivor (LLM)
+        {"id": "x", "label": "run() [ast]", "file_type": "code", "source_file": "m.py",
+         "source_location": "L2", "_origin": "ast"},                 # loser carries _origin=ast
+    ]
+    result, _ = deduplicate_entities([dict(n) for n in nodes], [], communities={})
+    assert len(result) == 1
+    assert result[0].get("_origin") != "ast", "survivor must not inherit a false _origin=ast"
+
+
+def test_dedup_fills_explicit_none_attribute():
+    """(fix D) An explicit source_location=None on the survivor is treated as
+    absent and filled from a same-source record that has a real line (#2091)."""
+    nodes = [
+        {"id": "y", "label": "y", "file_type": "code", "source_file": "m.py",
+         "source_location": None},                                   # survivor, explicit None
+        {"id": "y", "label": "y helper", "file_type": "code", "source_file": "m.py",
+         "source_location": "L7"},
+    ]
+    result, _ = deduplicate_entities([dict(n) for n in nodes], [], communities={})
+    assert len(result) == 1
+    assert result[0].get("source_location") == "L7", "explicit-None must be filled from the loser"
