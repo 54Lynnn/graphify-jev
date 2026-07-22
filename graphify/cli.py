@@ -1294,7 +1294,9 @@ def dispatch_command(cmd: str) -> None:
                     sfile = edata.get("source_file") or "(unknown file)"
                     key = (direction, sfile)
                     by_file[key] = by_file.get(key, 0) + 1
-                grouped = sorted(by_file.items(), key=lambda kv: kv[1], reverse=True)
+                # Count desc, then (direction, file) so equal-count groups have a
+                # byte-stable order (not the degree-derived insertion order).
+                grouped = sorted(by_file.items(), key=lambda kv: (-kv[1], kv[0]))
                 print("  Grouped by file:")
                 for (direction, sfile), count in grouped[:20]:
                     arrow = "-->" if direction == "out" else "<--"
