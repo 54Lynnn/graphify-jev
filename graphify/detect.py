@@ -116,9 +116,17 @@ _AMBIGUOUS_SENSITIVE_DIRS = frozenset({
 _SENSITIVE_PATTERNS = [
     re.compile(r'(^|[\\/])\.(env|envrc)(\.|$)', re.IGNORECASE),
     re.compile(r'\.(pem|key|p12|pfx|cert|crt|der|p8)$', re.IGNORECASE),
-    re.compile(r'(id_rsa|id_dsa|id_ecdsa|id_ed25519)(\.pub)?$'),
-    re.compile(r'(\.netrc|\.pgpass|\.htpasswd)$', re.IGNORECASE),
-    re.compile(r'(aws_credentials|gcloud_credentials|service.account)', re.IGNORECASE),
+    # SSH/GPG private keys. Left boundary + IGNORECASE so `grid_rsa` (alpha before
+    # `id_rsa`) and `ID_RSA` are handled correctly, not matched as a substring.
+    re.compile(r'(^|[^A-Za-z0-9])(id_rsa|id_dsa|id_ecdsa|id_ed25519)(\.pub)?$', re.IGNORECASE),
+    re.compile(r'^secring(\.(gpg|pgp))?$', re.IGNORECASE),  # GPG private keyring
+    # Auth/credential dotfiles that routinely hold tokens (#2106: .npmrc/.pypirc/
+    # .git-credentials/.boto were silently indexed before).
+    re.compile(r'(\.netrc|\.pgpass|\.htpasswd|\.npmrc|\.pypirc|\.git-credentials|\.boto)$', re.IGNORECASE),
+    # NOTE: aws_credentials/gcloud_credentials/service_account moved to the
+    # boundary-checked Stage 3 keyword path (#2106). The old unbounded
+    # `service.account` substring (regex `.` wildcard) matched real source like
+    # google/oauth2/service_account.py and prose like aws_credentials_rotation.md.
 ]
 
 # Generic keyword patterns - these only count when the keyword is LOAD-BEARING
@@ -134,7 +142,20 @@ _SENSITIVE_PATTERNS = [
 _GENERIC_KEYWORD_PATTERNS = [
     re.compile(r'(?<![a-zA-Z0-9])(credential|secret|passwd|password|private_key)s?(?![a-zA-Z])', re.IGNORECASE),
     re.compile(r'(?<![a-zA-Z0-9])tokens?(?![a-zA-Z])', re.IGNORECASE),
+    # service_account / service-account / serviceaccount (GCP key files). In the
+    # keyword path so `service_account.py` (real source) is spared while
+    # `service-account.json` (a downloaded key) and bare names are still caught
+    # (#2106; was an unbounded Stage 2 substring). aws_credentials/gcloud_credentials
+    # are already covered by the `credential` keyword above.
+    re.compile(r'(?<![a-zA-Z0-9])service[._-]?account(?![a-zA-Z])', re.IGNORECASE),
 ]
+
+# Prose/note formats: a heavily-linked wiki article whose topic slug ends in a
+# keyword (privacy-tokens.md, token-economics.md) is a document ABOUT the topic,
+# not a credential store, so it must not be silently dropped (#2106). A BARE
+# keyword name (secrets.md, token.md, passwords.md) still reads as a dump and
+# stays excluded — see _is_prose_note.
+_PROSE_EXTS = frozenset({".md", ".markdown", ".rst", ".org", ".adoc", ".tex"})
 
 # Data/serialization extensions that commonly ARE secret stores when their name
 # hits a generic keyword (credentials.json, secrets.yaml, token.toml) or they sit
@@ -154,7 +175,18 @@ _SECRET_PRONE_DATA_EXTS = frozenset({
 # Word separators for the load-bearing check (underscore intentionally included;
 # multi-word keywords like private_key are handled by the end-of-stem check,
 # which runs before word counting).
-_WORD_SPLIT = re.compile(r'[-_\s]+')
+_WORD_SPLIT = re.compile(r'[-_\s.]+')  # '.' included so `token.economics.notes` counts as 3 words (#2106)
+
+
+def _is_prose_note(path: Path) -> bool:
+    """A prose/note file (.md/.rst/...) whose stem is a multi-word topic slug is
+    exempt from the generic-keyword drop (#2106). A stem that IS exactly a bare
+    keyword (secrets / token / passwords) is NOT exempt — that still reads as a
+    credential dump."""
+    if path.suffix.lower() not in _PROSE_EXTS:
+        return False
+    stem = Path(path.name).stem.lstrip('.') or Path(path.name).stem
+    return not any(p.fullmatch(stem) for p in _GENERIC_KEYWORD_PATTERNS)
 
 
 def _generic_keyword_hit(name: str) -> bool:
@@ -167,9 +199,11 @@ def _generic_keyword_hit(name: str) -> bool:
     ("token-economics-of-recall.md", "password-policy-discussion.md") and must
     not cause the file to be silently dropped from the graph (#436, #718).
     """
-    # Stem = name up to the first dot, ignoring leading dots so dotfiles like
-    # ".token" keep their keyword ("" stems would never match).
-    stem = name.lstrip('.').split('.')[0]
+    # Stem = name minus only the FINAL extension (not up to the first dot), so a
+    # multi-dot topic slug like `token.economics.notes.md` keeps all its words and
+    # doesn't collapse to a bare `token` (#2106). Leading dots stripped so
+    # dotfiles like `.token` keep their keyword.
+    stem = Path(name).stem.lstrip('.') or Path(name).stem
     for pat in _GENERIC_KEYWORD_PATTERNS:
         hit = False
         for m in pat.finditer(stem):
@@ -218,9 +252,11 @@ def _is_sensitive(path: Path) -> bool:
     # (secrets/, credentials/) spare genuine source (#1943), which still falls
     # through so Stages 2-3 screen its filename like anywhere else.
     parents = path.parts[:-1]
-    if any(part in _CREDENTIAL_STORE_DIRS for part in parents):
+    # Lowercase the segment comparison so `Secrets/`/`SECRETS/` (real on
+    # case-insensitive macOS/Windows filesystems) are still caught (#2106).
+    if any(part.lower() in _CREDENTIAL_STORE_DIRS for part in parents):
         return True
-    if any(part in _AMBIGUOUS_SENSITIVE_DIRS for part in parents) and not _is_graphable_source(path):
+    if any(part.lower() in _AMBIGUOUS_SENSITIVE_DIRS for part in parents) and not _is_graphable_source(path):
         return True
     # Stage 2: filename pattern match
     name = path.name
@@ -235,7 +271,9 @@ def _is_sensitive(path: Path) -> bool:
     # secret stores this stage must catch. The specific Stage 2 patterns (.env, .pem,
     # id_rsa, ...) still apply to everything regardless of extension.
     if _generic_keyword_hit(name):
-        return not _is_graphable_source(path)
+        # Genuine source AND multi-word prose notes are exempt; a bare-keyword
+        # name (secrets.md, token.txt) still drops (#1666, #2106).
+        return not (_is_graphable_source(path) or _is_prose_note(path))
     return False
 
 

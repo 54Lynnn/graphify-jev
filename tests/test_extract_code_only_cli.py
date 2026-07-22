@@ -244,3 +244,17 @@ def test_explicit_exclude_replaces_persisted_setting_with_custom_out(tmp_path):
     assert json.loads((graph_out / ".graphify_build.json").read_text()) == {
         "excludes": ["generated"]
     }
+
+
+def test_extract_names_skipped_sensitive_files(tmp_path):
+    """#2106 traceability: a file dropped by the sensitive-file filter is reported
+    by NAME (not just a count), so a wrongly-flagged file is visible."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "app.py").write_text("def hello():\n    return 1\n")
+    (repo / "github_token.txt").write_text("ghp_secretvalue\n")  # real secret -> skipped
+    r = _run(repo, "--code-only", "--no-cluster")
+    assert r.returncode == 0, r.stderr
+    out = r.stdout + r.stderr
+    assert "skipped as potentially sensitive" in out
+    assert "github_token.txt" in out, "the skipped filename must be surfaced (#2106)"

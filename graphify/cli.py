@@ -2817,6 +2817,19 @@ def dispatch_command(cmd: str) -> None:
                 f"[graphify extract] {len(_unclassified)} file(s) not classified "
                 f"(no supported extension or shebang), skipped: {_names}{_more}"
             )
+        # Name the files dropped by the sensitive-file filter so a wrongly-flagged
+        # source/doc is visible, not just a count (#2106). Operational skips
+        # (symlink/office/Workspace) carry a " [reason]" suffix; exclude those here
+        # so this line reports only the security-heuristic drops.
+        _sensitive = detection.get("skipped_sensitive", []) if isinstance(detection, dict) else []
+        _sec = [s for s in _sensitive if " [" not in s]
+        if _sec:
+            _snames = ", ".join(sorted({Path(p).name for p in _sec})[:6])
+            _smore = f" (+{len(_sec) - 6} more)" if len(_sec) > 6 else ""
+            print(
+                f"[graphify extract] {len(_sec)} file(s) skipped as potentially sensitive "
+                f"(rename or move if wrongly flagged): {_snames}{_smore}"
+            )
         stages.mark("detect")
 
         # Resolve the LLM backend only now that we know whether the corpus
