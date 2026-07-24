@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.26 (unreleased)
+## 0.9.26 (2026-07-25)
 
 - Fix: `graphify query`/`explain` no longer fabricate `indirect_call` edges to class definitions (#2137, thanks @Rishet11). The callable guard admitted classes, so passing a class as a value (`select(Model)`, `db.get(Model, id)`, `except (ErrorA, ErrorB)`, `getattr(obj, "Name", 0)`) produced a false inferred call edge in both the intra-file and cross-file paths. Classes are now tracked separately and excluded from `indirect_call`; direct instantiation still emits its `calls` edge. The suppression is context-blind, so a genuine higher-order class callback that is actually invoked (e.g. `map(Point, coords)`) also loses its edge, which is the intended tradeoff.
 - Fix: the post-commit hook's interpreter allowlist now accepts Windows backslash paths (#2126, thanks @Rishet11). The shell `case` glob silently emptied any interpreter path containing a backslash (and the shebang-launcher allowlist admitted no `:` or `\` at all), so the hook failed on Windows uv/venv installs. Both allowlist sites now use a verified character class that admits backslashes while still rejecting shell metacharacters.
