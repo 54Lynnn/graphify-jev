@@ -1956,6 +1956,109 @@ def test_extract_bash_call_to_external_command_stays_unlinked(tmp_path):
     assert ("a_main", "b_deploy") not in calls, sorted(calls)
 
 
+def test_bash_var_sourced_function_call_resolves(tmp_path):
+    """End-to-end integration of #2079 + #2141 (#2157/#2139): a library sourced
+    via the canonical ``${VAR}`` idiom must feed ``bash_sources`` so that
+    resolve_bash_source_edges binds calls into its functions — not just the
+    imports_from source edge. Before the extractor appended the resolved path to
+    ``bash_sources`` in the ``${VAR}`` branch, main() -> util_fn() produced no
+    calls edge at all."""
+    # realpath: tempfile on macOS hands out /var/... which symlinks to
+    # /private/var/...; the extractor stores the *resolved* target path, so the
+    # scan root must be the resolved form too or ids anchor inconsistently.
+    root = Path(os.path.realpath(tmp_path))
+    lib = root / "lib"
+    lib.mkdir()
+    (lib / "util.sh").write_text(
+        "#!/usr/bin/env bash\nutil_fn() { :; }\n", encoding="utf-8"
+    )
+    (root / "bench.sh").write_text(
+        '#!/usr/bin/env bash\n'
+        'BENCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"\n'
+        'source "${BENCH_DIR}/lib/util.sh"\n'
+        "main() { util_fn; }\n",
+        encoding="utf-8",
+    )
+    result = extract(
+        [root / "bench.sh", lib / "util.sh"], cache_root=root, root=root
+    )
+
+    main_id = next(
+        n["id"] for n in result["nodes"]
+        if n["label"] == "main()" and n["source_file"].endswith("bench.sh")
+    )
+    util_id = next(
+        n["id"] for n in result["nodes"]
+        if n["label"] == "util_fn()" and n["source_file"].endswith("util.sh")
+    )
+    sourced_calls = [
+        e for e in result["edges"]
+        if e["relation"] == "calls"
+        and e["source"] == main_id and e["target"] == util_id
+    ]
+    assert len(sourced_calls) == 1, (
+        f"expected exactly one calls edge {main_id} -> {util_id}; got: "
+        f"{sorted((e['source'], e['target']) for e in result['edges'] if e['relation'] == 'calls')}"
+    )
+    # The source edge itself must still be there alongside the call binding.
+    imports = {(e["source"], e["target"]) for e in result["edges"]
+               if e["relation"] == "imports_from"}
+    assert ("bench", "lib_util") in imports, sorted(imports)
+
+
+def test_extract_bash_source_suffix_guard_mid_path_variable(tmp_path):
+    """`source "lib/${X}.sh"` keeps an expansion in the suffix, so the
+    ``$``-in-suffix guard of _bash_source_suffix must reject it: no
+    imports/imports_from edge and no bash_sources entry may be fabricated."""
+    lib = tmp_path / "lib"
+    lib.mkdir()
+    (lib / "extras.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    script = tmp_path / "run.sh"
+    script.write_text(
+        '#!/usr/bin/env bash\nsource "lib/${X}.sh"\n', encoding="utf-8"
+    )
+    result = extract_bash(script)
+    fabricated = [e for e in result["edges"]
+                  if e["relation"] in ("imports", "imports_from")]
+    assert fabricated == [], fabricated
+    assert result["bash_sources"] == [], result["bash_sources"]
+
+
+def test_extract_bash_source_suffix_guard_whole_variable_path(tmp_path):
+    """`source "$CONFIG_FILE"` strips to an empty suffix — nothing literal is
+    left to resolve, so no edge and no bash_sources entry may be emitted."""
+    (tmp_path / "config.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    script = tmp_path / "run.sh"
+    script.write_text(
+        '#!/usr/bin/env bash\nsource "$CONFIG_FILE"\n', encoding="utf-8"
+    )
+    result = extract_bash(script)
+    fabricated = [e for e in result["edges"]
+                  if e["relation"] in ("imports", "imports_from")]
+    assert fabricated == [], fabricated
+    assert result["bash_sources"] == [], result["bash_sources"]
+
+
+def test_extract_bash_source_suffix_guard_rejects_traversal(tmp_path):
+    """`source "${D}/../secret.sh"` must hit the ``..`` guard. The target file
+    exists one level up, so without the guard the suffix WOULD resolve and
+    fabricate both the edge and the bash_sources entry."""
+    (tmp_path / "secret.sh").write_text(
+        "#!/usr/bin/env bash\nleak() { :; }\n", encoding="utf-8"
+    )
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    script = scripts / "run.sh"
+    script.write_text(
+        '#!/usr/bin/env bash\nsource "${D}/../secret.sh"\n', encoding="utf-8"
+    )
+    result = extract_bash(script)
+    fabricated = [e for e in result["edges"]
+                  if e["relation"] in ("imports", "imports_from")]
+    assert fabricated == [], fabricated
+    assert result["bash_sources"] == [], result["bash_sources"]
+
+
 # ---------------------------------------------------------------------------
 # JSON extractor tests (#866)
 # ---------------------------------------------------------------------------
