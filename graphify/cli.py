@@ -3264,6 +3264,33 @@ def dispatch_command(cmd: str) -> None:
                 stages.total()
                 sys.exit(0)
 
+            if incremental_mode:
+                # #2169: this raw path used to write ONLY this run's extraction
+                # over graph.json — on an incremental run that is just the
+                # changed files, silently dropping every node/edge owned by an
+                # unchanged file. Merge the existing graph forward first, with
+                # the same replace/prune semantics as the clustered path's
+                # build_merge: re-extracted sources replaced, deleted +
+                # excluded + graph-stale sources pruned, everything else
+                # carried. Survivors are prepended, so the dedupe below keeps
+                # this run's fresh attributes for re-extracted nodes.
+                from graphify.build import merge_raw_extraction as _merge_raw_extraction
+                _raw_prune_sources: list[str] = list(deleted_files)
+                for _src in list(excluded_files) + graph_stale_sources:
+                    if _src not in _raw_prune_sources:
+                        _raw_prune_sources.append(_src)
+                try:
+                    merged = _merge_raw_extraction(
+                        merged,
+                        graph_path=existing_graph_path,
+                        prune_sources=_raw_prune_sources or None,
+                        root=target,
+                    )
+                except RuntimeError as exc:
+                    # Existing graph present but unparseable: refuse to
+                    # raw-dump this run's partial extraction over it.
+                    print(f"error: {exc}", file=sys.stderr)
+                    sys.exit(1)
             merged["nodes"] = _dedupe_nodes(merged["nodes"])
             merged["edges"] = _dedupe_edges(merged["edges"])
             # Disambiguate colliding-basename file-node labels (#2032). This raw

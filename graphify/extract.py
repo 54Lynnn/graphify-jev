@@ -4657,7 +4657,47 @@ def extract(
     # barrel repoint below (#1983). Unlike prefix_remap this records ALL
     # in-root files, not just those whose prefix changed.
     stem_forms: dict[Path, tuple[str, list[str]]] = {}
-    for path in paths:
+    # Canonicalize edge-target files too, not just this batch's inputs (#2169).
+    # On an incremental run `paths` is only the CHANGED files, so a changed
+    # file's cross-file import/re-export edges keep absolute-path-derived
+    # target ids the remap below never learns — they match no node in the
+    # merged graph and silently dangle. The target_file stamp (set at edge
+    # emit time) names each resolved target, so registering id_remap /
+    # stem_forms for those in-root files as well lets the edge remap and the
+    # target_file-guided repoint pass fix them exactly as on a full scan.
+    remap_paths: list[Path] = list(paths)
+    _remap_seen: set[Path] = set()
+    for _p in paths:
+        try:
+            _remap_seen.add(_p.resolve())
+        except (OSError, RuntimeError):
+            pass
+    for _e in all_edges:
+        _tf = _e.get("target_file")
+        if not _tf:
+            continue
+        try:
+            _tp = Path(_tf).resolve()
+        except (OSError, RuntimeError):
+            continue
+        if _tp in _remap_seen:
+            continue
+        _remap_seen.add(_tp)
+        try:
+            _tp.relative_to(root)
+        except ValueError:
+            continue  # out-of-root target: leave its ids alone
+        try:
+            if not _tp.is_file():
+                # Speculatively-resolved target that doesn't exist (e.g. an
+                # import of a not-yet-created sibling): keep its raw id
+                # dangling, exactly as before, so no false canonical edge is
+                # fabricated toward a nonexistent file.
+                continue
+        except OSError:
+            continue
+        remap_paths.append(_tp)
+    for path in remap_paths:
         old_id = _make_id(str(path))
         try:
             rel = path.relative_to(root)

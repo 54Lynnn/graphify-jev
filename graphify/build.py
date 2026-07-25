@@ -1041,6 +1041,137 @@ def deduplicate_by_label(nodes: list[dict], edges: list[dict]) -> tuple[list[dic
     return deduped_nodes, deduped_edges
 
 
+def _load_existing_graph(graph_path: Path) -> "tuple[list, list, list] | None":
+    """Load (nodes, edges, hyperedges) from an existing graph.json for an
+    incremental merge, accepting both the ``links`` and ``edges`` spellings.
+
+    Reads the JSON directly instead of going through node_link_graph().
+    The latter rebuilds an undirected nx.Graph and then enumerating
+    edges() yields endpoints based on node insertion order, which
+    silently flips directional edges (e.g. `calls`) when the callee
+    was inserted before the caller. The _src/_tgt direction-preserving
+    attrs are popped before saving in export.py, so going through the
+    NetworkX round-trip loses direction permanently (#760).
+
+    Returns None when the file does not exist. Raises RuntimeError when it
+    exists but cannot be parsed — callers must refuse to overwrite rather
+    than silently replace a possibly-recoverable graph.
+    """
+    if not graph_path.exists():
+        return None
+    from graphify.security import check_graph_file_size_cap
+    check_graph_file_size_cap(graph_path)
+    try:
+        data = json.loads(graph_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        raise RuntimeError(
+            f"Cannot read {graph_path} for incremental merge: {exc}. "
+            "Delete the file and run a full rebuild."
+        ) from exc
+    links_key = "links" if "links" in data else "edges"
+    return (
+        list(data.get("nodes", [])),
+        list(data.get(links_key, [])),
+        list(data.get("hyperedges", [])),
+    )
+
+
+def merge_raw_extraction(
+    new: dict,
+    graph_path: str | Path,
+    prune_sources: "list[str] | None" = None,
+    root: "str | Path | None" = None,
+) -> dict:
+    """Merge the existing raw graph.json forward into a fresh raw extraction
+    (the ``extract --no-cluster`` incremental path, #2169).
+
+    Replace/prune semantics mirror :func:`build_merge` exactly, so the raw and
+    clustered incremental paths can't drift:
+
+    - sources re-extracted this run REPLACE their prior contribution — existing
+      nodes/edges/hyperedges owned by them are dropped, matched in both raw and
+      :func:`_norm_source_file` form (#1007);
+    - ``prune_sources`` (deleted / excluded / graph-stale files) are dropped,
+      with the ``_abs_identity`` third-form fallback (#2012), and "replace" wins
+      over a contradictory "delete" of a re-extracted source (#1796);
+    - everything else — nodes/edges/hyperedges owned by unchanged files — is
+      carried forward unchanged.
+
+    Survivors are PREPENDED to ``new``'s lists (existing-first), so the caller's
+    ``dedupe_nodes`` last-writer-wins keeps fresh attributes for re-extracted
+    nodes while ``dedupe_edges`` first-wins never resurrects a replaced edge
+    (replaced sources' edges were already dropped above). Token counters and
+    every other key of ``new`` are left untouched. Returns ``new``, mutated in
+    place. Raises RuntimeError (via :func:`_load_existing_graph`) when the
+    existing graph is present but unparseable — the caller must refuse to
+    overwrite it. No-op when ``graph_path`` does not exist.
+    """
+    graph_path = Path(graph_path)
+    loaded = _load_existing_graph(graph_path)
+    if loaded is None:
+        return new
+    existing_nodes, existing_edges, existing_hyperedges = loaded
+
+    _eff_root = (
+        str(Path(root).resolve()) if root is not None
+        else _infer_merge_root(graph_path)
+    )
+
+    new_sources: set[str] = set()
+    for n in new.get("nodes", []):
+        if not isinstance(n, dict):
+            continue
+        sf = n.get("source_file")
+        if not sf:
+            continue
+        new_sources.add(sf)
+        norm = _norm_source_file(sf, _eff_root)
+        if norm:
+            new_sources.add(norm)
+
+    prune_set: set[str] = set()
+    prune_abs: set[str] = set()
+    for p in (prune_sources or []):
+        if not p:
+            continue
+        prune_set.add(p)
+        norm = _norm_source_file(p, _eff_root)
+        if norm:
+            prune_set.add(norm)
+        a = _abs_identity(p, _eff_root)
+        if a:
+            prune_abs.add(a)
+    # "Replace" wins over a contradictory "delete" of the same source (#1796),
+    # in both string and absolute-identity space (#2012) — as in build_merge.
+    prune_set -= new_sources
+    new_abs = {_abs_identity(s, _eff_root) for s in new_sources}
+    new_abs.discard(None)
+    prune_abs -= new_abs
+
+    def _dropped(item: dict) -> bool:
+        if not isinstance(item, dict):
+            return True
+        sf = item.get("source_file")
+        if sf in new_sources or _norm_source_file(sf, _eff_root) in new_sources:
+            return True  # re-extracted this run — replaced by the new chunk
+        if not sf:
+            return False  # unowned — carry forward
+        if sf in prune_set:
+            return True
+        norm = _norm_source_file(sf, _eff_root)
+        if norm and norm in prune_set:
+            return True
+        a = _abs_identity(sf, _eff_root)
+        return bool(a) and a in prune_abs
+
+    new["nodes"] = [n for n in existing_nodes if not _dropped(n)] + list(new.get("nodes", []))
+    new["edges"] = [e for e in existing_edges if not _dropped(e)] + list(new.get("edges", []))
+    carried_hyper = [he for he in existing_hyperedges if not _dropped(he)]
+    if carried_hyper or new.get("hyperedges"):
+        new["hyperedges"] = carried_hyper + list(new.get("hyperedges", []))
+    return new
+
+
 def build_merge(
     new_chunks: list[dict],
     graph_path: str | Path | None = None,
@@ -1061,27 +1192,9 @@ def build_merge(
     root: if given, absolute source_file paths in new_chunks are made relative (#932).
     """
     graph_path = Path(graph_path if graph_path is not None else _default_graph_json())
-    if graph_path.exists():
-        # Read JSON directly instead of going through node_link_graph().
-        # The latter rebuilds an undirected nx.Graph and then enumerating
-        # edges() yields endpoints based on node insertion order, which
-        # silently flips directional edges (e.g. `calls`) when the callee
-        # was inserted before the caller. The _src/_tgt direction-preserving
-        # attrs are popped before saving in export.py, so going through the
-        # NetworkX round-trip loses direction permanently (#760).
-        from graphify.security import check_graph_file_size_cap
-        check_graph_file_size_cap(graph_path)
-        try:
-            data = json.loads(graph_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as exc:
-            raise RuntimeError(
-                f"Cannot read {graph_path} for incremental merge: {exc}. "
-                "Delete the file and run a full rebuild."
-            ) from exc
-        links_key = "links" if "links" in data else "edges"
-        existing_nodes = list(data.get("nodes", []))
-        existing_edges = list(data.get(links_key, []))
-        existing_hyperedges = list(data.get("hyperedges", []))
+    _loaded = _load_existing_graph(graph_path)
+    if _loaded is not None:
+        existing_nodes, existing_edges, existing_hyperedges = _loaded
         had_graph = True
     else:
         existing_nodes = []
