@@ -65,6 +65,20 @@ _PYTHON_ANNOTATION_NOISE = frozenset({
     "NonCallableMagicMock", "PropertyMock", "patch", "sentinel",
 })
 
+# Builtin/stdlib decorators (@property, @dataclass, @functools.wraps, …) are
+# ambient vocabulary, not corpus symbols: emitting decorator edges for them
+# fabricates sourceless stub nodes on nearly every class-heavy file, and the
+# unique-function rewire can collapse them onto an unrelated local definition
+# (a corpus defining its own `def wraps(...)` gets a false decorator edge).
+# Same name-based tradeoff as `patch`/`Mock` in _PYTHON_ANNOTATION_NOISE.
+_PYTHON_DECORATOR_NOISE = frozenset({
+    "property", "staticmethod", "classmethod", "abstractmethod",
+    "abstractproperty", "cached_property", "wraps", "lru_cache", "cache",
+    "singledispatch", "singledispatchmethod", "total_ordering",
+    "contextmanager", "asynccontextmanager", "overload", "override",
+    "final", "no_type_check", "runtime_checkable", "dataclass",
+})
+
 def _python_collect_type_refs(node, source: bytes, generic: bool, out: list[tuple[str, str]]) -> None:
     """Walk a Python type annotation; append (name, role) where role is 'type' or 'generic_arg'.
 
@@ -3609,7 +3623,9 @@ def _extract_generic(
                         if child.type != "decorator":
                             continue
                         deco_name = _python_decorator_name(child, source)
-                        if not deco_name:
+                        # Builtin/stdlib decorators are noise: no stub nodes,
+                        # no false rewires onto same-named local definitions.
+                        if not deco_name or deco_name in _PYTHON_DECORATOR_NOISE:
                             continue
                         deco_line = child.start_point[0] + 1
                         target = ensure_named_node(deco_name, deco_line)

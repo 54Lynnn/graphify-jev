@@ -150,14 +150,73 @@ def test_property_still_class_qualified(tmp_path):
 
 def test_decorated_class(tmp_path):
     f = _write(tmp_path / "pkg" / "model.py",
+               "from registry import register_model\n"
+               "\n"
+               "@register_model\n"
+               "class Point:\n"
+               "    x: int\n")
+    r = extract([f], cache_root=tmp_path)
+    assert _make_id("register_model") in _deco_edges(
+        r, _class_nid("pkg/model.py", "Point"))
+
+
+def test_stdlib_class_decorator_emits_no_edge(tmp_path):
+    # @dataclass is ambient stdlib vocabulary (_PYTHON_DECORATOR_NOISE): no
+    # decorator edge and no sourceless `dataclass` stub node.
+    f = _write(tmp_path / "pkg" / "dc.py",
                "from dataclasses import dataclass\n"
                "\n"
                "@dataclass\n"
                "class Point:\n"
                "    x: int\n")
     r = extract([f], cache_root=tmp_path)
-    assert _make_id("dataclass") in _deco_edges(
-        r, _class_nid("pkg/model.py", "Point"))
+    assert _deco_edges(r, _class_nid("pkg/dc.py", "Point")) == set()
+    assert not any(n["id"] == _make_id("dataclass") for n in r["nodes"])
+
+
+def test_builtin_method_decorators_emit_no_edge_or_stub(tmp_path):
+    # @property / @staticmethod must not fabricate stub nodes or decorator
+    # edges — they would appear on nearly every class-heavy file.
+    f = _write(tmp_path / "pkg" / "builtins.py",
+               "class Config:\n"
+               "    @property\n"
+               "    def name(self):\n"
+               "        return 1\n"
+               "\n"
+               "    @staticmethod\n"
+               "    def make():\n"
+               "        return Config()\n")
+    r = extract([f], cache_root=tmp_path)
+    assert _deco_edges(r, _method_nid("pkg/builtins.py", "Config", "name")) == set()
+    assert _deco_edges(r, _method_nid("pkg/builtins.py", "Config", "make")) == set()
+    node_ids = {n["id"] for n in r["nodes"]}
+    assert _make_id("property") not in node_ids
+    assert _make_id("staticmethod") not in node_ids
+
+
+def test_functools_wraps_does_not_rewire_onto_local_wraps(tmp_path):
+    # The demonstrated false positive: a corpus defining its own top-level
+    # `def wraps(...)` while another file uses `@functools.wraps` got a false
+    # decorator edge onto the local `wraps` via the unique-function rewire.
+    _write(tmp_path / "pkg" / "gift.py",
+           "def wraps(thing):\n"
+           "    return thing\n")
+    f = _write(tmp_path / "pkg" / "util.py",
+               "import functools\n"
+               "\n"
+               "def logged(fn):\n"
+               "    @functools.wraps(fn)\n"
+               "    def inner(*args, **kwargs):\n"
+               "        return fn(*args, **kwargs)\n"
+               "    return inner\n")
+    r = extract([tmp_path / "pkg" / "gift.py", f], cache_root=tmp_path)
+    local_wraps = _func_nid("pkg/gift.py", "wraps")
+    assert not any(
+        e["target"] == local_wraps
+        and e["relation"] == "references"
+        and e.get("context") == "decorator"
+        for e in r["edges"]
+    )
 
 
 def test_undecorated_function_emits_no_decorator_edge(tmp_path):
