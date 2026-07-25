@@ -2,6 +2,15 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.27 (unreleased)
+
+- Fix: `claude`/`gemini`/`codex`/`codebuddy install` no longer overwrite an existing settings/hooks file they cannot parse (#2167). The installers fell back to an empty config on any JSON parse error and then rewrote the whole file, destroying the user's settings (the likely trigger is a UTF-8 BOM, the same class as #2163). They now read `utf-8-sig`, refuse to modify a file that is not a JSON object (naming the path) instead of clobbering it, and back up to `<name>.graphify-bak` before any modifying write.
+- Fix: incremental `extract --no-cluster` no longer overwrites the full graph with just the changed files (#2169). The raw path wrote only the current run's extraction over `graph.json`, dropping every node and edge owned by an unchanged file, and the changed file's cross-file edges dangled on absolute-path ids. It now merges the existing graph forward with the same replace/prune semantics as the clustered path and canonicalizes cross-file edge targets; a corrupt existing graph is refused rather than overwritten.
+- Fix: Python decorators now create graph edges, so `affected <decorator>` finds everything a decorator touches (#2154, thanks @Rishet11). Builtin/stdlib decorators (`@property`, `@staticmethod`, `@dataclass`, `@functools.wraps`, ...) are excluded so they do not fabricate stub nodes or false edges.
+- Fix: JavaScript/TypeScript non-relative imports resolve through `jsconfig.json`/`tsconfig.json` `baseUrl` and `paths` (#2153, thanks @Rishet11), so imports like `import x from 'src/utils'` are no longer left dangling.
+- Fix: Swift/Foundation/SwiftUI builtins (`Data`, `URL`, `Sendable`, `View`, ...) are filtered from call resolution and god-node ranking (#2147, thanks @MasterFede5), so they no longer fabricate cross-file edges to user symbols or dominate the graph's high-degree nodes.
+- Fix: running the test suite no longer touches the developer's real `~/.claude`/`~/.gemini`/`~/.codebuddy`/`~/.copilot` (#2168). An autouse fixture sandboxes HOME for every test.
+
 ## 0.9.26 (2026-07-25)
 
 - Fix: `graphify query`/`explain` no longer fabricate `indirect_call` edges to class definitions (#2137, thanks @Rishet11). The callable guard admitted classes, so passing a class as a value (`select(Model)`, `db.get(Model, id)`, `except (ErrorA, ErrorB)`, `getattr(obj, "Name", 0)`) produced a false inferred call edge in both the intra-file and cross-file paths. Classes are now tracked separately and excluded from `indirect_call`; direct instantiation still emits its `calls` edge. The suppression is context-blind, so a genuine higher-order class callback that is actually invoked (e.g. `map(Point, coords)`) also loses its edge, which is the intended tradeoff.
