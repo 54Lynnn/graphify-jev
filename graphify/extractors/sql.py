@@ -209,6 +209,7 @@ def extract_sql(path: Path, content: str | bytes | None = None) -> dict:
             text = _read(node)
             for m in re.finditer(
                 r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+"
+                r"(?:IF\s+NOT\s+EXISTS\s+)?"
                 r"((?:\"[^\"\n]+\"|[\w$]+)(?:\s*\.\s*(?:\"[^\"\n]+\"|[\w$]+))*)",
                 text, re.IGNORECASE,
             ):
@@ -311,13 +312,21 @@ def extract_sql(path: Path, content: str | bytes | None = None) -> dict:
     # Shapes 2 and 3 silently dropped the routine: no node, no warning, exit 0.
     # Scanning the raw source catches all three, and _add_node dedupes by id so
     # routines already recovered from the tree are not emitted twice.
-    for m in re.finditer(
-        r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+"
-        r"((?:\"[^\"\n]+\"|[\w$]+)(?:\s*\.\s*(?:\"[^\"\n]+\"|[\w$]+))*)",
-        src_text, re.IGNORECASE,
-    ):
-        fn_name = m.group(1)
-        fn_line = src_text[: m.start()].count("\n") + 1
-        _add_node(_make_id(stem, fn_name), f"{fn_name}()", fn_line)
+    #
+    # Gate on a failed parse: a cleanly-parsing file must NOT have routines
+    # fabricated from commented-out DDL, DDL inside EXECUTE '...' string bodies,
+    # or MySQL `CREATE FUNCTION IF NOT EXISTS` (which would capture `IF`). Every
+    # observed drop shape leaves an ERROR node in the tree, so has_error loses
+    # nothing while protecting clean corpora (#2180 follow-up).
+    if root.has_error:
+        for m in re.finditer(
+            r"CREATE\s+(?:OR\s+REPLACE\s+)?(?:FUNCTION|PROCEDURE)\s+"
+            r"(?:IF\s+NOT\s+EXISTS\s+)?"
+            r"((?:\"[^\"\n]+\"|[\w$]+)(?:\s*\.\s*(?:\"[^\"\n]+\"|[\w$]+))*)",
+            src_text, re.IGNORECASE,
+        ):
+            fn_name = m.group(1)
+            fn_line = src_text[: m.start()].count("\n") + 1
+            _add_node(_make_id(stem, fn_name), f"{fn_name}()", fn_line)
 
     return {"nodes": nodes, "edges": edges}

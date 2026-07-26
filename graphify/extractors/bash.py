@@ -131,7 +131,8 @@ def extract_bash(path: Path) -> dict:
     add_edge(file_nid, entry_nid, "contains", 1)
 
     _BASH_SOURCE_COMMANDS = frozenset({"source", "."})
-    _BASH_SCRIPT_RUNNERS = frozenset({"bash", "sh", "zsh", "ksh", "dash"})    # Parent node types that mean a contained command is part of a substitution
+    _BASH_SCRIPT_RUNNERS = frozenset({"bash", "sh", "zsh", "ksh", "dash"})
+    # Parent node types that mean a contained command is part of a substitution
     # or expansion, not a real function call. Token-level filtering misses
     # these because `$(build)` exposes `build` as a child command whose name
     # token has no metacharacters — only the parent does.
@@ -329,8 +330,12 @@ def extract_bash(path: Path) -> dict:
                                 except OSError:
                                     sibling = None
                             if sibling is not None:
+                                # A bare `source lib.sh` resolves via $PATH at
+                                # runtime; binding it to the sibling of that name
+                                # is a heuristic, so mark it INFERRED (#2171).
                                 add_edge(file_nid, _make_id(str(sibling)),
-                                         "imports_from", line, context="import")
+                                         "imports_from", line,
+                                         confidence="INFERRED", context="import")
                                 bash_sources.append({
                                     "target_path": raw,
                                     "source_file": str_path,
