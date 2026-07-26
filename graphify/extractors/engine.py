@@ -1424,15 +1424,29 @@ def _csharp_member_type_table(root, source: bytes) -> dict[str, str]:
     """Collect ``name -> TypeName`` for C# receiver typing (#1609): class fields,
     properties, method parameters, and local variable declarations.
 
-    File-scoped, first-binding-wins (like the C++ table): a field declared once at
-    class scope is visible to every method's `field.Method()`, and a param/local
-    shadowing the same name is a conservative approximation graphify already accepts
-    for receiver typing. Only a resolvable, non-`var` type name is recorded; `var`
-    without a `new T()` initializer, and predefined/lower-cased primitives, are
-    skipped (precision over recall — an untypable receiver is left for the resolver
-    to drop rather than guess). `var v = new T()` is typed from the object-creation.
+    File-scoped with conflict POISONING (#1620): a name bound to two different
+    resolvable types anywhere in the file — or bound once to a resolvable type and
+    redeclared with an unresolvable one (``var x = Compute();``, a primitive, a
+    ``dynamic``) — is dropped from the table entirely, so a local shadowing a field
+    of a DIFFERENT type can never produce a wrong edge (the resolver simply emits
+    none). Consistent rebindings (the same resolved type) keep the single entry.
+    Only a resolvable, non-`var` type name is recorded; `var` without a `new T()`
+    initializer, and predefined/lower-cased primitives, are unresolvable (precision
+    over recall — an untypable receiver is left for the resolver to drop rather
+    than guess). `var v = new T()` is typed from the object-creation.
     """
     table: dict[str, str] = {}
+    poisoned: set[str] = set()
+
+    def _bind(name: str | None, resolved: str | None) -> None:
+        if not name:
+            return
+        if resolved is None or table.get(name, resolved) != resolved:
+            # An unresolvable redeclaration, or a second binding with a different
+            # type: the name is scope-ambiguous at file granularity — poison it.
+            poisoned.add(name)
+        else:
+            table[name] = resolved
 
     def _typed(type_node) -> str | None:
         info = _read_csharp_type_name(type_node, source)
@@ -1468,25 +1482,19 @@ def _csharp_member_type_table(root, source: bytes) -> dict[str, str]:
                 type_node = vd.child_by_field_name("type")
                 declared = _typed(type_node)
                 for name, decl in _decl_names(vd):
-                    resolved = declared or _new_type(decl)
-                    if name and resolved and name not in table:
-                        table[name] = resolved
+                    _bind(name, declared or _new_type(decl))
         elif t == "property_declaration":
             nm = n.child_by_field_name("name")
-            resolved = _typed(n.child_by_field_name("type"))
-            if nm is not None and resolved:
-                pname = _read_text(nm, source)
-                if pname not in table:
-                    table[pname] = resolved
+            if nm is not None:
+                _bind(_read_text(nm, source), _typed(n.child_by_field_name("type")))
         elif t == "parameter":
             nm = n.child_by_field_name("name")
-            resolved = _typed(n.child_by_field_name("type"))
-            if nm is not None and resolved:
-                pname = _read_text(nm, source)
-                if pname not in table:
-                    table[pname] = resolved
+            if nm is not None:
+                _bind(_read_text(nm, source), _typed(n.child_by_field_name("type")))
         for c in n.children:
             stack.append(c)
+    for name in poisoned:
+        table.pop(name, None)
     return table
 
 def _ts_receiver_type_table(root, source: bytes, table: dict[str, str]) -> None:
@@ -3928,8 +3936,26 @@ def _extract_generic(
                         is_member_call = True
                         if recv is not None and recv.type == "identifier":
                             member_receiver = _read_text(recv, source)
-                        elif recv is not None and recv.type == "this_expression":
+                        elif recv is not None and recv.type in ("this", "this_expression"):
                             member_receiver = "this"
+                        elif recv is not None and recv.type in ("base", "base_expression"):
+                            # base.M(): resolved against the caller's single
+                            # resolvable base class in the cross-file pass.
+                            member_receiver = "base"
+                        elif recv is not None and recv.type == "member_access_expression":
+                            # this.field.M(): the explicit-`this` field access is
+                            # typed exactly like a bare `field.M()` via the file
+                            # table; any other chained receiver stays untyped
+                            # (the resolver bails rather than guessing).
+                            inner = recv.child_by_field_name("expression")
+                            fname = recv.child_by_field_name("name")
+                            if (
+                                inner is not None
+                                and inner.type in ("this", "this_expression")
+                                and fname is not None
+                                and fname.type == "identifier"
+                            ):
+                                member_receiver = _read_text(fname, source)
                 elif fn_node is not None and fn_node.type == "identifier":
                     callee_name = _read_text(fn_node, source)
                 else:
