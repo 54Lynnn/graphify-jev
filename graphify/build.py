@@ -124,6 +124,39 @@ def _normalize_hyperedge_members(he: object) -> None:
         he.pop(alias, None)
 
 
+def _fold_node_aliases(node: dict) -> None:
+    """Fold legacy node field aliases onto canonical keys, in place (#2194).
+
+    ``name`` -> ``label`` and ``path`` -> ``source_file``. Uses an empty-check
+    (not mere key presence) so a node carrying ``label: ""``/``None`` next to a
+    real ``name`` is healed too. When the canonical field already holds a value
+    it wins and the alias key is left untouched. Without this fold an alias-only
+    node enters the graph with no label/source_file: it fails validation, gets
+    ``norm_label == ""`` (invisible to query/explain), and is excluded from every
+    label-keyed merge/dedup — a permanent ghost that ``graphify update``
+    re-feeds through build_from_json forever.
+    """
+    if not node.get("label") and isinstance(node.get("name"), str) and node["name"]:
+        node["label"] = node.pop("name")
+    if not node.get("source_file") and isinstance(node.get("path"), str) and node["path"]:
+        node["source_file"] = node.pop("path")
+
+
+def _fold_edge_aliases(edge: dict) -> None:
+    """Fold legacy edge field aliases onto canonical keys, in place (#2194).
+
+    ``type`` -> ``relation``. A ``confidence_score`` float with no ``confidence``
+    enum backfills ``confidence: "INFERRED"`` — never EXTRACTED (alias recovery
+    is not provenance) and never a threshold mapping of the float. The
+    ``confidence_score`` key itself is NOT popped: it is a legitimate companion
+    field that the edge loop sanitizes and to_json round-trips.
+    """
+    if not edge.get("relation") and isinstance(edge.get("type"), str) and edge["type"]:
+        edge["relation"] = edge.pop("type")
+    if not edge.get("confidence") and edge.get("confidence_score") is not None:
+        edge["confidence"] = "INFERRED"
+
+
 def _norm_source_file(p: str | None, root: str | None = None) -> str | None:
     """Normalize path separators and relativize absolute paths.
 
@@ -395,7 +428,23 @@ def _semantic_id_remap(nodes: list, root: str | None) -> dict:
         if norm_nid == new_stem or norm_nid.startswith(new_stem + "_"):
             continue
         new_id: str | None = None
-        for old_stem in _old_file_stems(rel):
+        old_forms = _old_file_stems(rel)
+        # #2197: on Windows, detect() can emit an ABSOLUTE source_file, and a
+        # semantic fragment's id derived from that absolute path (e.g.
+        # d_projects_myrepo_docs_dataflow) matches neither the canonical
+        # relative stem nor the legacy short forms above — so while source_file
+        # itself is healed by _norm_source_file, the id would ghost against the
+        # existing graph's docs_dataflow. When the raw path was absolute and
+        # relativized under root, treat the raw-absolute stem as one more
+        # old-stem form — the semantic-side twin of extract.py's absolute-form
+        # id registration. It is the longest form, so it goes first (greedy
+        # prefix stripping, same ordering rule as _old_file_stems).
+        sf_raw = str(sf).replace("\\", "/")
+        if sf_raw != sf_norm and os.path.isabs(sf_raw):
+            abs_stem = make_id(_file_stem(Path(sf_raw)))
+            if abs_stem and abs_stem != new_stem and abs_stem not in old_forms:
+                old_forms.insert(0, abs_stem)
+        for old_stem in old_forms:
             if old_stem == new_stem:
                 continue  # already canonical for this form
             if norm_nid == old_stem:
@@ -518,6 +567,11 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
                 file=sys.stderr,
             )
             node["source_file"] = node.pop("source")
+        # Fold the remaining legacy node aliases (`name`->`label`,
+        # `path`->`source_file`, #2194) before validation and before the
+        # semantic-rekey / ghost-merge passes below, all of which key on
+        # label/source_file and would otherwise skip the node entirely.
+        _fold_node_aliases(node)
         # Default missing/None file_type to "concept" so legacy graph.json
         # entries (and stub nodes preserved by `_rebuild_code` from older
         # graphify versions that didn't always populate file_type) don't
@@ -536,11 +590,33 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
     for he in extraction.get("hyperedges", []) or []:
         _normalize_hyperedge_members(he)
 
+    # Fold legacy edge field aliases (`type`->`relation`,
+    # `confidence_score`->`confidence`, #2194) BEFORE validation. The existing
+    # from/to endpoint fold lives in the edge loop further down, which runs
+    # after validate_extraction — too late for fields the validator requires.
+    for edge in extraction.get("edges", []):
+        if isinstance(edge, dict):
+            _fold_edge_aliases(edge)
+
     errors = validate_extraction(extraction)
     # Dangling edges (stdlib/external imports) are expected - only warn about real schema errors.
     real_errors = [e for e in errors if "does not match any node id" not in e]
     if real_errors:
-        print(f"[graphify] Extraction warning ({len(real_errors)} issues): {real_errors[0]}", file=sys.stderr)
+        # Break the warning down by cause (#2194): a mixed batch used to surface
+        # only real_errors[0], hiding every other failure mode. Group on the
+        # "missing required field 'X'" suffix and report per-cause counts plus
+        # one example each, so the operator sees the full shape of the damage.
+        by_cause: dict[str, list[str]] = {}
+        for err in real_errors:
+            m = re.search(r"missing required field '[^']*'", err)
+            by_cause.setdefault(m.group(0) if m else "other schema issue", []).append(err)
+        breakdown = "; ".join(
+            f"{len(errs)}x {cause} (e.g. {errs[0]})" for cause, errs in by_cause.items()
+        )
+        print(
+            f"[graphify] Extraction warning ({len(real_errors)} issues): {breakdown}",
+            file=sys.stderr,
+        )
     # Deterministic semantic re-key (#1504/#1509): the node-ID stem is now the
     # full repo-relative path (docs/v1/api/README.md -> docs_v1_api_readme), but
     # the semantic cache is UNVERSIONED, so a cached/LLM fragment can still carry
@@ -972,6 +1048,13 @@ def build(
         combined["input_tokens"] += ext.get("input_tokens", 0)
         combined["output_tokens"] += ext.get("output_tokens", 0)
     if dedup and combined["nodes"]:
+        # Fold legacy node field aliases before dedup (#2194): dedup runs BEFORE
+        # build_from_json and keys on `label`, so a `name`/`path` alias node
+        # would be invisible to it and only label-dedup one build later, after
+        # build_from_json's own fold has healed the persisted graph.json.
+        for n in combined["nodes"]:
+            if isinstance(n, dict):
+                _fold_node_aliases(n)
         combined["nodes"], combined["edges"] = deduplicate_entities(
             combined["nodes"], combined["edges"], communities={},
             dedup_llm_backend=dedup_llm_backend,
