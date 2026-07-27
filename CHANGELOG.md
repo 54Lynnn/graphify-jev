@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.28 (unreleased)
+## 0.9.28 (2026-07-27)
 
 - Fix: incremental extraction no longer drops cross-file edges whose target file wasn't in the batch (#2211, #2213). Python relative imports and markdown reference links emitted absolute-path-derived target ids without the `target_file` stamp the incremental canonicalization needs, so a re-extracted file's imports/references dangled or vanished; both now stamp the resolved target and canonicalize to the root-relative node.
 - Fix: incremental extraction no longer prunes alive files as "deleted" (#2210). The stale-source check compared graph paths to the scan with a raw string test (no Unicode NFC normalization) and pruned any non-match without checking whether the file still exists, so macOS NFD paths and legacy basename spellings lost their nodes. It now compares NFC on both sides and is fail-closed: a source missing from the scan is pruned only when its exclusion is provable, otherwise kept with a warning.
