@@ -444,8 +444,11 @@ def _obsidian_safe_stem(label: str) -> str:
         label.replace("\r\n", " ").replace("\r", " ").replace("\n", " "),
     ).strip()
     cleaned = re.sub(r"\.(md|mdx|qmd|markdown)$", "", cleaned, flags=re.IGNORECASE)
-    # Obsidian treats a leading-dot filename as a hidden file (#2205).
-    if cleaned.startswith("."):
+    # Obsidian treats a leading-dot filename as a hidden file (#2205). Only
+    # prefix when something nameable remains after the dots: an all-dots label
+    # like "..." would otherwise become the meaningless stem "dot-" instead of
+    # falling through to the "unnamed" guard below (#1409).
+    if cleaned.startswith(".") and re.search(r"\w", cleaned.lstrip("."), flags=re.UNICODE):
         cleaned = "dot-" + cleaned.lstrip(".")
     # A stem of only punctuation (e.g. "@", "*", "#") survives the unsafe-char
     # strip above but is empty once a downstream tool re-slugs on word chars

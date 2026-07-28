@@ -459,6 +459,16 @@ def test_to_obsidian_leading_dot_labels_are_not_hidden_filenames():
         assert not any(s.startswith(".") for s in file_stems), file_stems
 
 
+def test_obsidian_safe_stem_all_dots_label_falls_back_to_unnamed():
+    """#2205 follow-up: the `dot-` prefix only applies when a word char survives
+    the dot strip. An all-dots label like "..." must hit the #1409 "unnamed"
+    fallback, not produce the meaningless stem "dot-"."""
+    from graphify.export import _obsidian_safe_stem
+    assert _obsidian_safe_stem(".env") == "dot-env"        # #2205 fix unchanged
+    assert _obsidian_safe_stem("...") == "unnamed"         # not "dot-"
+    assert _obsidian_safe_stem("Database") == "Database"   # normal labels untouched
+
+
 # ── Existing-vault safety: graphify must not clobber user notes / .obsidian (#1506) ──
 
 def _two_node_graph():
