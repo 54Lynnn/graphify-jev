@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.29 (unreleased)
+## 0.9.29 (2026-07-28)
 
 - Fix: absolute-path / machine-slug node ids no longer leak into edge endpoints (#2231, #2243). Module-top-level `indirect_call` sources, bash `source`/script-invocation targets, and other producers that minted an id from an absolute path are now canonicalized to the root-relative node id by a general backstop, so `graph.json` link endpoints are portable across machines and clones.
 - Fix: the post-commit hook no longer overwrites an existing `graph.json` it merely failed to read (#2251). If the existing graph is over the size cap or unparseable, the rebuild now refuses to write (matching the CLI) instead of silently replacing it with a code-only extraction; the `--no-cluster` write is also atomic with a protected-graph backup.
