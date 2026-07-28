@@ -1765,6 +1765,8 @@ def test_extract_bash_emits_script_invocation_calls(tmp_path, command):
         "source_location": "L2",
         "weight": 1.0,
         "context": "script_invocation",
+        # Transient canonicalization hint (#2243); popped before persist.
+        "target_file": str(helpers.resolve()),
     }]
 
 

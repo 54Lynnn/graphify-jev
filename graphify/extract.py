@@ -4803,6 +4803,17 @@ def extract(
                     id_remap[_make_id(str(_tp))] = ext_new_id
                     if _raw_tp != _tp:
                         id_remap[_make_id(str(_raw_tp))] = ext_new_id
+                    # Bash entrypoint endpoints suffix the file-level id with
+                    # "__entry" (script-invocation `calls` edges,
+                    # extractors/bash.py); register the suffixed forms too so
+                    # an out-of-root invoked script canonicalizes instead of
+                    # keeping the absolute scan-path slug (#2243).
+                    id_remap.setdefault(
+                        _make_id(str(_tp)) + "__entry", ext_new_id + "__entry")
+                    if _raw_tp != _tp:
+                        id_remap.setdefault(
+                            _make_id(str(_raw_tp)) + "__entry",
+                            ext_new_id + "__entry")
             except OSError:
                 pass
             continue
@@ -4851,6 +4862,21 @@ def extract(
         old_pref_abs = _file_node_id(path.resolve())
         if old_pref_abs != new_id and old_pref_abs != old_pref:
             old_prefs.append((old_pref_abs, new_id))
+        # Bash entrypoint node ids append "__entry" to the file-level id
+        # (extractors/bash.py), so a script-invocation edge endpoint minted
+        # from an out-of-batch target path keeps a suffixed absolute-derived
+        # id neither the plain id_remap key above nor the source_file-gated
+        # prefix pass below (nodes only) can reach on an incremental run
+        # (#2243). Register the suffixed forms, preserving the extension tail
+        # exactly as the prefix remap yields for in-batch entry nodes
+        # (`c.sh` -> `c_sh__entry`): new prefix + the tail of the minted id.
+        for _old, _pref in ((old_id, old_pref), (old_id_abs, old_pref_abs)):
+            if not _old.startswith(_pref):
+                continue
+            _entry_new = new_id + _old[len(_pref):] + "__entry"
+            _entry_old = _old + "__entry"
+            if _entry_old != _entry_new:
+                id_remap.setdefault(_entry_old, _entry_new)
         if old_prefs:
             prefix_remap[path.resolve()] = old_prefs
         # Absolute form first: it is the longest, so prefix decomposition can
@@ -4867,6 +4893,18 @@ def extract(
                 e["source"] = id_remap[e["source"]]
             if e.get("target") in id_remap:
                 e["target"] = id_remap[e["target"]]
+        # raw_calls carry caller_nid, consumed by the cross-file call pass far
+        # below (after this remap). A module-TOP-LEVEL indirect_call/callback
+        # records the FILE-level id as its caller — the id minted from the
+        # absolute input path that this very remap just rewrote on the file
+        # node. Without rewriting the raw_calls too, the emitted
+        # indirect_call edge keeps the machine-specific absolute-derived
+        # source and matches no node in the graph (#2231). Mirrors the
+        # sym_remap raw_calls rewrite in the prefix pass below.
+        for rc in all_raw_calls:
+            cn = rc.get("caller_nid")
+            if cn in id_remap:
+                rc["caller_nid"] = id_remap[cn]
     if prefix_remap:
         sym_remap: dict[str, str] = {}
         edge_alias_candidates: dict[str, set[str]] = {}
@@ -5444,6 +5482,52 @@ def extract(
     # portable id and rewrite the edge endpoints that reference it.
     # ``_portable_out_of_root_sf`` is defined above, by ``id_remap`` (#2243).
     ext_id_remap: dict[str, str] = {}
+    # General backstop closing the absolute-id leak CLASS (#2231/#2243): any
+    # producer that minted an id or edge endpoint as _make_id(<absolute path>)
+    # and was reached by no earlier remap (module-top-level raw_calls before
+    # #2231, unstamped edges, regex-rescue stubs #2195, ...) still leaks the
+    # machine/scan-path slug here. Instead of pattern-matching only the item's
+    # OWN id, LEARN the absolute-derived key forms (as-written and resolved)
+    # of every file that appears in the batch from the nodes' source_file, map
+    # them to the file's canonical id — _file_node_id(rel) in-root, the
+    # #1899/#2250 "ext" recipe out-of-root — and rewrite every node id and
+    # edge endpoint through that map. Only absolute-derived ids are renamed to
+    # their canonical form; a key already owned by a real (differently-minted)
+    # node is never remapped, so no edge is fabricated toward a node it did
+    # not already reference.
+    owned_ids = {n.get("id") for n in all_nodes}
+    # sf string -> (relativized source_file, canonical id, absolute-derived
+    # key forms). Cached so the path work (resolve() hits the filesystem)
+    # runs once per file, not once per node.
+    _sf_forms: dict[str, tuple[str, str, tuple[str, ...]]] = {}
+
+    def _sf_entry(sf: str, sf_path: Path) -> tuple[str, str, tuple[str, ...]]:
+        cached = _sf_forms.get(sf)
+        if cached is not None:
+            return cached
+        try:
+            rel = sf_path.relative_to(root)
+        except ValueError:
+            portable = _portable_out_of_root_sf(sf_path)
+            canonical_id = _make_id("ext", portable)
+            new_sf = portable
+        else:
+            # In-root: the same canonical repo-relative form the real file
+            # node uses (_file_node_id), so the scan root can never leak into
+            # a persisted id. Real file nodes were already remapped by the
+            # #2169 pass, so only leftover absolute-derived ids match below
+            # (belt-and-braces for #2195 regex-rescue stubs and friends).
+            canonical_id = _file_node_id(rel)
+            new_sf = rel.as_posix()
+        try:
+            sf_resolved = sf_path.resolve()
+        except (OSError, RuntimeError):
+            sf_resolved = sf_path
+        keys = tuple({_make_id(str(sf_path)), _make_id(str(sf_resolved))})
+        entry = (new_sf, canonical_id, keys)
+        _sf_forms[sf] = entry
+        return entry
+
     for item in all_nodes + all_edges:
         sf = item.get("source_file")
         if not sf:
@@ -5451,40 +5535,41 @@ def extract(
         sf_path = Path(sf)
         if not sf_path.is_absolute():
             continue
-        try:
-            rel = sf_path.relative_to(root)
-        except ValueError:
-            pass
-        else:
-            # Belt-and-braces for #2195: a stub node minted by the Svelte/
-            # Astro/Vue regex rescue from an ABSOLUTE input path keeps an
-            # absolute-path-derived id when no earlier pass learned it (the
-            # target never resolved to a real file, so the edge carried no
-            # target_file stamp for the #2169 remap). Mirror the out-of-root
-            # check below: remap it to the same canonical repo-relative form
-            # the real file node would use (_file_node_id) so the scan root
-            # can never leak into a persisted id. Real file nodes were
-            # already remapped by the #2169 pass, so only leftover stubs
-            # match here.
-            if item.get("id") == _make_id(str(sf_path)):
-                ext_id_remap[item["id"]] = _file_node_id(rel)
-            item["source_file"] = rel.as_posix()
-            continue
-        portable = _portable_out_of_root_sf(sf_path)
-        # A node whose id was minted from this absolute path also leaks it.
-        if "id" in item and item.get("id") == _make_id(str(sf_path)):
-            ext_id_remap[item["id"]] = _make_id("ext", portable)
-        item["source_file"] = portable
+        new_sf, canonical_id, keys = _sf_entry(str(sf), sf_path)
+        if "id" in item:
+            for key in keys:
+                if key == canonical_id or key in ext_id_remap:
+                    continue
+                if key in owned_ids and item.get("id") != key:
+                    # The key is a real node's id minted some other way —
+                    # renaming it (or edges onto it) would corrupt the graph.
+                    # The node that owns it registers it itself when its own
+                    # id IS the absolute-derived form (#2195 stub).
+                    continue
+                ext_id_remap[key] = canonical_id
+        item["source_file"] = new_sf
 
     if ext_id_remap:
+        # Bash entrypoint ids are the file-level id + "__entry"
+        # (extractors/bash.py); rewrite the suffixed form of any learned key
+        # the same way so a script-invocation endpoint can't keep the slug.
+        _ENTRY = "__entry"
+
+        def _canon(nid: str) -> str:
+            if nid in ext_id_remap:
+                return ext_id_remap[nid]
+            if nid.endswith(_ENTRY) and nid[: -len(_ENTRY)] in ext_id_remap:
+                return ext_id_remap[nid[: -len(_ENTRY)]] + _ENTRY
+            return nid
+
         for n in all_nodes:
-            if n.get("id") in ext_id_remap:
-                n["id"] = ext_id_remap[n["id"]]
+            if n.get("id"):
+                n["id"] = _canon(n["id"])
         for e in all_edges:
-            if e.get("source") in ext_id_remap:
-                e["source"] = ext_id_remap[e["source"]]
-            if e.get("target") in ext_id_remap:
-                e["target"] = ext_id_remap[e["target"]]
+            if e.get("source"):
+                e["source"] = _canon(e["source"])
+            if e.get("target"):
+                e["target"] = _canon(e["target"])
 
     # origin_file is an internal disambiguation hint (#1462): the colliding-id pass
     # above reads it to keep same-named cross-file stubs distinct, after which nothing
