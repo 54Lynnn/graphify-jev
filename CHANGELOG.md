@@ -2,6 +2,10 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.30 (unreleased)
+
+- Fix: pin `mcp` below 2.0 so a fresh `graphifyy[mcp]` / `graphifyy[all]` install works again (#2277, #2279, #2291). The `mcp` 2.0.0 major dropped the `mcp.types.AnyUrl` re-export and the `Server` decorator-registration API that `graphify/serve.py` uses, so an unpinned resolve broke `graphify-mcp` on every new install with an `ImportError`. The `mcp` and `all` extras now require `mcp>=1,<2` (resolving to 1.29.0) and `starlette>=1.3.1,<2`. Adapting to the mcp 2.x API is tracked as a follow-up.
+
 ## 0.9.29 (2026-07-28)
 
 - Fix: absolute-path / machine-slug node ids no longer leak into edge endpoints (#2231, #2243). Module-top-level `indirect_call` sources, bash `source`/script-invocation targets, and other producers that minted an id from an absolute path are now canonicalized to the root-relative node id by a general backstop, so `graph.json` link endpoints are portable across machines and clones.
