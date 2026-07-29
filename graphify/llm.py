@@ -1653,7 +1653,7 @@ def _call_bedrock(model: str, user_message: str, max_tokens: int = 8192, *, deep
         config=botocore.config.Config(
             read_timeout=_resolve_api_timeout(),
             connect_timeout=10,
-            retries={"max_attempts": _resolve_max_retries(), "mode": "adaptive"},
+            retries={"max_attempts": _resolve_max_retries() + 1, "mode": "adaptive"},
         ),
     )
 
@@ -2613,7 +2613,7 @@ def _call_llm(
             config=botocore.config.Config(
                 read_timeout=_resolve_api_timeout(),
                 connect_timeout=10,
-                retries={"max_attempts": _resolve_max_retries(), "mode": "adaptive"},
+                retries={"max_attempts": _resolve_max_retries() + 1, "mode": "adaptive"},
             ),
         )
         resp = client.converse(

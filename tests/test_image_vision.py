@@ -420,9 +420,13 @@ def test_call_bedrock_parses_reasoning_model_response(monkeypatch):
         botocore = types.ModuleType("botocore")
         exc = types.ModuleType("botocore.exceptions")
         exc.ClientError = type("ClientError", (Exception,), {})
+        config_mod = types.ModuleType("botocore.config")
+        config_mod.Config = lambda **kw: SimpleNamespace(**kw)
         botocore.exceptions = exc
+        botocore.config = config_mod
         monkeypatch.setitem(sys.modules, "botocore", botocore)
         monkeypatch.setitem(sys.modules, "botocore.exceptions", exc)
+        monkeypatch.setitem(sys.modules, "botocore.config", config_mod)
 
     _fake(monkeypatch)
     result = llm._call_bedrock("model", "CORPUS")
@@ -442,7 +446,7 @@ def test_call_bedrock_honors_api_timeout(monkeypatch):
     assert cfg is not None, "bedrock client built without a botocore config"
     assert cfg.read_timeout == 1800.0
     assert cfg.connect_timeout == 10
-    assert cfg.retries == {"max_attempts": 6, "mode": "adaptive"}
+    assert cfg.retries == {"max_attempts": 7, "mode": "adaptive"}  # retries + initial attempt
 
 
 def test_call_bedrock_api_timeout_defaults_when_unset(monkeypatch):
