@@ -2,7 +2,7 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.30 (unreleased)
+## 0.9.30 (2026-07-29)
 
 - Fix: pin `mcp` below 2.0 so a fresh `graphifyy[mcp]` / `graphifyy[all]` install works again (#2277, #2279, #2291). The `mcp` 2.0.0 major dropped the `mcp.types.AnyUrl` re-export and the `Server` decorator-registration API that `graphify/serve.py` uses, so an unpinned resolve broke `graphify-mcp` on every new install with an `ImportError`. The `mcp` and `all` extras now require `mcp>=1,<2` (resolving to 1.29.0) and `starlette>=1.3.1,<2`. Adapting to the mcp 2.x API is tracked as a follow-up.
 - Fix: TypeScript `.tsx` files no longer leak absolute-path / machine-slug ids into edge endpoints (#2262). The symbol-resolution pass parsed `.tsx` with the plain TypeScript grammar, so JSX misparsed and nested handlers floated to top level, emitting `calls` edges whose source was an absolute-stem id for a caller with no node. `.tsx` now uses the TSX grammar, a `calls` edge is never emitted from an unowned source, and a general backstop canonicalizes any node-less absolute-derived endpoint.
