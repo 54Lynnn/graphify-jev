@@ -2,7 +2,22 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.54 (unreleased)
+## 0.9.55 (unreleased)
+
+- Fix: a module docstring preceded by a leading comment (shebang, `# -*- coding -*-`, or a license header) is now extracted instead of silently dropped — comments are skipped when locating the first statement, across module/class/function bodies (#3312, thanks @ayushcodes10).
+- Fix: two Python definitions whose ids differ only by leading underscores (e.g. `_get_connection` and `get_connection`) no longer collide and silently drop one — private/dunder members are salted while a unique public member keeps its plain id, so existing graphs are unaffected (#3302, thanks @ayushcodes10).
+- Fix: a ghost node whose `source_file` was set to the doc that merely *mentions* a file is now merged onto the real file node via a conservative unique-label fallback, so it stops surviving every rebuild (#3344, thanks @leninherrera94).
+- Fix: type-use edges (`inherits`/`implements`/`references`) are no longer fabricated from a symbol that owns no node — e.g. a class nested in a named function, or an abstract method signature — closing a path that leaked phantom `ext_*`-sourced edges (#3356, thanks @VasuBansal7576).
+- Fix: `graphify watch`/`update` in no-cluster mode now disambiguates same-basename file labels (e.g. two `errors.ts`) the same way the clustered build does, instead of collapsing them to a bare basename (#3363, thanks @VasuBansal7576).
+- Fix: a named re-export that forwards an imported binding — `import { x } from './a'; export { x }`, `export { x } from './a'` barrels, alias renames, and `export *` chains — now resolves to the original definition instead of dangling on a fabricated barrel symbol; ambiguous or unresolved origins are left untouched (#3358, thanks @VasuBansal7576).
+- Fix: cross-file entity nodes typed only by their file extension (e.g. the same handle mentioned across several docs) now merge like `concept` nodes, gated by an entropy + provenance guard and an own-file-node exclusion so distinct entities stay separate (partially addresses #296, thanks @yotamleo).
+- Fix: a runtime dynamic `import(...)` is no longer blanked by the TS type-argument normalizer — masking parses first and only rewrites `import(...)` inside genuine call type-argument positions adjacent to a grammar error, and the whitespace form `import (...)` is recovered, so real module dependencies survive (#3210, thanks @zfaustk).
+- Fix: JSON-config extraction no longer turns every array value into an `extends` (inheritance) edge or emits a label-level self-loop dependency — only a real top-level `extends` yields an inheritance edge, and dependency edges are sourced from the manifest node with a namespaced target (#3330, thanks @pranavshipit).
+- Fix: the claude-cli backend now tolerates a diagnostic line printed before the JSON envelope (e.g. an MCP client notice), recovering the response instead of discarding already-generated output; genuine non-JSON still errors (#3330, thanks @pranavshipit).
+- Fix: a code-only `graphify watch` rebuild no longer clears the pending semantic-update flag, so a queued re-extraction of changed docs/papers/images is not silently dropped (#3294, thanks @theSatvik).
+- Fix: the MCP `prs` tools no longer hang the stdio transport on Windows — the PR subprocesses run with stdin detached, and an explicit `--repo` is passed positionally to `gh repo view` (#3318, thanks @hopstreax).
+
+## 0.9.54 (2026-09-05)
 
 - Fix: a Python type reference to a name imported from another module now resolves to that module's definition — the sourceless stub is repointed onto the exact imported symbol (not a bare-name match), so two same-named types in different modules bind to their own (#3252, thanks @hopstreax).
 - Feature: `graphify merge-graphs` now resolves a member call whose receiver type is defined in another repo — the call is parked at extraction and linked at merge time only on a single unambiguous cross-repo type + method match, composing with the cross-repo type link (#3152, thanks @xiongjianxu).
