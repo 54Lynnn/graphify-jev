@@ -578,7 +578,7 @@ def test_ghost_merge_non_ast_same_file_still_merges():
 
 
 def test_ghost_merge_wrong_source_file_resolved_by_label():
-    """#2963: a semantic node that only MENTIONS a file (a saved
+    """#3344: a semantic node that only MENTIONS a file (a saved
     graphify-out/memory/*.md query answer, a runbook narrating "see App.tsx")
     is stamped with source_file = the document being read, not the file named
     in its prose — so the (source_file, label) key can never match the real
@@ -613,7 +613,7 @@ def test_ghost_merge_wrong_source_file_resolved_by_label():
 
 
 def test_ghost_merge_wrong_source_file_ambiguous_basename_left_alone():
-    """#2963: the label-alone fallback must stay conservative — a phantom
+    """#3344: the label-alone fallback must stay conservative — a phantom
     mentioning a bare basename that TWO different real files share (an
     "index.ts" in two different directories) has no safe unique winner and
     must be left as-is rather than merged into an arbitrary one."""

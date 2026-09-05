@@ -993,7 +993,7 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
     _loc_nodes: dict[tuple[str, str], str] = {}   # (source_file, label) -> canonical node id
     _loc_collisions: set[tuple[str, str]] = set()  # keys shared by 2+ AST nodes
     _noloc_nodes: dict[tuple[str, str], str] = {}  # (source_file, label) -> ghost node id
-    _ast_file_nodes: list[tuple[str, str]] = []  # (node_id, source_file) for AST file-self nodes (#2963)
+    _ast_file_nodes: list[tuple[str, str]] = []  # (node_id, source_file) for AST file-self nodes (#3344)
 
     # Pass 1: collect canonical nodes — AST-origin nodes take precedence over LLM nodes.
     # When 2+ AST nodes share a key (same-named symbols in same-named files across
@@ -1036,7 +1036,7 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
                     _loc_collisions.add(key)
                 # AST-origin nodes always overwrite a prior non-AST entry.
                 _loc_nodes[key] = nid
-                # #2963: a self-referential semantic pass (e.g. re-extracting a
+                # #3344: a self-referential semantic pass (e.g. re-extracting a
                 # saved graphify-out/memory/*.md query answer) mints a NEW
                 # non-AST node for every bare file path/basename it mentions in
                 # prose ("App.tsx", "customer-app/index.ts"), stamped with
@@ -1077,7 +1077,7 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
         if ast_id is not None:
             _ghost_remap[sem_id] = ast_id
 
-    # Pass 2b (#2963): catch ghosts the (source_file, label) key above cannot,
+    # Pass 2b (#3344): catch ghosts the (source_file, label) key above cannot,
     # because their source_file is simply wrong — a semantic pass over a
     # document that only *mentions* a file (a saved graphify-out/memory/*.md
     # query answer, a README, an ADR) stamps the file's own name as a new
