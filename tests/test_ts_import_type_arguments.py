@@ -295,8 +295,13 @@ def test_ts_normalizer_scales_linearly_on_large_files():
     each match by scanning every range made extraction quadratic, so `extract`
     spun at 100% CPU in the regex/scan path and never finished.
 
-    Assert on scaling, not wall-clock, so the test is not machine-dependent:
-    doubling the input must not roughly quadruple the time.
+    Assert on scaling, not absolute wall-clock, so the test is not
+    machine-dependent: doubling the input must not roughly quadruple the time.
+    Measure CPU time (``process_time``), not wall-clock (``perf_counter``): under
+    a busy full-suite run the process is preempted, and wall-clock would count
+    time slices spent scheduled off-CPU — inflating the larger measurement and
+    flaking the ratio. CPU time counts only work actually done, so it isolates
+    the algorithmic scaling regardless of load.
     """
     import time
 
@@ -309,13 +314,13 @@ def test_ts_normalizer_scales_linearly_on_large_files():
 
     def timed(n: int) -> float:
         source = build(n)
-        start = time.perf_counter()
+        start = time.process_time()
         _normalize_ts_import_types(source)
-        return time.perf_counter() - start
+        return time.process_time() - start
 
     timed(200)  # warm the grammar/parser import off the measured path
-    small = min(timed(1000) for _ in range(3))
-    large = min(timed(2000) for _ in range(3))
+    small = min(timed(1000) for _ in range(5))
+    large = min(timed(2000) for _ in range(5))
 
     # Linear work doubles (~2x). Quadratic work quadruples (~4x). A generous
     # 3x ceiling separates the two without being flaky under load.
