@@ -2,7 +2,12 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.60 (unreleased)
+## 0.9.61 (unreleased)
+
+- Fix: `graphify.serve` now imports cleanly on Python 3.12 and 3.13. The `chinese` extra pins `jieba-py` from 3.12 onward (0.9.60 mistakenly kept the old `jieba` until 3.14, and its invalid regex escapes are a hard error on 3.12+), and the jieba import now suppresses the tokenizer's `SyntaxWarning` regardless of message or line so it never escalates under `-W error`.
+- Fix: the git hook's rebuild-root guard now rejects a symlink-loop or dangling `.graphify_root` on Python 3.13, whose `Path.resolve()` no longer raises on a loop — the saved root must resolve to a real directory inside the repo before it is adopted.
+
+## 0.9.60 (2026-09-12)
 
 - Fix: atomic writes now fall back correctly on Windows `WinError 17` (cannot move to a different drive), not just `PermissionError` — a shared `os_replace_with_fallback` copies through a temp in the target directory and restores the original if the swap fails, keeping install/export/cache writes crash-safe (#3508, thanks @ayushcodes10).
 - Fix: files that could not be classified into any language or type are now surfaced (a count and top extensions in the console and GRAPH_REPORT) instead of vanishing from a "successful" run; noise and ignored paths are unaffected (#3511, thanks @ayushcodes10).

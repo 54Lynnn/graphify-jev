@@ -19,14 +19,15 @@ from graphify.paths import default_graph_json as _default_graph_json
 
 try:
     with warnings.catch_warnings():
-        warnings.filterwarnings(
-            "ignore",
-            message=r'^"\\\." is an invalid escape sequence\.',
-            category=SyntaxWarning,
-            lineno=7,
-        )
+        # jieba/jieba-py carry invalid regex escapes that emit a SyntaxWarning on
+        # compile; the message and line moved across Python versions (3.12 also
+        # reworded it), so ignore the category wholesale here rather than pinning
+        # a message/lineno. Under `-W error::SyntaxWarning` this keeps the import
+        # from escalating to a fatal SyntaxError.
+        warnings.simplefilter("ignore", SyntaxWarning)
         import jieba as _jieba  # type: ignore[import-untyped]
-except ImportError:
+except (ImportError, SyntaxError):
+    # A stray/broken jieba must never take down the whole server import.
     _jieba = None
 
 
