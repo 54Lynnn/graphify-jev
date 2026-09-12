@@ -2,7 +2,15 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.58 (unreleased)
+## 0.9.59 (unreleased)
+
+- Fix: an incremental rebuild no longer drops cross-file `concept` nodes from files it didn't touch — global dedup during a merge now protects existing nodes from untouched files instead of collapsing same-labeled ones across them (#3477, thanks @hopstreax).
+- Fix: extraction now falls back to sequential in-process work when the process pool cannot start (e.g. POSIX semaphore exhaustion), instead of aborting the whole run (#3497, thanks @curtismu7).
+- Performance: Python symbol resolution is roughly 47% faster — path resolution is memoized, each file parses once across both resolution passes, and the tree walk is iterative rather than recursive; extraction output is unchanged (#3500 / #3501 / #3502, thanks @abhay-codes07).
+- Fix: `graphify explain` now accepts a `path::Symbol` form to disambiguate a symbol that shares its name with its file, and the ambiguity hint now shows a form the resolver actually accepts (#3485, thanks @ayushcodes10).
+- Fix: the git hook now keeps its rebuild root inside the repository — a committed `.graphify_root` pointing outside the worktree is ignored and falls back to the repo top, so a checked-in marker can't steer the hook to scan or write outside the tree (#3265, thanks @ayushcodes10).
+
+## 0.9.58 (2026-09-10)
 
 - Fix: a call to a Python function defined nested inside another function now resolves to that inner definition per lexical scope, instead of leaking to a same-named function elsewhere; direct recursion is preserved as a self-loop (#3410, thanks @hopstreax).
 - Fix: submodule imports inside a PEP 420 namespace package (a directory with no `__init__.py`) now resolve to the target module instead of being dropped (#3429, thanks @flaukowski).
