@@ -338,6 +338,14 @@ def _claude_pretooluse_hooks(strict: bool = False, project: bool = False) -> "li
     When ``strict`` is set, the read hook carries ``--strict`` so it blocks the
     first raw read per session (Claude Code only). The ``GRAPHIFY_HOOK_STRICT`` env
     var can force it on or off at runtime without a reinstall.
+
+    Each entry carries a ``timeout`` (#3314): unset, Claude Code defaults a
+    command hook to 600s, so a single wedged guard (a stuck filesystem, a
+    hung subprocess) stalls the surrounding tool call for ten minutes on
+    every Bash/Grep/Read/Glob call -- the four highest-frequency tools an
+    agent uses. The guard itself measures ~170ms warm; 10s is generous
+    headroom over that while still two orders of magnitude below the
+    unset default.
     """
     exe = _resolve_graphify_exe(project=project)
     if " " in exe and not exe.startswith('"'):
@@ -345,9 +353,9 @@ def _claude_pretooluse_hooks(strict: bool = False, project: bool = False) -> "li
     read_cmd = f"{exe} hook-guard read" + (" --strict" if strict else "")
     return [
         {"matcher": "Bash|Grep",
-         "hooks": [{"type": "command", "command": f"{exe} hook-guard search"}]},
+         "hooks": [{"type": "command", "command": f"{exe} hook-guard search", "timeout": 10}]},
         {"matcher": "Read|Glob",
-         "hooks": [{"type": "command", "command": read_cmd}]},
+         "hooks": [{"type": "command", "command": read_cmd, "timeout": 10}]},
     ]
 def _skill_registration(skill_path: str = "~/.claude/skills/graphify/SKILL.md") -> str:
     return (
