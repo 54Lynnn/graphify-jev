@@ -2,7 +2,16 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.61 (unreleased)
+## 0.9.62 (unreleased)
+
+- Fix: a prose file whose stem is the bare plural "tokens" (e.g. `TOKENS.md`) is no longer excluded as a credential dump; singular `token.md` and other keywords' bare plurals still exclude, and content-based secret detection is unchanged (#3527, thanks @HARSHAVARDHAN-RAJU5).
+- Fix: a call whose only resolution target is a sourceless external stub no longer emits a spurious `calls` edge, so an unresolved external name stops accruing a phantom god-node (#3156, thanks @DevChiniwala).
+- Fix: calls made inside a module-level anonymous closure (an IIFE or a top-level callback) are now attributed to the file node instead of being dropped (#3124, thanks @ayushcodes10).
+- Fix: cross-repo merge now respects C# namespace/`using` scoping — a parked member call binds to a same-named type in another repo only when the caller's namespace or an in-scope `using` resolves it, so a third-party receiver no longer binds to an unrelated repo-local type (#3360, thanks @DevChiniwala).
+- Fix: a bare Lua `require("mod")` statement (no assignment) now emits an `imports` edge, including the chained `require("lazy").setup({})` LazyVim idiom, so Neovim configs graph correctly instead of coming out as disconnected files (#3320, thanks @A-Levin).
+- Fix: the Claude/CodeBuddy PreToolUse guard hooks now carry a timeout, so a wedged filesystem stat can no longer stall a tool call indefinitely (#3314, thanks @ayushcodes10).
+
+## 0.9.61 (2026-09-12)
 
 - Fix: `graphify.serve` now imports cleanly on Python 3.12 and 3.13. The `chinese` extra pins `jieba-py` from 3.12 onward (0.9.60 mistakenly kept the old `jieba` until 3.14, and its invalid regex escapes are a hard error on 3.12+), and the jieba import now suppresses the tokenizer's `SyntaxWarning` regardless of message or line so it never escalates under `-W error`.
 - Fix: the git hook's rebuild-root guard now rejects a symlink-loop or dangling `.graphify_root` on Python 3.13, whose `Path.resolve()` no longer raises on a loop — the saved root must resolve to a real directory inside the repo before it is adopted.
