@@ -4,7 +4,6 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 
 ## 0.9.61 (unreleased)
 
-- Fix: a prose note whose stem is bare plural "tokens" (`TOKENS.md`) is no longer dropped as a credential dump — it reads as a design-token reference doc, unlike singular `token.md` or another keyword's bare plural (`secrets.md`), which still exclude (#3527, thanks @conradkelly).
 - Fix: `graphify.serve` now imports cleanly on Python 3.12 and 3.13. The `chinese` extra pins `jieba-py` from 3.12 onward (0.9.60 mistakenly kept the old `jieba` until 3.14, and its invalid regex escapes are a hard error on 3.12+), and the jieba import now suppresses the tokenizer's `SyntaxWarning` regardless of message or line so it never escalates under `-W error`.
 - Fix: the git hook's rebuild-root guard now rejects a symlink-loop or dangling `.graphify_root` on Python 3.13, whose `Path.resolve()` no longer raises on a loop — the saved root must resolve to a real directory inside the repo before it is adopted.
 
@@ -25,7 +24,6 @@ Full release notes with details on each version: [GitHub Releases](https://githu
 - Performance: Python symbol resolution is roughly 47% faster — path resolution is memoized, each file parses once across both resolution passes, and the tree walk is iterative rather than recursive; extraction output is unchanged (#3500 / #3501 / #3502, thanks @abhay-codes07).
 - Fix: `graphify explain` now accepts a `path::Symbol` form to disambiguate a symbol that shares its name with its file, and the ambiguity hint now shows a form the resolver actually accepts (#3485, thanks @ayushcodes10).
 - Fix: the git hook now keeps its rebuild root inside the repository — a committed `.graphify_root` pointing outside the worktree is ignored and falls back to the repo top, so a checked-in marker can't steer the hook to scan or write outside the tree (#3265, thanks @ayushcodes10).
-- Fix: a bare `require("mod")` statement with no assignment now produces an `imports` edge just like the assigned form, so Neovim/LazyVim configs — where this is the dominant idiom — graph correctly instead of coming out as a pile of disconnected files (#3320, thanks @A-Levin).
 
 ## 0.9.58 (2026-09-10)
 
