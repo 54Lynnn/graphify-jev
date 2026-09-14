@@ -25,6 +25,7 @@ from .resolver_registry import (
 from .ruby_resolution import resolve_ruby_member_calls
 from .csharp_dispatch import resolve_csharp_interface_dispatch
 from .pascal_resolution import resolve_pascal_inherited_calls
+from .markdown_resolution import MARKDOWN_MENTION_SUFFIXES, resolve_markdown_mentions
 
 # --- migrated to graphify/extractors/ (see graphify/extractors/MIGRATION.md) ---
 from graphify.extractors.base import (  # noqa: F401
@@ -4806,6 +4807,15 @@ register_language_resolver(
         "csharp_interface_dispatch", frozenset({".cs"}), resolve_csharp_interface_dispatch
     )
 )
+# Markdown code-span mentions (`Widget`, `mod.py::Widget::render`) become
+# heading --references--> symbol edges once every file is extracted and ids are
+# final. Lives in graphify.markdown_resolution; the shared call pass above skips
+# these raw_calls so a mention is never mistaken for a call.
+register_language_resolver(
+    LanguageResolver(
+        "markdown_mentions", MARKDOWN_MENTION_SUFFIXES, resolve_markdown_mentions
+    )
+)
 
 
 # Inline markdown link: [text](target "optional title"). The negative lookbehind
@@ -7374,6 +7384,12 @@ def extract(
         # to external commands that merely share a name with a function elsewhere
         # in the corpus — exactly what #2141 must not do.
         if rc.get("language") == "bash":
+            continue
+        # A Markdown code span names a symbol, it does not call one. The
+        # markdown_mentions resolver turns it into a `references` edge with the
+        # cited file as evidence; a global name match here would mint a `calls`
+        # edge from a heading to whatever shares the name.
+        if rc.get("language") == "markdown":
             continue
         # A Go predeclared function is never a cross-file call: the extractor
         # already drops bare `append(s, x)` (extractors/go.py), so this is the
