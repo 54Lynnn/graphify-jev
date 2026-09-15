@@ -2,14 +2,24 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
-## 0.9.62 (unreleased)
+## 0.9.62 (2026-09-15)
 
+- Feature: Terraform module calls with a literal local `source` (`./…` or `../…`) now resolve to a directory-scoped module node, exposing the caller→implementation topology (e.g. environment → application → base); remote and registry sources and source expressions are left unresolved and never fabricate a target. After upgrading an existing graph, run `graphify update .` once to regenerate Terraform ids and topology (#3571, thanks @vstepko).
+- Feature: a bare implicit-self call in a Ruby method now resolves up the inheritance chain to a method defined on a superclass, including across files. The promotion is conservative — it only upgrades an existing inferred edge when a single owning class, a matching method kind, and one unambiguous ancestry chain all agree, and it bails on mixins, reopened classes, and dynamic superclasses rather than guess (#3569, thanks @oleksii-tumanov).
+- Feature: an inline code span in a Markdown file (e.g. `` `Widget.render` ``) now emits a `references` edge to the symbol it names, but only when exactly one corpus callable matches — generic words and ambiguous names link to nothing, so docs join the graph without a false-edge firehose (#3562, thanks @AstroMined).
 - Fix: a prose file whose stem is the bare plural "tokens" (e.g. `TOKENS.md`) is no longer excluded as a credential dump; singular `token.md` and other keywords' bare plurals still exclude, and content-based secret detection is unchanged (#3527, thanks @HARSHAVARDHAN-RAJU5).
 - Fix: a call whose only resolution target is a sourceless external stub no longer emits a spurious `calls` edge, so an unresolved external name stops accruing a phantom god-node (#3156, thanks @DevChiniwala).
 - Fix: calls made inside a module-level anonymous closure (an IIFE or a top-level callback) are now attributed to the file node instead of being dropped (#3124, thanks @ayushcodes10).
 - Fix: cross-repo merge now respects C# namespace/`using` scoping — a parked member call binds to a same-named type in another repo only when the caller's namespace or an in-scope `using` resolves it, so a third-party receiver no longer binds to an unrelated repo-local type (#3360, thanks @DevChiniwala).
 - Fix: a bare Lua `require("mod")` statement (no assignment) now emits an `imports` edge, including the chained `require("lazy").setup({})` LazyVim idiom, so Neovim configs graph correctly instead of coming out as disconnected files (#3320, thanks @A-Levin).
 - Fix: the Claude/CodeBuddy PreToolUse guard hooks now carry a timeout, so a wedged filesystem stat can no longer stall a tool call indefinitely (#3314, thanks @ayushcodes10).
+- Fix: id-prefix reconstruction is now Unicode-aware — a non-Latin path segment is slugified with the canonical normalizer instead of being dropped, so files under non-ASCII directories keep stable ids (#3559, thanks @ayushcodes10).
+- Fix: `cohesion_score` now excludes self-loops (e.g. a recursive call) from the edge count, so a community's score stays within 0..1 instead of being inflated above 1 (#3558, thanks @jordanalexanderp18-rgb).
+- Fix: the incremental watch and rebuild paths now route the `graph.json` replace through the shared atomic-write fallback at both write sites, so a cross-drive or locked-file replace can no longer corrupt the graph mid-update (#3555, thanks @ayushcodes10).
+- Fix: a semantic-cache group whose stored `source_file` is malformed is now recovered by basename instead of being dropped, with the recovered group's `source_file` corrected before it is written back; an ambiguous basename stays skipped (#3553, thanks @ayushcodes10).
+- Fix: an exported destructuring declaration (`export const { a, b } = obj`) now emits one node per exported name instead of a single combined node, so each name resolves and cross-file imports of a split export link correctly (#3552, #2604, thanks @ayushcodes10).
+- Fix: a community made up entirely of file nodes is now counted as thin rather than invisible in the report, so it is no longer silently dropped from the community summary (#3549, #3548, thanks @ayushcodes10).
+- Fix: the git guard-hook shell gates now resolve the output directory from `GRAPHIFY_OUT` instead of a hardcoded `graphify-out/`, so a renamed output directory no longer makes the hooks silently no-op (#3546, thanks @breken-ai).
 
 ## 0.9.61 (2026-09-12)
 
