@@ -539,13 +539,21 @@ def _reconcile_markdown_links(
     authored link only when both files have unique representatives. If either
     side is ambiguous, retain the existing AST edge instead of guessing or
     deleting it. A link removed from its owning Markdown source is pruned.
+
+    Only authored links are owned here. A code-span mention (a ``references``
+    edge the markdown_mentions resolver emits) targets a code symbol rather
+    than a file representative, so it is left to the AST ownership rule above:
+    re-extracting the document regenerates it and re-extracting the code side
+    keeps or drops it with the target node.
     """
     from graphify.build import _is_ast_tier
     from graphify.extract import _file_node_id, _safe_extract_with_xaml_root
     from graphify.extractors.base import _make_id
     from graphify.extractors.markdown import extract_markdown
+    from graphify.markdown_resolution import _is_file_node
 
     all_nodes = result.get("nodes", []) + preserved_nodes
+    nodes_by_id = {node["id"]: node for node in all_nodes if node.get("id")}
     nodes_by_source: dict[str, list[dict]] = {}
     for node in all_nodes:
         if source_file := node.get("source_file"):
@@ -648,8 +656,18 @@ def _reconcile_markdown_links(
         candidate = project_root / Path(owner).parent / Path(target_source).name
         return raw_target == _make_id(str(candidate))
 
+    def _is_code_span_mention(edge: dict) -> bool:
+        target = nodes_by_id.get(edge.get("target"))
+        return (
+            target is not None
+            and target.get("file_type") == "code"
+            and not _is_file_node(target)
+        )
+
     def _keep_edge(edge: dict) -> bool:
         if not (_is_ast_tier(edge) and edge.get("relation") == "references"):
+            return True
+        if _is_code_span_mention(edge):
             return True
         owner = source_paths.normalize(edge.get("source_file"))
         if owner not in parsed_sources:

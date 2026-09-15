@@ -235,6 +235,46 @@ def test_dotted_mentions_need_qualifier_evidence(tmp_path):
     assert cited == {widget["id"], gadget["id"], widget_render["id"]}
 
 
+def test_mentions_survive_a_rebuild_over_an_existing_graph(tmp_path):
+    """The watch reconcile owns authored ``[link](file)`` edges, not mentions.
+
+    A rebuild over an existing graph re-parses the Markdown corpus and prunes
+    any ``references`` edge it did not author; a code-span mention targets a
+    code symbol, never a file, so it must survive a no-change rebuild and the
+    incremental rebuilds of either side.
+    """
+    from graphify.watch import _rebuild_code
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "widget.py").write_text(_WIDGET_PY)
+    doc = corpus / "doc.md"
+    doc.write_text("# Doc\n\n## Usage\n\nBuild a `Widget`.\n")
+    graph_path = corpus / "graphify-out" / "graph.json"
+
+    def mention_edges():
+        links = json.loads(graph_path.read_text(encoding="utf-8"))["links"]
+        return {(e["source"], e["target"]) for e in links
+                if e.get("relation") == "references" and e.get("confidence_score")}
+
+    assert _rebuild_code(corpus, no_cluster=True, acquire_lock=False) is True
+    expected = mention_edges()
+    assert len(expected) == 1
+
+    assert _rebuild_code(corpus, no_cluster=True, acquire_lock=False) is True
+    assert mention_edges() == expected, "no-change rebuild"
+
+    doc.write_text(doc.read_text() + "\nStill a `Widget`.\n")
+    assert _rebuild_code(corpus, changed_paths=[doc], no_cluster=True,
+                         acquire_lock=False) is True
+    assert mention_edges() == expected, "document re-extracted"
+
+    (corpus / "widget.py").write_text(_WIDGET_PY + "\n\ndef extra():\n    pass\n")
+    assert _rebuild_code(corpus, changed_paths=[corpus / "widget.py"], no_cluster=True,
+                         acquire_lock=False) is True
+    assert mention_edges() == expected, "code re-extracted"
+
+
 def test_mentions_survive_the_extraction_cache(tmp_path):
     files = {"src/widget.py": _WIDGET_PY, "docs/guide.md": _GUIDE_MD}
     first = _extract(tmp_path, files)
