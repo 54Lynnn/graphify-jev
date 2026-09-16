@@ -1863,6 +1863,7 @@ def _rebuild_code(
                 dedupe_edges as _dedupe_edges,
                 dedupe_nodes as _dedupe_nodes,
                 disambiguate_file_labels_in_nodes as _disamb_labels,
+                mint_external_stubs_in_data as _mint_external_stubs_in_data,
             )
             raw_nodes = _dedupe_nodes(result.get("nodes", []))
             _disamb_labels(raw_nodes)
@@ -1875,6 +1876,12 @@ def _rebuild_code(
                 # `result` (the raw merged extraction) never carries one.
                 "directed": bool((existing_graph_data or {}).get("directed", False)),
             }
+            # This path writes the raw merged extraction, not a build_from_json
+            # graph, so mint the same external stubs the builder does — otherwise
+            # an import to stdlib / a third-party module leaves an undeclared
+            # endpoint in graph.json that every loader materialises as an
+            # attribute-less phantom (#2873).
+            _mint_external_stubs_in_data(candidate_graph_data)
             candidate_graph_text = _json_text(candidate_graph_data)
             same_graph = False
             if existing_graph.exists():

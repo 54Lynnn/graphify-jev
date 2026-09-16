@@ -63,6 +63,79 @@ def _is_ast_tier(item: dict) -> bool:
 # this collapse actually needs.
 _GENERIC_RELATIONS: frozenset[str] = frozenset({"references", "uses", "mentions"})
 
+# Import-family relations whose target may legitimately be a module OUTSIDE the
+# graph (stdlib, a third-party dependency, another repo). Historically the edge
+# to such a target was dropped, which left the in-memory graph clean but let the
+# on-disk graph.json (written by the incremental update path) keep the edge with
+# no matching node — an undeclared endpoint every loader materialises as an
+# attribute-less phantom (#2873). For these relations we instead mint a typed
+# external stub node so every edge endpoint resolves. Deliberately NOT `calls`:
+# a sourceless external call target is suppressed on purpose (#3156) to avoid a
+# phantom god-node, and that policy is unchanged here.
+_EXTERNAL_STUB_RELATIONS: frozenset[str] = frozenset(
+    {"imports", "imports_from", "re_exports"}
+)
+
+
+def _mint_external_stub(G: "nx.Graph", node_set: set, nid: str) -> None:
+    """Add a leaf node for an external import target so the edge is not dangling.
+
+    The node is tagged ``external`` (and ``file_type='concept'`` so the schema
+    validator and community/report code treat it as a non-source concept rather
+    than warning on a missing ``file_type``). ``merge-graphs`` reads the
+    ``external`` flag to keep these ids global instead of namespacing them per
+    repo, so the same stdlib/dependency module unifies across repos (#2873).
+    """
+    if nid in node_set:
+        return
+    G.add_node(
+        nid,
+        label=nid,
+        file_type="concept",
+        type="external",
+        external=True,
+        source_file="",
+    )
+    node_set.add(nid)
+
+
+def mint_external_stubs_in_data(data: dict) -> None:
+    """Mint external stub nodes for import-family links with an undeclared target.
+
+    The ``--no-cluster`` / incremental write path serializes the raw merged
+    extraction directly rather than going through :func:`build_from_json`, so it
+    needs the same stubbing to keep the on-disk graph.json free of undeclared
+    edge endpoints (#2873). Idempotent: a graph already carrying its stubs (from
+    a prior run or the clustered path) is left unchanged.
+    """
+    nodes = data.get("nodes")
+    links = data.get("links")
+    if not isinstance(links, list):
+        links = data.get("edges")
+    if not isinstance(nodes, list) or not isinstance(links, list):
+        return
+    declared = {n.get("id") for n in nodes if isinstance(n, dict)}
+    minted: set[str] = set()
+    for e in links:
+        if not isinstance(e, dict) or e.get("relation") not in _EXTERNAL_STUB_RELATIONS:
+            continue
+        src, tgt = e.get("source"), e.get("target")
+        if (
+            src in declared
+            and isinstance(tgt, str)
+            and tgt not in declared
+            and tgt not in minted
+        ):
+            nodes.append({
+                "id": tgt,
+                "label": tgt,
+                "file_type": "concept",
+                "type": "external",
+                "external": True,
+                "source_file": "",
+            })
+            minted.add(tgt)
+
 # Language interop families, keyed by extension, for the cross-language phantom-edge
 # guard in the edge loop below. Families group by REAL interop (JS/TS share a module
 # graph; C/C++/ObjC share a compilation unit via headers; JVM langs share bytecode),
@@ -1214,7 +1287,23 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
         if tgt not in node_set:
             tgt = norm_to_id.get(_normalize_id(tgt), tgt)
         if src not in node_set or tgt not in node_set:
-            continue  # skip edges to external/stdlib nodes - expected, not an error
+            # An import/re-export whose target is not a declared node points at
+            # an external module (stdlib / third-party / another repo). Mint a
+            # typed external stub so the on-disk graph.json has no undeclared
+            # endpoint (#2873), rather than dropping the edge and leaving loaders
+            # to materialise an attribute-less phantom. Only the missing *target*
+            # of an import-family edge is stubbed; a dangling source, or a
+            # missing endpoint on any other relation (e.g. a sourceless external
+            # call target, suppressed by #3156), is still dropped.
+            if (
+                edge.get("relation") in _EXTERNAL_STUB_RELATIONS
+                and src in node_set
+                and tgt not in node_set
+                and isinstance(tgt, str)
+            ):
+                _mint_external_stub(G, node_set, tgt)
+            else:
+                continue  # external/stdlib target on a non-import relation - expected
         # `target_file` is a transient import-disambiguation salt hint (#1814)
         # with no downstream reader; it holds an absolute path, so it must never
         # be persisted. Disambiguation already pops it off fresh extractions —
@@ -2240,9 +2329,20 @@ def prefix_graph_for_global(
     collide and the aggregated community view fuses unrelated communities
     into one meta-node (#3014). 0 (the default) leaves communities untouched.
     """
-    relabel = {n: f"{repo_tag}::{n}" for n in G.nodes}
+    # External stubs (stdlib / third-party modules, #2873) are GLOBAL
+    # identifiers, not repo-local: leaving their id unprefixed lets the same
+    # module unify into one node across repos instead of fragmenting into
+    # repoA::typing / repoB::typing, which is exactly the "which repos depend on
+    # X" question a cross-repo merge exists to answer.
+    relabel = {
+        n: f"{repo_tag}::{n}"
+        for n, d in G.nodes(data=True)
+        if not d.get("external")
+    }
     H = nx.relabel_nodes(G, relabel, copy=True)
     for node, data in H.nodes(data=True):
+        if data.get("external"):
+            continue  # global id, belongs to no single repo — no repo/local_id tag
         data["repo"] = repo_tag
         data.setdefault("local_id", node.split("::", 1)[1])
         cid = data.get("community")
