@@ -2,6 +2,14 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.63 (2026-09-16)
+
+- Feature: Elixir `alias`/`import`/`require`/`use` targets now resolve onto the module's `defmodule` node across files, so the internal module dependency graph is no longer dropped as dangling. Only top-level modules are indexed (a nested `defmodule`, labeled with its bare inner name, cannot capture an unrelated `use <Name>` from another file), and a same-file reference is left unresolved so it cannot clobber the structural `contains` edge (#3603, thanks @ayushcodes10).
+- Feature: a Rust `self.method()` call now resolves to a method defined on the same type in another file (the common split-`impl`-block layout), pooling methods across every `impl` of one type and refusing to link when two unrelated types share a bare name (#3602, thanks @ayushcodes10).
+- Feature: a Ruby member call `obj.foo` on a known-type receiver now resolves to a method `foo` inherited from a superclass, including across files, using the same conservative promotion as the implicit-self resolver — a single owning class, matching method kind, and one unambiguous ancestry chain, or it stays dangling (#3585, thanks @oleksii-tumanov).
+- Fix: every edge endpoint written to `graph.json` is now a declared node. An `imports`/`imports_from`/`re_exports` edge to an external module (stdlib, a third-party dependency) mints a typed external stub node instead of leaving a dangling endpoint that loaders materialise as an attribute-less phantom, and a cross-repo merge unifies the same external module into one global node instead of fragmenting it per repo; sourceless external call targets stay suppressed (#2873, #2878, thanks @AromalBiju1).
+- Fix: a Markdown code-span mention edge now survives an incremental rebuild instead of being pruned as an unauthored link, and a dotted span (`Foo.bar`) resolves using its qualifiers as evidence, rejecting misleading matches such as `time.sleep` or `pyproject.toml` (#3587, thanks @AstroMined).
+
 ## 0.9.62 (2026-09-15)
 
 - Feature: Terraform module calls with a literal local `source` (`./…` or `../…`) now resolve to a directory-scoped module node, exposing the caller→implementation topology (e.g. environment → application → base); remote and registry sources and source expressions are left unresolved and never fabricate a target. After upgrading an existing graph, run `graphify update .` once to regenerate Terraform ids and topology (#3571, thanks @vstepko).
