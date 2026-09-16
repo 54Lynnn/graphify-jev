@@ -1687,7 +1687,7 @@ def _rebuild_code(
                     # #2438: the persisted callability markers are the only
                     # thing that lets an unchanged target pass the
                     # indirect_call guard — never re-derived from the label.
-                    for marker in ("_callable", "_callable_class"):
+                    for marker in ("_callable", "_callable_class", "_elixir_module"):
                         if node.get(marker):
                             ctx_node[marker] = node[marker]
                     metadata = node.get("metadata")

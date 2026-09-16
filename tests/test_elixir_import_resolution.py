@@ -10,6 +10,7 @@ the entire internal module dependency graph.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from graphify.extract import extract
@@ -73,10 +74,15 @@ def test_alias_resolves_to_the_module_declared_in_another_file(tmp_path: Path):
     assert accounts in node_ids, "the import target must be a real, non-dangling node"
 
 
-def test_same_file_module_reference_is_unaffected(tmp_path: Path):
-    """Negative control: a module importing something declared in the SAME
-    file already resolved before this fix (both ids share the same stem)
-    and must keep working exactly as before."""
+def test_same_file_module_reference_does_not_clobber_contains(tmp_path: Path):
+    """A module aliasing another module declared in the SAME file must be left
+    unresolved. The alias `imports` edge's source is the FILE node, which
+    already `contains` that module, so retargeting it would duplicate the
+    file->module pair with a weaker relation and -- in the non-multi build
+    graph, where `imports` and `contains` are both specific relations -- clobber
+    the structural `contains` edge (#3603 follow-up guard). Cross-file
+    resolution is covered by the repro test above; here the same-file case must
+    fail closed."""
     result = _extract(tmp_path, {
         "lib/demo.ex": (
             "defmodule Demo.Inner do\n"
@@ -92,12 +98,21 @@ def test_same_file_module_reference_is_unaffected(tmp_path: Path):
     })
     demo_file = _find_file(result, "demo.ex")
     inner = _find(result, "Demo.Inner")
-    imports = {
+    contains = {
+        (e["source"], e["target"])
+        for e in result["edges"]
+        if e["relation"] == "contains"
+    }
+    resolved_imports = {
         (e["source"], e["target"])
         for e in result["edges"]
         if e["relation"] == "imports"
     }
-    assert (demo_file, inner) in imports
+    # The structural containment edge is intact ...
+    assert (demo_file, inner) in contains
+    # ... and the same-file alias was NOT retargeted onto Inner's node (which
+    # would duplicate that pair as a weaker `imports` and clobber `contains`).
+    assert (demo_file, inner) not in resolved_imports
 
 
 def test_ambiguous_module_name_across_files_yields_no_resolution(tmp_path: Path):
@@ -154,3 +169,74 @@ def test_genuinely_external_module_stays_unresolved(tmp_path: Path):
     }
     assert import_targets
     assert not (import_targets & node_ids)
+
+
+def test_nested_module_does_not_capture_foreign_use(tmp_path: Path):
+    """A nested `defmodule` is labeled with its bare inner name, so an unrelated
+    `use <Name>` / `alias <Name>` from another file must NOT latch onto it
+    (#3603 follow-up guard). Only top-level modules are indexed as targets."""
+    result = _extract(tmp_path, {
+        "lib/app/application.ex": (
+            "defmodule MyApp.Application do\n"
+            "  defmodule Supervisor do\n"
+            "    def child_spec(_), do: %{}\n"
+            "  end\n"
+            "end\n"
+        ),
+        "lib/app/worker.ex": (
+            "defmodule MyApp.Worker do\n"
+            "  use Supervisor\n"
+            "end\n"
+        ),
+    })
+    nested = _find(result, "Supervisor")
+    resolved_targets = {
+        e["target"] for e in result["edges"] if e["relation"] == "imports"
+    }
+    # The `use Supervisor` in worker.ex must not resolve onto the nested module
+    # (it means the stdlib/behaviour Supervisor, which is genuinely external).
+    assert nested not in resolved_targets
+
+
+def test_resolution_survives_incremental_rebuild(tmp_path: Path):
+    """The cross-file alias must stay resolved on the real `graphify update` /
+    watch path, where the unchanged target module arrives as a resolution-context
+    node. This only holds if the `_elixir_module` marker rides through the
+    context builder's allow-list -- the exact path #3566's own test bypassed."""
+    from graphify.watch import _rebuild_code
+
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "accounts.ex").write_text(
+        "defmodule Demo.Accounts do\n  def list_users, do: []\nend\n", encoding="utf-8"
+    )
+    caller = corpus / "web.ex"
+
+    def _caller(extra: str = "") -> str:
+        body = "  def index, do: Accounts.list_users()\n" + extra
+        return f"defmodule Demo.Web do\n  alias Demo.Accounts\n{body}end\n"
+
+    caller.write_text(_caller(), encoding="utf-8")
+    graph_path = corpus / "graphify-out" / "graph.json"
+
+    def resolves() -> bool:
+        data = json.loads(graph_path.read_text(encoding="utf-8"))
+        accounts = next(
+            (n["id"] for n in data["nodes"] if n.get("label") == "Demo.Accounts"), None
+        )
+        if accounts is None:
+            return False
+        return any(
+            e.get("relation") == "imports" and e.get("target") == accounts
+            for e in data["links"]
+        )
+
+    assert _rebuild_code(corpus, no_cluster=True, acquire_lock=False) is True
+    assert resolves(), "full build resolves the cross-file alias"
+
+    # Change ONLY the caller: accounts.ex is unchanged, so its top-level module
+    # node is fed back as a resolution-context node. The alias must still resolve.
+    caller.write_text(_caller("  def dup, do: Accounts.list_users()\n"), encoding="utf-8")
+    assert _rebuild_code(corpus, changed_paths=[caller], no_cluster=True,
+                         acquire_lock=False) is True
+    assert resolves(), "alias stays resolved after an incremental rebuild"

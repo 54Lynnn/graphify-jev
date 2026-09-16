@@ -4863,19 +4863,26 @@ def _resolve_elixir_import_targets(
     two files each defining the same module name, most likely a genuine
     corpus oddity) also leaves the edge alone rather than guessing.
     """
+    # Index only top-level modules. extract_elixir marks them with
+    # `_elixir_module`; a nested `defmodule` (labeled with its bare inner name)
+    # is left unmarked so it cannot capture an unrelated `use <Name>` from
+    # another file (#3603 follow-up). The marker is carried across incremental
+    # rebuilds via the resolution-context allow-list in watch.py / cli.py, so
+    # this gate keeps working on the `graphify update` / watch path.
+    node_by_id: dict[str, dict] = {}
     module_nids_by_bare_id: dict[str, list[str]] = {}
     for n in all_nodes:
-        sf = str(n.get("source_file") or "")
-        if not sf.endswith((".ex", ".exs")):
+        node_by_id[n["id"]] = n
+        if not n.get("_elixir_module"):
             continue
         label = str(n.get("label") or "")
-        if not label or label.endswith("()"):
-            continue  # function nodes are labeled "name()"; modules are not
+        if not label:
+            continue
         module_nids_by_bare_id.setdefault(_make_id(label), []).append(n["id"])
     if not module_nids_by_bare_id:
         return
 
-    node_ids = {n["id"] for n in all_nodes}
+    node_ids = set(node_by_id)
     for e in all_edges:
         if (
             e.get("relation") != "imports"
@@ -4887,8 +4894,20 @@ def _resolve_elixir_import_targets(
         if tgt in node_ids:
             continue  # already resolves (e.g. a module referring to itself)
         candidates = module_nids_by_bare_id.get(tgt, [])
-        if len(candidates) == 1:
-            e["target"] = candidates[0]
+        if len(candidates) != 1:
+            continue
+        target_nid = candidates[0]
+        # A module aliasing/importing another module defined in the SAME file
+        # would retarget the `file -> target` import edge onto a node the file
+        # already `contains`, and the non-multi graph keeps one edge per pair,
+        # silently overwriting the structural `contains` edge (#3603 follow-up).
+        # Leave those alone.
+        target_node = node_by_id.get(target_nid)
+        if target_node is not None and str(target_node.get("source_file") or "") == str(
+            e.get("source_file") or ""
+        ):
+            continue
+        e["target"] = target_nid
 
 
 # Kotlin import-target resolution runs EARLY (directly in extract(), before the

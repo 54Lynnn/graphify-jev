@@ -3818,7 +3818,7 @@ def dispatch_command(cmd: str) -> None:
                             "file_type": _node.get("file_type"),
                             "type": _node.get("type"),
                         }
-                        for _marker in ("_callable", "_callable_class"):
+                        for _marker in ("_callable", "_callable_class", "_elixir_module"):
                             if _node.get(_marker):
                                 _ctx_node[_marker] = _node[_marker]
                         _metadata = _node.get("metadata")
