@@ -203,6 +203,11 @@ def diagnose_extraction(
             missing_endpoint_edges += 1
             continue
         if source not in node_ids or target not in node_ids:
+            # Two intentionally-distinct populations of "external": a `ref_`
+            # target here is a JSON/config out-of-corpus reference ($ref /
+            # extends / references), whereas import-family externals are minted
+            # as declared `external=True` stub nodes at build time (#2873) and
+            # therefore never reach this branch. Don't try to unify them.
             if source in node_ids and target.startswith("ref_"):
                 external_reference_edges += 1
             else:
