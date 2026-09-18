@@ -2,6 +2,18 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/safishamsi/graphify/releases)
 
+## 0.9.64 (2026-09-18)
+
+- Feature: Terraform block attributes (`ami`, `instance_type`, `cidr_block`, tags, and the like) are now preserved on the resource/data/module node and are queryable and searchable, with typed values (bool/number/list/map) and nested blocks kept separate from direct attributes. Secret-named attribute values (`password`, `*secret*`, `*token*`, `*_key`, connection strings) are redacted before they reach `graph.json` or the model, so a hardcoded credential in a `.tf` file does not leak (#3644, thanks @hopstreax).
+- Feature: JavaScript inside an inline `<script>` block of a PHP file is now indexed as JS (functions and calls) under the PHP file node, mirroring the Vue/Svelte embedded-script handling, with source lines mapped back to the real file positions (#3627, #2320, thanks @ayushcodes10).
+- Feature: a Rust `self.method()` call now resolves across files for simple generic impls (`impl<T> Foo<T>`), extending the split-`impl` resolution to generic types while staying fail-closed on bounded, `where`, trait, and concrete-instantiation shapes (#3653, thanks @oleksii-tumanov).
+- Feature: a Kotlin `Receiver.method()` call now resolves across files when the receiver's `object`/class (or its `companion object`) is declared in another file (#3598, #1698, thanks @ayushcodes10).
+- Feature: a C++ scope-qualified static call `Foo::bar()` now resolves to a definition in another translation unit even when it survived extraction only as a qualified-label node (#3613, #2348, thanks @ayushcodes10).
+- Fix: an npm package subpath import (`import x from "pkg/sub"`) now resolves to the same node as the bare package import, so a dependency no longer fragments into separate external nodes (#3601, thanks @ayushcodes10).
+- Fix: `export` now detects a stale `.graphify_analysis.json` sidecar and reconstructs communities from `graph.json`, comparing partition structure rather than just the node-id set, so a stale sidecar can no longer override fresh `update` data (#3557, #2386, thanks @ayushcodes10).
+- Fix: incremental `update` now reconciles Markdown-family links across `.md`/`.mdx`/`.qmd`/`.skill`, and a document whose parse fails no longer has its authored links pruned (#3655, thanks @oleksii-tumanov).
+- Fix: extraction diagnostics now separate external references (out-of-corpus `$ref`/import targets) from genuinely dangling edges, so an expected external reference is no longer reported as a broken endpoint (#3590, thanks @DevChiniwala).
+
 ## 0.9.63 (2026-09-16)
 
 - Feature: Elixir `alias`/`import`/`require`/`use` targets now resolve onto the module's `defmodule` node across files, so the internal module dependency graph is no longer dropped as dangling. Only top-level modules are indexed (a nested `defmodule`, labeled with its bare inner name, cannot capture an unrelated `use <Name>` from another file), and a same-file reference is left unresolved so it cannot clobber the structural `contains` edge (#3603, thanks @ayushcodes10).
