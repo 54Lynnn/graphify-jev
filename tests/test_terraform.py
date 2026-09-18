@@ -321,3 +321,41 @@ resource "aws_s3_bucket" "example" {
     loaded_G = _load_graph(str(out_file))
     node_id = next(n["id"] for n in r["nodes"] if n["label"] == "aws_s3_bucket.example")
     assert loaded_G.nodes[node_id].get("attributes") == {"bucket": "my-bucket", "force_destroy": True}
+
+
+def test_terraform_sensitive_attribute_values_are_redacted(tmp_path):
+    """Attribute values are persisted to graph.json and surfaced to the model,
+    so a hardcoded credential must not leak: the VALUE of a secret-named key is
+    redacted while the key stays visible, and non-secret keys are untouched
+    (#3644 security follow-up). Redaction recurses into map values too."""
+    body = """\
+resource "aws_db_instance" "main" {
+  identifier    = "prod-db"
+  instance_class = "db.t3.medium"
+  password      = "hunter2-super-secret"
+  db_password   = "another-secret"
+  aws_secret_access_key = "AKIAWHATEVER"
+  tags = {
+    Name         = "prod"
+    client_secret = "leaky"
+  }
+}
+"""
+    r = extract_terraform(_write(tmp_path, "db.tf", body))
+    node = next(n for n in r["nodes"] if n["label"] == "aws_db_instance.main")
+    attrs = node["attributes"]
+    # non-secret keys pass through unchanged
+    assert attrs["identifier"] == "prod-db"
+    assert attrs["instance_class"] == "db.t3.medium"
+    # secret-named keys keep their key but redact the value
+    assert attrs["password"] == "[redacted]"
+    assert attrs["db_password"] == "[redacted]"
+    assert attrs["aws_secret_access_key"] == "[redacted]"
+    # nested map: the secret is redacted, the ordinary key is not
+    assert attrs["tags"]["Name"] == "prod"
+    assert attrs["tags"]["client_secret"] == "[redacted]"
+    # the literal secret must appear nowhere in the serialized node
+    import json as _json
+    assert "hunter2-super-secret" not in _json.dumps(node)
+    assert "AKIAWHATEVER" not in _json.dumps(node)
+    assert "leaky" not in _json.dumps(node)

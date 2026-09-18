@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from graphify.extractors.base import _make_id
@@ -17,6 +18,30 @@ from graphify.security import (
 
 
 _TF_META_HEADS = frozenset({"count", "each", "self", "path", "terraform"})
+
+# Attribute values are persisted verbatim into graph.json and surfaced to the
+# model via the MCP query/get_node paths, so a hardcoded credential in a `.tf`
+# file would leak. Redact the VALUE of any attribute whose key names a secret,
+# keeping the key itself so `instance_type`/`ami` queries still work and a user
+# can still see THAT a secret is set. Substring match (case-insensitive) so
+# `db_password`, `aws_secret_access_key`, `client_secret` are all caught.
+_SENSITIVE_KEY_RE = re.compile(
+    r"(password|passwd|secret|token|api[-_]?key|access[-_]?key|"
+    r"private[-_]?key|credential|client[-_]?secret|connection[-_]?string|"
+    r"sas[-_]?token|auth|passphrase)",
+    re.IGNORECASE,
+)
+_REDACTED = "[redacted]"
+
+
+def _redact_value(key: str, value: object) -> object:
+    """Redact a sensitive attribute value; recurse into map values so a nested
+    `password` inside a `tags`/`connection` map is redacted too."""
+    if _SENSITIVE_KEY_RE.search(key):
+        return _REDACTED
+    if isinstance(value, dict):
+        return {k: _redact_value(str(k), v) for k, v in value.items()}
+    return value
 
 
 def _scope_id(directory: str) -> str:
@@ -329,7 +354,7 @@ def extract_terraform(path: Path) -> dict:
             val_node = child.named_children[-1] if child.named_children else None
             if val_node is None:
                 continue
-            attrs[key] = _parse_attr_value(val_node)
+            attrs[key] = _redact_value(key, _parse_attr_value(val_node))
             if len(attrs) >= _METADATA_MAX_ATTRIBUTES:
                 break
         return attrs
