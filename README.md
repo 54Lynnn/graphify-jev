@@ -159,6 +159,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 > **Official package:** The PyPI package is `graphifyy` (double-y). Other `graphify*` packages on PyPI are not affiliated. The CLI command is still `graphify`.
 
+The official source repository is [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify).
+
 **Step 1 — install the package:**
 
 ```bash
@@ -865,7 +867,7 @@ Built for people and teams whose work lives across hundreds of conversations and
 The project uses [uv](https://docs.astral.sh/uv/) for dev workflow. Install it once, then:
 
 ```bash
-git clone https://github.com/safishamsi/graphify.git
+git clone https://github.com/Graphify-Labs/graphify.git
 cd graphify
 git checkout v8                        # active development branch
 
