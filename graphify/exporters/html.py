@@ -148,9 +148,13 @@ function esc(s) {{
 }}
 
 // Build vis datasets
-const nodesDS = new vis.DataSet(RAW_NODES.map(n => ({{
+const nodesDS = new vis.DataSet(RAW_NODES.map((n, i) => ({{
   id: n.id, label: n.label, color: n.color, size: n.size,
   font: n.font, title: n.title,
+  // Fermat/golden-angle spiral seed positions (#3699): spreading nodes out
+  // before physics runs keeps avoidOverlap from computing near-zero-distance
+  // repulsion that blows the BarnesHut recursion into a stack overflow on large
+  // graphs. `i` is the map index — physics still settles small graphs identically.
   x: 30 * Math.sqrt(i) * Math.cos(i * 2.4),
   y: 30 * Math.sqrt(i) * Math.sin(i * 2.4),
   _community: n.community, _community_name: n.community_name,
@@ -521,6 +525,15 @@ def to_html(
             "color": {"background": color, "border": color, "highlight": {"background": "#ffffff", "border": color}},
             "size": round(size, 1),
             "font": {"size": font_size, "color": "#ffffff"},
+            # Tooltip `title` is a STRING, which vis-network renders via
+            # Popup.setText -> `frame.innerText = t` (verified in the pinned
+            # 9.1.6 bundle: the only non-Element branch is innerText, and the
+            # bundle has zero `innerHTML = <var>` sinks). So raw special chars
+            # are shown literally and must NOT be html-escaped here or the user
+            # sees `&amp;`/`&lt;` in the tooltip (#3664/#3686). This is the
+            # #1838 stored-XSS boundary: never pass an HTMLElement as `title`,
+            # and do not change the vis-network pin below without re-checking
+            # Popup rendering (the test_export version-pin guard enforces this).
             "title": label,
             "community": cid,
             "community_name": sanitize_label((community_labels or {}).get(cid, f"Community {cid}")),

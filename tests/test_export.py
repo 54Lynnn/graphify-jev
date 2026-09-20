@@ -1160,3 +1160,40 @@ console.log(bad);
         proc = subprocess.run([node, str(js)], capture_output=True, text=True, timeout=60)
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "0", f"geometry violations: {proc.stdout.strip()}"
+
+
+def test_to_html_pins_vis_network_version_for_tooltip_xss_boundary():
+    """Tooltip `title` is passed to vis-network as a STRING and rendered via
+    Popup.setText -> innerText (verified in the 9.1.6 bundle), so tooltips are
+    intentionally NOT html-escaped (#3664/#3686). That safety rests on the pin:
+    if vis-network is bumped, the innerText rendering path (the #1838 stored-XSS
+    boundary) must be re-verified. This guard fails CI on a silent bump."""
+    G = make_graph()
+    communities = cluster(G)
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "graph.html"
+        to_html(G, communities, str(out))
+        content = out.read_text()
+        assert "vis-network@9.1.6" in content, (
+            "vis-network pin changed — re-verify Popup.setText renders a string "
+            "title via innerText (not innerHTML) before updating this pin, or the "
+            "un-escaped tooltip (#3686) reopens the #1838 stored-XSS boundary"
+        )
+
+
+def test_to_html_spiral_seed_uses_a_real_map_index():
+    """#3699: the Fermat-spiral seed positions reference `i`, so the node map
+    MUST bind an index (`RAW_NODES.map((n, i) => ...)`). Without it the emitted
+    JS throws `ReferenceError: i is not defined` and graph.html fails to render
+    at every graph size. Guards against the free-`i` regression."""
+    G = make_graph()
+    communities = cluster(G)
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "graph.html"
+        to_html(G, communities, str(out))
+        content = out.read_text()
+        if "Math.sqrt(i)" in content:  # spiral seed present
+            assert "RAW_NODES.map((n, i)" in content, (
+                "spiral seed references `i` but the node map has no index param "
+                "-> ReferenceError: i is not defined (#3699)"
+            )
