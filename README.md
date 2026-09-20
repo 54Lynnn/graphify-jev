@@ -851,7 +851,7 @@ graphify label ./my-project --backend=openai --model gpt-4o   # force a specific
 
 ## graphify Enterprise
 
-[**graphify Enterprise**](https://graphify.com) is the always-on layer built on top of graphify — it applies the same graph approach to your entire working context: meetings, files, docs, and code, updating continuously in the background.
+[**graphify Enterprise**](https://graphify.com/enterprise) is the always-on layer built on top of graphify — it applies the same graph approach to your entire working context: meetings, files, docs, and code, updating continuously in the background.
 
 Built for people and teams whose work lives across hundreds of conversations and documents they can never fully reconstruct.
 
