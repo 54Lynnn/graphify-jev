@@ -59,6 +59,10 @@ from graphify.extractors.razor import extract_razor  # noqa: F401
 from graphify.extractors.robot import extract_robot  # noqa: F401
 from graphify.extractors.rust import extract_rust  # noqa: F401
 from graphify.extractors.sln import extract_sln  # noqa: F401
+from graphify.extractors.solidity import (  # noqa: F401
+    extract_solidity,
+    resolve_solidity_type_references,
+)
 from graphify.extractors.sql import extract_sql  # noqa: F401
 from graphify.extractors.terraform import extract_terraform, prepare_terraform, resolve_terraform_modules  # noqa: F401
 from graphify.extractors.verilog import extract_verilog  # noqa: F401
@@ -2770,6 +2774,7 @@ _LANG_FAMILY_BY_EXT: dict[str, str] = {
     ".rs": "rust",
     ".cbl": "cobol", ".cob": "cobol", ".cobol": "cobol", ".cpy": "cobol",
     ".r": "r",
+    ".sol": "solidity",
     ".rb": "ruby", ".rake": "ruby",
     ".php": "php", ".phtml": "php", ".php3": "php", ".php4": "php",
     ".php5": "php", ".php7": "php", ".phps": "php",
@@ -5209,6 +5214,11 @@ register_language_resolver(
 )
 register_language_resolver(
     LanguageResolver(
+        "solidity_type_references", frozenset({".sol"}), resolve_solidity_type_references
+    )
+)
+register_language_resolver(
+    LanguageResolver(
         "elixir_import_targets",
         frozenset({".ex", ".exs"}),
         _resolve_elixir_import_targets,
@@ -6293,6 +6303,7 @@ _DISPATCH: dict[str, Any] = {
     ".go": extract_go,
     ".rs": extract_rust,
     ".r": extract_r,
+    ".sol": extract_solidity,
     ".java": extract_java,
     ".groovy": extract_groovy,
     ".gradle": extract_groovy,
@@ -6399,6 +6410,7 @@ _DISPATCH: dict[str, Any] = {
 _EXTRA_FOR_EXTENSION = {
     ".vb": "vbnet",
     ".r": "r",
+    ".sol": "solidity",
     ".sql": "sql",
     ".tf": "terraform",
     ".tfvars": "terraform",
