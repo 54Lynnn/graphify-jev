@@ -61,6 +61,7 @@ from graphify.extractors.sln import extract_sln  # noqa: F401
 from graphify.extractors.sql import extract_sql  # noqa: F401
 from graphify.extractors.terraform import extract_terraform, prepare_terraform, resolve_terraform_modules  # noqa: F401
 from graphify.extractors.verilog import extract_verilog  # noqa: F401
+from graphify.extractors.vbnet import extract_vbnet, resolve_vbnet_partial_calls  # noqa: F401
 from graphify.extractors.zig import extract_zig  # noqa: F401
 from graphify.security import sanitize_metadata
 from graphify.paths import disambiguate_ambiguous_candidates
@@ -2730,6 +2731,7 @@ _CASE_INSENSITIVE_EXTS = frozenset({
     ".sql",                                                          # SQL identifiers
     ".nim", ".nims", ".nimble",                                      # Nim (style-insensitive)
     ".cbl", ".cob", ".cobol", ".cpy",
+    ".vb",
 })
 
 
@@ -2769,7 +2771,7 @@ _LANG_FAMILY_BY_EXT: dict[str, str] = {
     ".rb": "ruby", ".rake": "ruby",
     ".php": "php", ".phtml": "php", ".php3": "php", ".php4": "php",
     ".php5": "php", ".php7": "php", ".phps": "php",
-    ".cs": "dotnet", ".razor": "dotnet", ".cshtml": "dotnet", ".xaml": "dotnet",
+    ".cs": "dotnet", ".vb": "dotnet", ".razor": "dotnet", ".cshtml": "dotnet", ".xaml": "dotnet",
     ".lua": "lua", ".luau": "lua",
     ".zig": "zig",
     ".ex": "elixir", ".exs": "elixir",
@@ -5198,6 +5200,9 @@ register_language_resolver(
     LanguageResolver("rust_self_member_calls", frozenset({".rs"}), _resolve_rust_self_member_calls)
 )
 register_language_resolver(
+    LanguageResolver("vbnet_partial_calls", frozenset({".vb"}), resolve_vbnet_partial_calls)
+)
+register_language_resolver(
     LanguageResolver(
         "elixir_import_targets",
         frozenset({".ex", ".exs"}),
@@ -6300,6 +6305,7 @@ _DISPATCH: dict[str, Any] = {
     ".cob": extract_cobol,
     ".cobol": extract_cobol,
     ".cpy": extract_cobol,
+    ".vb": extract_vbnet,
     ".kt": extract_kotlin,
     ".kts": extract_kotlin,
     ".scala": extract_scala,
@@ -6385,6 +6391,7 @@ _DISPATCH: dict[str, Any] = {
 # rather than falling back like Pascal does. Used by the #1745 warning in
 # extract() to tell the user which extra restores the language.
 _EXTRA_FOR_EXTENSION = {
+    ".vb": "vbnet",
     ".sql": "sql",
     ".tf": "terraform",
     ".tfvars": "terraform",
