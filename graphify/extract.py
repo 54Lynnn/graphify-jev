@@ -46,6 +46,7 @@ from graphify.extractors.csharp import (
 from graphify.extractors.dart import extract_dart  # noqa: F401
 from graphify.extractors.dm import extract_dm, extract_dmf, extract_dmi, extract_dmm  # noqa: F401
 from graphify.extractors.elixir import extract_elixir  # noqa: F401
+from graphify.extractors.erlang import extract_erlang, resolve_erlang_remote_calls  # noqa: F401
 from graphify.extractors.fortran import _cpp_preprocess, extract_fortran  # noqa: F401
 from graphify.extractors.go import _GO_PREDECLARED_FUNCS, extract_go  # noqa: F401
 from graphify.extractors.json_config import extract_json  # noqa: F401
@@ -2775,6 +2776,7 @@ _LANG_FAMILY_BY_EXT: dict[str, str] = {
     ".cbl": "cobol", ".cob": "cobol", ".cobol": "cobol", ".cpy": "cobol",
     ".r": "r",
     ".sol": "solidity",
+    ".erl": "erlang", ".hrl": "erlang", ".escript": "erlang",
     ".rb": "ruby", ".rake": "ruby",
     ".php": "php", ".phtml": "php", ".php3": "php", ".php4": "php",
     ".php5": "php", ".php7": "php", ".phps": "php",
@@ -5219,6 +5221,13 @@ register_language_resolver(
 )
 register_language_resolver(
     LanguageResolver(
+        "erlang_remote_calls",
+        frozenset({".erl", ".hrl", ".escript"}),
+        resolve_erlang_remote_calls,
+    )
+)
+register_language_resolver(
+    LanguageResolver(
         "elixir_import_targets",
         frozenset({".ex", ".exs"}),
         _resolve_elixir_import_targets,
@@ -6337,6 +6346,9 @@ _DISPATCH: dict[str, Any] = {
     ".psd1": extract_powershell_manifest,
     ".ex": extract_elixir,
     ".exs": extract_elixir,
+    ".erl": extract_erlang,
+    ".hrl": extract_erlang,
+    ".escript": extract_erlang,
     ".m": extract_objc,
     ".mm": extract_objc,
     ".jl": extract_julia,
@@ -6411,6 +6423,9 @@ _EXTRA_FOR_EXTENSION = {
     ".vb": "vbnet",
     ".r": "r",
     ".sol": "solidity",
+    ".erl": "erlang",
+    ".hrl": "erlang",
+    ".escript": "erlang",
     ".sql": "sql",
     ".tf": "terraform",
     ".tfvars": "terraform",
