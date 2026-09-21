@@ -37,6 +37,7 @@ from graphify.extractors.base import (  # noqa: F401
 from graphify.extractors.apex import extract_apex  # noqa: F401
 from graphify.extractors.bash import extract_bash  # noqa: F401
 from graphify.extractors.blade import extract_blade  # noqa: F401
+from graphify.extractors.cobol import extract_cobol  # noqa: F401
 from graphify.extractors.csharp import (
     CsharpNameResolver,
     _resolve_cross_file_csharp_imports,
@@ -2728,6 +2729,7 @@ _CASE_INSENSITIVE_EXTS = frozenset({
     ".php", ".phtml", ".php3", ".php4", ".php5", ".php7", ".phps",  # PHP fns/classes
     ".sql",                                                          # SQL identifiers
     ".nim", ".nims", ".nimble",                                      # Nim (style-insensitive)
+    ".cbl", ".cob", ".cobol", ".cpy",
 })
 
 
@@ -2763,6 +2765,7 @@ _LANG_FAMILY_BY_EXT: dict[str, str] = {
     ".py": "python",
     ".go": "go",
     ".rs": "rust",
+    ".cbl": "cobol", ".cob": "cobol", ".cobol": "cobol", ".cpy": "cobol",
     ".rb": "ruby", ".rake": "ruby",
     ".php": "php", ".phtml": "php", ".php3": "php", ".php4": "php",
     ".php5": "php", ".php7": "php", ".phps": "php",
@@ -6293,6 +6296,10 @@ _DISPATCH: dict[str, Any] = {
     ".metal": extract_cpp,
     ".rb": extract_ruby, ".rake": extract_ruby,
     ".cs": extract_csharp,
+    ".cbl": extract_cobol,
+    ".cob": extract_cobol,
+    ".cobol": extract_cobol,
+    ".cpy": extract_cobol,
     ".kt": extract_kotlin,
     ".kts": extract_kotlin,
     ".scala": extract_scala,
