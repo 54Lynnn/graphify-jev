@@ -1714,7 +1714,7 @@ def _rebuild_code(
                             ctx_node[marker] = node[marker]
                     metadata = node.get("metadata")
                     if isinstance(metadata, dict):
-                        ruby_metadata = {
+                        fwd_metadata = {
                             key: metadata[key]
                             for key in (
                                 "ruby_resolution_schema",
@@ -1722,11 +1722,20 @@ def _rebuild_code(
                                 "ruby_lookup_unsafe",
                                 "ruby_reopened",
                                 "ruby_external_method_owners",
+                                # Erlang remote-call resolution keys (#3714): an
+                                # unchanged callee module must keep its
+                                # module/name/arity so `foo:bar()` still resolves
+                                # on an incremental rebuild, not just a full build.
+                                "language",
+                                "kind",
+                                "module",
+                                "name",
+                                "arity",
                             )
                             if key in metadata
                         }
-                        if ruby_metadata:
-                            ctx_node["metadata"] = ruby_metadata
+                        if fwd_metadata:
+                            ctx_node["metadata"] = fwd_metadata
                     resolution_context_nodes.append(ctx_node)
                 # #2437: the member-call resolvers map receiver type -> owning
                 # class -> method through contains/method edges; hand over the

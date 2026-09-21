@@ -3872,7 +3872,7 @@ def dispatch_command(cmd: str) -> None:
                                 _ctx_node[_marker] = _node[_marker]
                         _metadata = _node.get("metadata")
                         if isinstance(_metadata, dict):
-                            _ruby_metadata = {
+                            _fwd_metadata = {
                                 key: _metadata[key]
                                 for key in (
                                     "ruby_resolution_schema",
@@ -3880,11 +3880,20 @@ def dispatch_command(cmd: str) -> None:
                                     "ruby_lookup_unsafe",
                                     "ruby_reopened",
                                     "ruby_external_method_owners",
+                                    # Erlang remote-call resolution keys (#3714):
+                                    # an unchanged callee module must keep its
+                                    # module/name/arity so `foo:bar()` still
+                                    # resolves on an incremental rebuild.
+                                    "language",
+                                    "kind",
+                                    "module",
+                                    "name",
+                                    "arity",
                                 )
                                 if key in _metadata
                             }
-                            if _ruby_metadata:
-                                _ctx_node["metadata"] = _ruby_metadata
+                            if _fwd_metadata:
+                                _ctx_node["metadata"] = _fwd_metadata
                         _ctx_nodes.append(_ctx_node)
                     for _edge in _ctx_graph.get(
                         "links", _ctx_graph.get("edges", [])

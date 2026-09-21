@@ -219,7 +219,12 @@ def extract_solidity(path: Path) -> dict:
             signature: str = "",
             callable_node: bool = False,
         ) -> str:
-            member_id = _make_id(type_id, kind, name, signature or str(member.start_point[0]))
+            # Callables carry an arity:types signature (distinguishes overloads).
+            # Non-callable members (struct/enum/event/error/state-var) have no
+            # signature; discriminate on the name — which is unique per kind
+            # within a contract scope — rather than the line number, so a node's
+            # id stays stable when the member moves (avoids incremental id churn).
+            member_id = _make_id(type_id, kind, name, signature or name)
             add_node(
                 member_id,
                 label,

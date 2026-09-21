@@ -1126,8 +1126,13 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
                 # Pass 2b below can catch these by label alone.
                 if _is_file_node_label(label, sf):
                     _ast_file_nodes.append((nid, sf))
-                if label.startswith("."):
-                    m_name = label.removeprefix(".").removesuffix("()")
+                # Only a method-shaped label (`.name()`) is a method-ghost
+                # candidate — gate on BOTH the leading dot and the `()` suffix so
+                # a dotfile label like `.env` is never mistaken for a method
+                # (#3705 follow-up). Key on the normalized name for parity with
+                # the alias index below and the rest of the dedup passes.
+                if label.startswith(".") and label.endswith("()"):
+                    m_name = make_id(label.removeprefix(".").removesuffix("()"))
                     _ast_method_nodes.setdefault((sf, m_name), []).append(nid)
             else:
                 # First non-AST node for this (file, label) wins as canonical; a
@@ -1151,8 +1156,11 @@ def build_from_json(extraction: dict, *, directed: bool = False, root: str | Pat
         if key in _loc_nodes and _loc_nodes[key] != nid:
             _noloc_nodes[key] = nid
         elif key not in _loc_nodes:
-            # Spec-conformant method ghost omitting class segment / leading dot (#3705)
-            m_name = label.removeprefix(".").removesuffix("()")
+            # Spec-conformant method ghost omitting class segment / leading dot
+            # (#3705). Normalize the same way the index was built so raw-label
+            # casing/punctuation differences still match; remap only on a single
+            # unambiguous AST-method candidate.
+            m_name = make_id(label.removeprefix(".").removesuffix("()"))
             m_candidates = _ast_method_nodes.get((sf, m_name), [])
             if len(m_candidates) == 1:
                 _ghost_remap[nid] = m_candidates[0]

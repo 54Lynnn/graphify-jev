@@ -2048,3 +2048,36 @@ def test_method_ghost_dedupe_and_alias_resolution_3705():
     assert "broker_mock_tda_mocktdaaccount_save_state" in G.nodes
     assert G.has_edge("doc_summary", "broker_mock_tda_mocktdaaccount_save_state")
 
+
+def test_method_ghost_ambiguous_same_name_in_one_file_is_not_merged_3705():
+    """Two AST methods with the same name in the SAME file (different classes)
+    are a genuine ambiguity: a spec-conformant ghost must NOT be remapped or
+    aliased onto either one (#3705 follow-up guard). The single-candidate rule
+    (len == 1) must skip the 2-candidate case and leave the ghost intact."""
+    from graphify.build import build_from_json
+
+    extraction = {
+        "nodes": [
+            {"id": "svc_a_save_state", "label": ".save_state()", "file_type": "code",
+             "source_file": "svc.py", "source_location": "L10", "_origin": "ast"},
+            {"id": "svc_b_save_state", "label": ".save_state()", "file_type": "code",
+             "source_file": "svc.py", "source_location": "L40", "_origin": "ast"},
+            # spec-conformant ghost that could match either — must stay unmerged
+            {"id": "svc_save_state", "label": "save_state()", "file_type": "code",
+             "source_file": "svc.py"},
+            {"id": "doc", "label": "Doc", "file_type": "document", "source_file": "d.md"},
+        ],
+        "edges": [
+            {"source": "doc", "target": "svc_save_state", "relation": "references",
+             "confidence": "INFERRED", "confidence_score": 0.85, "source_file": "d.md"},
+        ],
+    }
+    G = build_from_json(extraction)
+    # Both AST methods survive distinctly; the ambiguous ghost is NOT merged into either.
+    assert "svc_a_save_state" in G.nodes and "svc_b_save_state" in G.nodes
+    assert "svc_save_state" in G.nodes, "ambiguous ghost must be left intact, not remapped"
+    # And it must not have been aliased onto one of them (edge stays on the ghost).
+    assert G.has_edge("doc", "svc_save_state")
+    assert not G.has_edge("doc", "svc_a_save_state")
+    assert not G.has_edge("doc", "svc_b_save_state")
+
