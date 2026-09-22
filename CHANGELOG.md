@@ -2,6 +2,21 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/Graphify-Labs/graphify/releases)
 
+## 0.9.66 (2026-09-22)
+
+- Feature: five new language extractors — **COBOL** (`.cbl`/`.cob`/`.cobol`/`.cpy`; programs, paragraphs, `PERFORM`/`CALL`/`COPY`, pure-regex, no new dependency) (#3713, thanks @Abdul535), **VB.NET** (`.vb`; case-insensitive types/methods, `Inherits`/`Implements`/`Handles`) (#3717, thanks @Abdul535), **R** (`.r`/`.R`; assignment-form function defs, `library`/`source`, S4/R6 classes) (#3715, thanks @Abdul535), **Solidity** (`.sol`; contracts/interfaces/libraries, `is` inheritance, imports, modifiers) (#3716, thanks @Abdul535), and **Erlang** (`.erl`/`.hrl`/`.escript`; modules, functions by arity, behaviours, local + remote `foo:bar()` calls) (#3714, thanks @Abdul535). The R and Erlang grammars ship via the `r`/`erlang` extras (they have no standalone PyPI wheel); Solidity and VB.NET have their own extras.
+- Feature: Go interface method requirements now resolve to the interface, and their parameter/return types emit `references` edges (#3672, #3737, thanks @rajatnagda45, @oleksii-tumanov).
+- Feature: a Rust `self.method()` call resolves across files for simple generic impls (`impl<T> Foo<T>`) (#3653, thanks @oleksii-tumanov).
+- Fix: `graph.json` is now deterministic across runs — `update`/`extract`/`cluster-only`/`label` pin `PYTHONHASHSEED` via a one-time re-exec, so hash-seed-sensitive community detection (Leiden/Louvain) produces identical output run-to-run and matches hook-triggered rebuilds (#3743, #3641, thanks @ayushcodes10).
+- Fix: a same-relation edge collision now keeps the higher-confidence edge (EXTRACTED over INFERRED) instead of resolving by arrival order (#3711, thanks @shobhitagnihotri69).
+- Fix: a spec-conformant method-node duplicate (dropped class segment / leading dot) is now deduplicated onto its canonical AST node, gated on a method-shaped label and a single unambiguous candidate (#3719, #3705, thanks @shobhitagnihotri69).
+- Fix: intra-module Go `imports_from` edges now repoint onto the imported package's real file nodes instead of dangling at a `go_pkg_` sink; external/stdlib imports stay external (#3748, thanks @carterko23).
+- Fix: Cargo introspection discovers a `Cargo.toml` in a subdirectory when none sits at the scan root (e.g. Tauri's `src-tauri/`), degrades gracefully instead of aborting the whole extraction when no manifest is found, and resolves `workspace = true` inherited dependency identity from `[workspace.dependencies]` (#3740, #3739, thanks @ayushcodes10; #3734, thanks @oleksii-tumanov).
+- Fix: MCP `get_node`/`get_neighbors` now accept the node identifier under `node_id`/`id`, not only `label`, so agents that spell the argument differently no longer get a missing-argument error (#3725, thanks @ahm3dwasim).
+- Fix: `graphify install` no longer corrupts line endings (writes preserve the file's existing EOLs instead of rewriting to CRLF on Windows) and re-install is properly idempotent (a marker-bounded replace instead of a bare substring check) (#3741, #3668, thanks @ayushcodes10).
+- Fix: community labeling retries a valid-but-truncated LLM response and reports how many communities kept a structural fallback name, instead of silently leaving them unlabeled (#3708, thanks @Ha1baraA11).
+- Fix: a stale `.graphify_root` marker (moved/deleted/symlink-loop target) is now ignored with a fall-back to the graph's directory, and the marker value resolves to an absolute path when `GRAPHIFY_OUT` is a shared absolute directory (#3707, thanks @Ha1baraA11; #3735, #3375, thanks @ayushcodes10).
+
 ## 0.9.65 (2026-09-20)
 
 - Security: the `svg`/`all` extras now floor Pillow at `>=12.3.0` for CVE-2026-54058 (Pillow was pulled in transitively via matplotlib). Note: Pillow 12.3.0 dropped its glibc<2.27 cp310 Linux wheel, so a very old-glibc Python 3.10 host with the `svg`/`all` extra builds Pillow from sdist (#3698, thanks @viral-antuit).
