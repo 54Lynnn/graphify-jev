@@ -3471,7 +3471,7 @@ def _php_get_route_name(closure_node, src: bytes) -> str | None:
             
         if curr.type == "argument":
             arg_list = curr.parent
-            if arg_list is not None and arg_list.type == "argument_list":
+            if arg_list is not None and arg_list.type == "arguments":
                 call = arg_list.parent
                 if call is not None and call.type in ("member_call_expression", "function_call_expression", "scoped_call_expression"):
                     name_node = call.child_by_field_name("name")
@@ -3484,8 +3484,16 @@ def _php_get_route_name(closure_node, src: bytes) -> str | None:
                     for sibling in arg_list.children:
                         if sibling is curr:
                             break
-                        if sibling.type in ("string", "encapsed_string"):
-                            path_text = _read_text(sibling, src).strip("'\"")
+                            
+                        target = sibling
+                        if sibling.type == "argument":
+                            for c in sibling.children:
+                                if c.type in ("string", "encapsed_string"):
+                                    target = c
+                                    break
+                                    
+                        if target.type in ("string", "encapsed_string"):
+                            path_text = _read_text(target, src).strip("'\"")
                             break
                             
                     if verb is None:
@@ -3503,7 +3511,7 @@ def _php_get_route_name(closure_node, src: bytes) -> str | None:
                     curr = call.parent
                     continue
                     
-        elif curr.type in ("anonymous_function_creation_expression", "arrow_function"):
+        elif curr.type in ("anonymous_function", "arrow_function"):
             # Jump across the closure boundary to its containing argument
             curr = curr.parent
             continue
@@ -4992,7 +5000,7 @@ def _extract_generic(
                 func_name = _read_text(name_node, source) if name_node else None
 
             if not func_name:
-                if t in ("anonymous_function_creation_expression", "arrow_function"):
+                if t in ("anonymous_function", "arrow_function"):
                     route_name = _php_get_route_name(node, source)
                     if route_name:
                         func_name = route_name
@@ -5445,6 +5453,10 @@ def _extract_generic(
                         scope_parents=scope_parents,
                         lexical_nids_by_scope=lexical_nids_by_scope,
                     )
+                if config.ts_module == "tree_sitter_php":
+                    # Manually walk the body to find nested closures, passing the 
+                    # body node itself so `walk()` visits its children.
+                    walk(body, parent_class_nid=parent_class_nid)
                 if config.ts_module == "tree_sitter_kotlin":
                     # #2347: Kotlin anonymous objects (`object : Foo { … }`,
                     # node type `object_literal`). The function branch never
