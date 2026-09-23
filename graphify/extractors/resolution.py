@@ -1465,14 +1465,18 @@ def _apply_symbol_resolution_facts(
         except ValueError:
             pass
         candidate_targets.add(_make_id(str(pkg_dir)))
-        candidate_targets.add(_make_id(str(pkg_dir / "__init__.py")))
         candidate_targets.add(_make_id(str(pkg_dir.with_suffix(".py"))))
         try:
             from_rel_parent = from_path.parent.relative_to(root)
-            candidate_targets.add(_make_id(str(from_rel_parent / "__init__.py")))
             candidate_targets.add(_make_id(str(from_rel_parent.with_suffix(".py"))))
         except ValueError:
             pass
+        # Deliberately NOT adding the package `__init__.py` id form: since #3729,
+        # a legitimate `from pkg import sub` resolves its provisional edge to the
+        # real `pkg/__init__.py` node, which is a correct package-dependency edge
+        # (the package's __init__ runs on import) and must survive alongside the
+        # submodule edge we add below. Only the *module-file* collision ids
+        # (`pkg` / `pkg.py`, the #3777 phantom) are retraction candidates.
 
         loc_str = f"L{line}"
         loc_candidates = [
@@ -1484,8 +1488,12 @@ def _apply_symbol_resolution_facts(
             if edge.get("target") in candidate_targets:
                 matched_edge = edge
                 break
-        if matched_edge is None and len(loc_candidates) == 1:
-            matched_edge = loc_candidates[0]
+        # Retract ONLY on a genuine module-collision candidate match. The old
+        # `len(loc_candidates) == 1` blind fallback over-retracted: since #3729 a
+        # legitimately-resolved `from pkg import sub` edge (target `pkg/__init__.py`)
+        # is the sole edge at its line and is NOT a collision, so the fallback
+        # would wrongly drop it. A real #3777 phantom always matches by its
+        # module-file id above, so no fallback is needed (#3784 follow-up).
 
         if matched_edge is not None:
             retracted_edge_ids.add(id(matched_edge))
