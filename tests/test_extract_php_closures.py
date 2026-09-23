@@ -96,3 +96,85 @@ $value = $cache->get('user:42', function () { return 2; });
     assert not any(l.startswith("GET ") for l in labels), "Expected no route label for cache method"
 
 
+
+
+def _php_grammar_available(tmp_path) -> bool:
+    r = extract_php(tmp_path / "__probe.php")
+    return not (r.get("error") and "No language parser" in (r.get("error") or ""))
+
+
+def test_php_file_scope_arg_closure_call_resolves_to_the_closure(tmp_path):
+    """#3409 reporter repro: a closure passed as an argument at FILE SCOPE must
+    produce a node AND its inner call must attribute to that closure. Uses the
+    full extract() pipeline so raw_calls resolve to a real defined target."""
+    (tmp_path / "__probe.php").write_bytes(b"<?php\n")
+    if not _php_grammar_available(tmp_path):
+        pytest.skip("PHP grammar not installed")
+    from graphify.extract import extract
+    (tmp_path / "app.php").write_bytes(b"""<?php
+function handler($x) { return $x; }
+$assigned = function($x) { return handler($x); };
+array_map(function($y){ return handler($y); }, $items);
+""")
+    r = extract([tmp_path / "app.php"], cache_root=tmp_path / ".cache")
+    id2label = {n["id"]: n.get("label") for n in r["nodes"]}
+    labels = set(id2label.values())
+    # both the assigned and the argument-position closures exist as nodes
+    closure_labels = {l for l in labels if l and l.startswith("{closure#")}
+    assert len(closure_labels) >= 2, f"expected file-scope closures as nodes, got {sorted(labels)}"
+    # each closure's inner call to handler() resolves and attributes to the closure
+    call_pairs = {
+        (id2label.get(e["source"]), id2label.get(e["target"]))
+        for e in r["edges"] if e["relation"] == "calls"
+    }
+    handler_callers = {src for src, tgt in call_pairs if tgt == "handler()"}
+    assert handler_callers, "closure inner call to handler() was not captured"
+    assert all(c and c.startswith("{closure#") for c in handler_callers), (
+        f"handler() call must attribute to a closure, not the file: {handler_callers}"
+    )
+
+
+def test_php_closures_produce_no_duplicate_nodes(tmp_path):
+    """The walk partition must emit each closure exactly once (no double-walk)."""
+    (tmp_path / "__probe.php").write_bytes(b"<?php\n")
+    if not _php_grammar_available(tmp_path):
+        pytest.skip("PHP grammar not installed")
+    src = b"""<?php
+$a = function() { return 1; };
+$b = fn() => 2;
+array_map(function() { return 3; }, []);
+"""
+    (tmp_path / "dup.php").write_bytes(src)
+    res = extract_php(tmp_path / "dup.php")
+    from collections import Counter
+    counts = Counter(n["label"] for n in res["nodes"] if n.get("label", "").startswith("{closure#"))
+    assert counts and all(c == 1 for c in counts.values()), f"duplicate closure nodes: {counts}"
+
+
+def test_php_method_scope_closure_call_attributes_to_closure_not_method(tmp_path):
+    """A closure inside a method: its inner call attributes to the closure node,
+    not the enclosing method (closures are function_boundary_types) (#3409)."""
+    (tmp_path / "__probe.php").write_bytes(b"<?php\n")
+    if not _php_grammar_available(tmp_path):
+        pytest.skip("PHP grammar not installed")
+    from graphify.extract import extract
+    (tmp_path / "svc.php").write_bytes(b"""<?php
+function target($x) { return $x; }
+class Service {
+    public function run() {
+        $cb = function($x) { return target($x); };
+        return $cb;
+    }
+}
+""")
+    r = extract([tmp_path / "svc.php"], cache_root=tmp_path / ".cache")
+    id2label = {n["id"]: n.get("label") for n in r["nodes"]}
+    callers = {
+        id2label.get(e["source"])
+        for e in r["edges"] if e["relation"] == "calls" and id2label.get(e["target"]) == "target()"
+    }
+    assert callers, "call to target() inside the method-level closure was not captured"
+    assert all(c and c.startswith("{closure#") for c in callers), (
+        f"target() must attribute to the closure, not .run(): {callers}"
+    )
+    assert ".run()" not in callers
