@@ -7489,6 +7489,7 @@ def extract(
     _augment_symbol_resolution_edges(
         paths, all_nodes, all_edges, root,
         ambiguous_python_modules=ambiguous_python_modules,
+        resolution_context_nodes=resolution_context_nodes,
     )
 
     # Merge a header-declared class (and its methods) with its sibling-impl
