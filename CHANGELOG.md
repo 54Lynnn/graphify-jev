@@ -2,6 +2,14 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/Graphify-Labs/graphify/releases)
 
+## 0.9.68 (2026-09-25)
+
+- Fix: the PYTHONHASHSEED re-exec (0.9.67) now waits for and propagates the child's exit code on Windows instead of returning early — `os.execvpe` is a true process replacement only on POSIX; on Windows it spawned a new process and let the parent race ahead unpinned, crashing `update`/`extract`/`cluster-only`/`label`. The Windows path now spawns via `subprocess.run` and exits with the child's status; the POSIX path is unchanged (#3816, #3799, thanks @sinangumuskabak-sys).
+- Fix: Terraform secret redaction now also covers a secret-named `variable` default and `output` value — the secret's name lives in the block label, so the literal sat under the generic `default`/`value` key that the key-name check never flagged (`variable "db_password" { default = "…" }` reached `graph.json` verbatim). Redacted when the label names a secret or the block sets `sensitive = true` (#3817, #3644/#3762 follow-up, thanks @breken-ai).
+- Fix: fixed-format COBOL that carries a sequence NUMBER in columns 1-6 (not blanks) is now detected as fixed-format — previously it was misread as free-format, the sequence digits stayed in the code, and every paragraph and `PERFORM` edge was silently dropped, leaving only the file and program nodes (#3813, thanks @abhay-codes07).
+- Fix: `PERFORM A THRU/THROUGH Z` now links both endpoints of the range, not just the entry paragraph, so the range-end no longer lacks an inbound `calls` edge; a dangling THRU target is skipped rather than fabricated (#3814, thanks @abhay-codes07).
+- Fix: `GRAPH_REPORT.md`'s Knowledge Gaps section only offers "undocumented components" as an explanation for an isolated node when the graph actually has a semantic layer (a document/paper/image node an LLM extracted meaning from) — a code-only graph no longer lists a possibility it can never have (#3828, #3801, thanks @ayushcodes10).
+
 ## 0.9.67 (2026-09-23)
 
 - Fix: the PYTHONHASHSEED determinism pin (0.9.66) now re-execs via `python -m graphify` instead of replaying `argv[0]`, fixing a Windows regression where `update`/`extract`/`cluster-only`/`label` failed to re-launch through the console-script `.exe` launcher (#3780, thanks @ayushcodes10).
