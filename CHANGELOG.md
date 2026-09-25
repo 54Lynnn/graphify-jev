@@ -2,6 +2,14 @@
 
 Full release notes with details on each version: [GitHub Releases](https://github.com/Graphify-Labs/graphify/releases)
 
+## 0.9.69 (2026-09-25)
+
+- Security: the `/graphify add ... --watch` reference no longer passes the raw, agent-substituted `INPUT_PATH` placeholder unquoted into a shell command (`… -m graphify.watch INPUT_PATH`), where a scan root containing `$(…)`, backticks, or `;` could execute — a follow-on to the Step 1 fix. The watcher now reads the trusted `graphify-out/.graphify_root` that Step 1 resolves, so there is no path to substitute (#3742, #3642, thanks @ayushcodes10). The identical placeholder still appears in the Aider/Devin monolith `--watch` snippet and is tracked separately.
+- Fix: incremental updates (`update`/`extract --code-only`/`watch`) now preserve a cross-file `imports`/`calls`/`uses` edge whose target symbol lives in an unchanged file — the symbol-resolution facts pass widens its target index with the read-only resolution context, so re-extracting one file no longer silently drops its edges into the rest of the graph; a genuinely removed edge is still pruned (#3812, #3776, thanks @hopstreax).
+- Fix: C# type references (`inherits`/`implements`/parameter/return/base types) no longer resolve to a same-named non-type node — an enum member, property, field, or method sharing a type's name is excluded from the type-definition index, so a class inherits from the real base rather than a stray member; resolution of partial classes without a `contains` edge is restored (#3815, #3795, thanks @hopstreax).
+- Fix: dedup now keeps the node with a real source location over a richer but source-less one when merging duplicates, so a merged entity points at real code instead of an inferred/external stub; the loser's attributes are still folded onto the survivor (#3786, #3775, thanks @ayushcodes10).
+- Fix: Maven `pom.xml` ingestion resolves a dependency's inherited `groupId`/`version` from the local `<parent>` block and substitutes `${property}` / `${project.*}` placeholders (offline, one level), so previously-dangling `depends_on` edges now connect (#3823, #3806, thanks @chiliec).
+
 ## 0.9.68 (2026-09-25)
 
 - Fix: the PYTHONHASHSEED re-exec (0.9.67) now waits for and propagates the child's exit code on Windows instead of returning early — `os.execvpe` is a true process replacement only on POSIX; on Windows it spawned a new process and let the parent race ahead unpinned, crashing `update`/`extract`/`cluster-only`/`label`. The Windows path now spawns via `subprocess.run` and exits with the child's status; the POSIX path is unchanged (#3816, #3799, thanks @sinangumuskabak-sys).
