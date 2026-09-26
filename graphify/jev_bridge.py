@@ -31,14 +31,37 @@ _SEED_CACHE: Dict[str, list[str]] = {}
 _MAX_CACHE_SIZE = 128
 
 
+def _load_env_file() -> None:
+    """自动加载当前工作目录或上级目录中的 .env 文件（轻量原生实现，不引入 python-dotenv 依赖）"""
+    try:
+        from pathlib import Path
+        for base in [Path.cwd(), Path(__file__).resolve().parent.parent]:
+            env_file = base / ".env"
+            if env_file.is_file():
+                for line in env_file.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, val = line.split("=", 1)
+                    key = key.strip()
+                    val = val.strip().strip("\"'")
+                    if key and key not in os.environ:
+                        os.environ[key] = val
+                break
+    except Exception:
+        pass
+
+
 def _api_key() -> str:
     """获取 API Key，优先读取 TYPESAFE_API_KEY，亦兼容 OPENCODE_API_KEY"""
+    _load_env_file()
     return os.environ.get("TYPESAFE_API_KEY", "").strip() or os.environ.get("OPENCODE_API_KEY", "").strip()
 
 
 def _api_url() -> str:
     """获取 API Endpoint，优先读取 TYPESAFE_API_URL，若使用 OpenCode Zen 则自动路由"""
-    url = os.environ.get("TYPESAFE_API_URL", "").strip()
+    _load_env_file()
+    url = os.environ.get("TYPESAFE_API_URL", "").strip() or os.environ.get("OPENCODE_API_URL", "").strip()
     if url:
         return url
     if os.environ.get("OPENCODE_API_KEY", "").strip() and not os.environ.get("TYPESAFE_API_KEY", "").strip():
