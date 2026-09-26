@@ -2545,6 +2545,67 @@ def dispatch_command(cmd: str) -> None:
             )
             sys.exit(1)
 
+    elif cmd == "serve":
+        # 原生轻量服务：启动架构战情大屏或 ComfyUI 风格卷帘对比中心
+        import http.server
+        import socketserver
+        port = 8899
+        target_dir = Path(".").resolve()
+        args = sys.argv[2:]
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a == "--port" and i + 1 < len(args):
+                try:
+                    port = int(args[i + 1])
+                except ValueError:
+                    port = 8899
+                i += 2
+            elif a.startswith("--port="):
+                try:
+                    port = int(a.split("=", 1)[1])
+                except ValueError:
+                    port = 8899
+                i += 1
+            elif not a.startswith("-"):
+                p_cand = Path(a).resolve()
+                if p_cand.exists():
+                    target_dir = p_cand if p_cand.is_dir() else p_cand.parent
+                i += 1
+            else:
+                i += 1
+
+        # 优先寻找包含战情大屏的目录 (如 knowledge-graph-viewer 或当前项目的 graphify-out)
+        out_cand = target_dir / _GRAPHIFY_OUT
+        serve_root = target_dir
+        if (target_dir / "radar.html").exists() or (target_dir / "curtain_compare.html").exists():
+            serve_root = target_dir
+        elif out_cand.exists():
+            serve_root = out_cand
+
+        print(f"\n=======================================================")
+        print(f" 🌐 Graphify-Jev 架构战情大屏服务已就绪！")
+        print(f"=======================================================")
+        print(f" 本地服务端口: http://localhost:{port}")
+        print(f" 📂 托管静态根目录: {serve_root}")
+        print(f" 🎯 战情大屏入口: http://localhost:{port}/graph_radar.html (或 radar.html)")
+        print(f" ↔  ComfyUI卷帘对比: http://localhost:{port}/curtain_compare.html")
+        print(f"=======================================================\n")
+        print(f"按 Ctrl+C 即可退出服务...")
+
+        class _QuietHandler(http.server.SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=str(serve_root), **kwargs)
+            def log_message(self, format, *args):
+                pass
+
+        socketserver.TCPServer.allow_reuse_address = True
+        try:
+            with socketserver.TCPServer(("", port), _QuietHandler) as httpd:
+                httpd.serve_forever()
+        except KeyboardInterrupt:
+            print("\n服务已停止。")
+            sys.exit(0)
     elif cmd == "hook-check":
         # Codex Desktop rejects hookSpecificOutput.additionalContext on PreToolUse.
         # Keep this as a cross-platform no-op so installed hooks never break Bash
