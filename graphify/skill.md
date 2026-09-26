@@ -1,9 +1,9 @@
 ---
-name: graphify
+name: graphify-jev
 description: "Use for any question about a codebase, its architecture, file relationships, code smells, god nodes refactoring, or project navigation — especially when graphify-out/ exists. Turns code into an intelligent knowledge graph with Jev-powered architecture radar and refactoring navigation."
 ---
 
-# /graphify
+# /graphify-jev
 
 Turn any folder of files into an intelligent navigable knowledge graph with community detection, Jev architectural health radar, and code refactoring navigation.
 
