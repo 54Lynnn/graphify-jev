@@ -39,7 +39,8 @@ class TestJevVisualRadar(unittest.TestCase):
             self.assertTrue(success)
             self.assertTrue(os.path.exists(out_file))
 
-            content = open(out_file, encoding="utf-8").read()
+            with open(out_file, encoding="utf-8") as f:
+                content = f.read()
             # 1. 验证节点数据中注入了 _is_malignant 与 _actionable_prompt
             self.assertIn("_is_malignant", content)
             self.assertIn("_actionable_prompt", content)
@@ -47,6 +48,28 @@ class TestJevVisualRadar(unittest.TestCase):
             self.assertIn("malignant-alert", content)
             # 3. 验证包含复制指令按钮与逻辑
             self.assertIn("copy-refactor-btn", content)
+
+    @patch("graphify.jev_audit.is_available", return_value=True)
+    @patch("graphify.jev_audit._call_jev_choice")
+    def test_to_echarts_radar_html(self, mock_choice, mock_avail):
+        def side_effect(state_desc, instructions, criteria):
+            if "代码符号：GodManager" in state_desc:
+                return ("MALIGNANT_GOD_CLASS", 0.96, {"MALIGNANT_GOD_CLASS": 0.96, "BENIGN_INFRA": 0.04})
+            return ("BENIGN_INFRA", 0.91, {"BENIGN_INFRA": 0.91, "MALIGNANT_GOD_CLASS": 0.09})
+        mock_choice.side_effect = side_effect
+
+        from graphify.exporters.echarts_radar import to_echarts_radar_html
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_file = os.path.join(tmpdir, "graph_radar.html")
+            ok = to_echarts_radar_html(self.G, out_file, project_title="TestRadar")
+            self.assertTrue(ok)
+            self.assertTrue(os.path.exists(out_file))
+            with open(out_file, encoding="utf-8") as f:
+                c = f.read()
+            self.assertIn("echarts.min.js", c)
+            self.assertIn("同心圆雷达核芯", c)
+            self.assertIn("强斥力纯净散开", c)
+            self.assertIn("GodManager", c)
 
 
 if __name__ == "__main__":

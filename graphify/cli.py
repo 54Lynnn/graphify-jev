@@ -2383,6 +2383,13 @@ def dispatch_command(cmd: str) -> None:
                     )
                     if html_written:
                         _clear_html_stale_marker()
+                        # 额外输出专属的 ECharts 架构雷达战情大屏 (graph_radar.html)
+                        try:
+                            from graphify.exporters.echarts_radar import to_echarts_radar_html
+                            radar_target = out_dir / "graph_radar.html"
+                            to_echarts_radar_html(G, str(radar_target), project_title=f"{out_dir.parent.name or 'Graphify-Jev'} 架构健康雷达")
+                        except Exception:
+                            pass
                     else:
                         skip_reason = "no useful community aggregation could be generated"
                         if html_target.exists():
