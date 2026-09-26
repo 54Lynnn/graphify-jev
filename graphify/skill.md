@@ -1,16 +1,18 @@
 ---
 name: graphify
-description: "Use for any question about a codebase, its architecture, file relationships, or project content — especially when graphify-out/ exists, where the question should be treated as a graphify query first. Turns any input (code, docs, papers, images, videos) into a persistent knowledge graph with god nodes, community detection, and query/path/explain tools."
+description: "Use for any question about a codebase, its architecture, file relationships, code smells, god nodes refactoring, or project navigation — especially when graphify-out/ exists. Turns code into an intelligent knowledge graph with Jev-powered architecture radar and refactoring navigation."
 ---
 
 # /graphify
 
-Turn any folder of files into a navigable knowledge graph with community detection, an honest audit trail, and three outputs: interactive HTML, GraphRAG-ready JSON, and a plain-language GRAPH_REPORT.md.
+Turn any folder of files into an intelligent navigable knowledge graph with community detection, Jev architectural health radar, and code refactoring navigation.
 
 ## Usage
 
 ```
-/graphify                                             # full pipeline on current directory (HTML viz; add --obsidian for a vault)
+/graphify                                             # full pipeline on current directory (HTML viz + Jev health radar)
+/graphify navigate                                    # scan architecture health, surface god nodes refactoring radar
+/graphify navigate <symbol>                           # extract topological refactoring context & prescribe decoupling steps
 /graphify <path>                                      # full pipeline on specific path
 /graphify https://github.com/<owner>/<repo>           # clone repo then run full pipeline on it
 /graphify https://github.com/<owner>/<repo> --branch <branch>  # clone a specific branch
@@ -695,6 +697,28 @@ graphify query "<question>"
 ```
 
 Before traversal, expand the question against the graph's own vocabulary so a wording mismatch does not collapse the answer to noise. If the `graphify query` CLI is unavailable, fall back to an inline NetworkX traversal of `graphify-out/graph.json`. Answer using only what the graph output contains, and quote `source_location` when citing a specific fact. For that vocab-expansion step, the BFS/DFS traversal modes, the `--budget` cap, the NetworkX fallback, `save-result` feedback, and the `/graphify path` and `/graphify explain` flows, see `references/query.md`.
+
+---
+
+## For /graphify navigate (AI 架构导航与上帝节点解耦)
+
+当用户询问以下意图时，将其作为**代码架构导航与解耦**任务处理：
+- 自然语言问询：“*帮我看看这个项目架构有什么坏味道？*”、“*有哪些恶性上帝节点需要重构？*”、“*如何解耦/拆分 `<符号名称>`？*”
+- 显式命令：`/graphify navigate` 或 `/graphify navigate <symbol>`
+
+### 执行流程：
+
+1. **提取拓扑依赖切片**：
+   在后台通过 Python 脚本加载现有 `graphify-out/graph.json` 并调用 `jev_audit`：
+   - 若用户询问全局坏味道或 `/graphify navigate`：调用 `scan_project_architecture_health(G, top_n=6)` 获取体检结果；
+   - 若用户指定特定符号或要拆分某个类：调用 `get_refactor_context(G, symbol)` 获取该病灶的上游调用者（Callers）、下游依赖（Callees）及跨模块文件跨度。
+
+2. **Agent 专家现场开具重构处方**：
+   Agent 结合提取到的结构化拓扑切片与本地真实源码，为开发者输出结构化重构方案：
+   - 🔴 **病灶成因诊断**：指出违背单一职责原则（SRP）的具体证据（如“同时被 5 个不同社区的 12 个模块依赖”）；
+   - 🛡️ **目标架构与解耦模式**：推荐具体的重构模式（如防腐层 Facade、策略模式 Strategy、领域事件驱动 Domain Event 等）；
+   - 📋 **分步安全实施路径**：第 1 步先抽离公共接口/契约，第 2 步迁移子逻辑，第 3 步平滑切换调用方；
+   - 💻 **重构伪代码 / 代码骨架 Diff**：直接给出拆分后的模块骨架示例。
 
 ---
 
