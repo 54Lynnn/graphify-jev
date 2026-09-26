@@ -402,11 +402,26 @@ def assemble_graph_topology(
                     if m in node_set:
                         valid_members.append(m)
                 if not valid_members:
+                    print(
+                        f"[graphify] WARNING: dropping hyperedge "
+                        f"{he.get('id', '?')!r} — none of its members "
+                        f"{he.get('nodes')!r} match built nodes.",
+                        file=sys.stderr,
+                    )
                     continue
                 if valid_members != he["nodes"]:
                     he["nodes"] = valid_members
             kept_hyperedges.append(he)
-        G.graph["hyperedges"] = kept_hyperedges
+        if kept_hyperedges:
+            G.graph["hyperedges"] = kept_hyperedges
+        else:
+            G.graph["hyperedges"] = []
+            print(
+                f"[graphify] WARNING: all {len(hyperedges)} hyperedge(s) were "
+                f"dropped by member revalidation; graph.json's hyperedge set "
+                f"will be emptied on the next export.",
+                file=sys.stderr,
+            )
 
     _disambiguate_file_node_labels(G)
     return G
