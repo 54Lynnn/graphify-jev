@@ -67,6 +67,54 @@ def _html_styles() -> str:
   .legend-cb:checked::after, #select-all-cb:checked::after { content: ''; position: absolute; left: 3.5px; top: 1px; width: 4px; height: 7px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
   #select-all-cb:indeterminate { background: #4E79A7; border-color: #4E79A7; }
   #select-all-cb:indeterminate::after { content: ''; position: absolute; left: 2px; top: 5px; width: 8px; height: 2px; background: #fff; border: none; transform: none; }
+  
+  /* Jev 架构健康雷达高危恶性上帝类发光与抽屉样式 */
+  .malignant-alert {
+    background: linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(185, 28, 28, 0.05));
+    border: 1px solid rgba(239, 68, 68, 0.5);
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 12px;
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.2);
+  }
+  .malignant-badge {
+    display: inline-block;
+    background: #ef4444;
+    color: #fff;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+    letter-spacing: 0.05em;
+  }
+  .benign-badge {
+    display: inline-block;
+    background: #10b981;
+    color: #fff;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 2px 6px;
+    border-radius: 4px;
+    margin-bottom: 6px;
+  }
+  .copy-refactor-btn {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    background: #ef4444;
+    color: #ffffff;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: center;
+    transition: background 0.2s, transform 0.1s;
+  }
+  .copy-refactor-btn:hover { background: #dc2626; transform: scale(1.02); }
+  .copy-refactor-btn:active { transform: scale(0.98); }
 </style>"""
 
 def _hyperedge_script(hyperedges_json: str) -> str:
@@ -159,6 +207,10 @@ const nodesDS = new vis.DataSet(RAW_NODES.map((n, i) => ({{
   y: 30 * Math.sqrt(i) * Math.sin(i * 2.4),
   _community: n.community, _community_name: n.community_name,
   _source_file: n.source_file, _file_type: n.file_type, _degree: n.degree,
+  _is_malignant: n._is_malignant,
+  _is_benign: n._is_benign,
+  _explanation: n._explanation,
+  _actionable_prompt: n._actionable_prompt,
 }})));
 
 const edgesDS = new vis.DataSet(RAW_EDGES.map((e, i) => ({{
@@ -210,7 +262,28 @@ function showInfo(nodeId) {{
     const color = nb ? nb.color.background : '#555';
     return `<span class="neighbor-link" style="border-left-color:${{esc(color)}}" data-nid="${{esc(nid)}}">${{esc(nb ? nb.label : nid)}}</span>`;
   }}).join('');
+
+  let healthCard = '';
+  if (n._is_malignant) {{
+    const pmt = n._actionable_prompt || `请为我分析并解耦 ${{n.label}}`;
+    healthCard = `
+      <div class="malignant-alert">
+        <span class="malignant-badge">🚨 JEV 恶性病灶预警</span>
+        <div style="font-size:12px;color:#fca5a5;line-height:1.4;margin:4px 0 6px 0;">${{esc(n._explanation || '承担过多异构业务')}}</div>
+        <button class="copy-refactor-btn" onclick="copyPrompt('${{esc(pmt)}}')">📋 复制解耦处方指令给 Agent</button>
+      </div>
+    `;
+  }} else if (n._is_benign) {{
+    healthCard = `
+      <div style="background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.4);border-radius:6px;padding:8px;margin-bottom:10px;">
+        <span class="benign-badge">🟢 健全基础设施</span>
+        <div style="font-size:11px;color:#6ee7b7;">职责纯粹，安全放行无需手术</div>
+      </div>
+    `;
+  }}
+
   document.getElementById('info-content').innerHTML = `
+    ${{healthCard}}
     <div class="field"><b>${{esc(n.label)}}</b></div>
     <div class="field">Type: ${{esc(n._file_type || 'unknown')}}</div>
     <div class="field">Community: ${{esc(n._community_name)}}</div>
@@ -218,6 +291,18 @@ function showInfo(nodeId) {{
     <div class="field">Degree: ${{n._degree}}</div>
     ${{neighborIds.length ? `<div class="field" style="margin-top:8px;color:#aaa;font-size:11px">Neighbors (${{neighborIds.length}})</div><div id="neighbors-list">${{neighborItems}}</div>` : ''}}
   `;
+}}
+
+function copyPrompt(text) {{
+  if (navigator.clipboard) {{
+    navigator.clipboard.writeText(text).then(() => {{
+      alert('已复制解耦处方指令！直接粘贴发给 Agent 即可：\\n\\n' + text);
+    }}).catch(() => {{
+      prompt('请复制以下指令发给 Agent：', text);
+    }});
+  }} else {{
+    prompt('请复制以下指令发给 Agent：', text);
+  }}
 }}
 
 function focusNode(nodeId) {{
@@ -500,6 +585,18 @@ def to_html(
             learning_overlay = _llo(Path(output_path))
         except Exception:
             learning_overlay = {}
+    # 注入 Jev 架构健康雷达扫描元数据
+    health_lookup = {}
+    try:
+        from graphify.jev_audit import scan_project_architecture_health
+        health_res = scan_project_architecture_health(G, top_n=10)
+        for m in health_res.get("malignant_nodes", []):
+            health_lookup[m["node_id"]] = ("MALIGNANT", m)
+        for b in health_res.get("benign_nodes", []):
+            health_lookup[b["node_id"]] = ("BENIGN", b)
+    except Exception:
+        pass
+
     # Status -> ring color. preferred=green, contested=amber. Tentative gets no
     # ring (it's not yet trustworthy enough to highlight in the map).
     _RING = {"preferred": "#22c55e", "contested": "#f59e0b"}
@@ -571,6 +668,34 @@ def to_html(
             if stale:
                 lesson += " [code changed — re-verify]"
             node["title"] = f"{label}\n{sanitize_label(lesson)}"
+
+        # 检查是否为 Jev 识别的恶性上帝类或良性基础设施
+        h_info = health_lookup.get(str(node_id))
+        if h_info:
+            h_type, h_meta = h_info
+            if h_type == "MALIGNANT":
+                node["_is_malignant"] = True
+                node["_diagnosis"] = "MALIGNANT_GOD_CLASS"
+                node["_explanation"] = sanitize_label(str(h_meta.get("explanation") or "承担过多异构业务"))
+                node["_actionable_prompt"] = sanitize_label(str(h_meta.get("actionable_prompt") or f"请为我生成 {label} 的重构解耦方案"))
+                node["size"] = max(node["size"] * 1.35, 36.0)
+                node["borderWidth"] = 4
+                node["color"] = {
+                    "background": "#ef4444",
+                    "border": "#dc2626",
+                    "highlight": {"background": "#ffffff", "border": "#ef4444"}
+                }
+                node["title"] = f"⚠️ JEV 恶性上帝类: {label}\n{node['_explanation']}"
+            elif h_type == "BENIGN":
+                node["_is_benign"] = True
+                node["borderWidth"] = 3
+                node["color"] = {
+                    "background": color,
+                    "border": "#10b981",
+                    "highlight": {"background": "#ffffff", "border": "#10b981"}
+                }
+                node["title"] = f"🟢 JEV 健全基础设施: {label}"
+
         vis_nodes.append(node)
 
     # Build edges list. Restore original edge direction from _src/_tgt
