@@ -93,6 +93,49 @@ def _learning_section(lines: list, learning: dict | None, top_n: int = 10) -> No
                          + (f" -> {nodes}" if nodes else ""))
 
 
+def _architecture_health_radar_section(lines: list[str], G: nx.Graph) -> None:
+    """在报告末尾挂载由 Jev 驱动的架构健康雷达与重构导航指南"""
+    try:
+        from graphify.jev_audit import scan_project_architecture_health
+        health = scan_project_architecture_health(G, top_n=6)
+        malignant = health.get("malignant_nodes", [])
+        benign = health.get("benign_nodes", [])
+        if not malignant and not benign:
+            return
+
+        lines += ["", "## 🩺 Jev 架构健康雷达 (Architecture Health Radar)"]
+        mode_note = health.get("failsafe_note") or ("Jev 连续决策引擎 (System One 毫秒级直出)" if health.get("mode") == "jev_system_one" else "")
+        if mode_note:
+            lines.append(f"> 引擎状态: _{mode_note}_")
+            lines.append("")
+
+        if malignant:
+            lines.append("### 🚨 恶性高危上帝节点 (建议优先解耦重构)")
+            lines.append("| 符号名称 | 所在文件 | 拓扑度数 (出/入) | 风险说明与影响面 | 建议解耦方向 |")
+            lines.append("| :--- | :--- | :--- | :--- | :--- |")
+            for m in malignant:
+                lbl = m["label"]
+                sfile = Path(m["source_file"]).name if m.get("source_file") else "unknown"
+                deg_str = f"{m['degree']} ({m['out_degree']}出 / {m['in_degree']}入)"
+                expl = m.get("explanation", "承担过多异构业务").replace("|", "/")
+                lines.append(f"| **`{lbl}`** | `{sfile}` | {deg_str} | {expl} | 领域服务抽离 / 防腐层隔离 |")
+            lines.append("")
+            lines.append("> 🧭 **Agent 导航指令**：")
+            top_symbol = malignant[0]["label"]
+            lines.append(f"> 对 Coding Agent 说：“*帮我分析并解耦 `{top_symbol}`*” 或 “*为 `{top_symbol}` 提供重构处方*”，Agent 将结合拓扑依赖现场为您开具分步重构步骤与代码。")
+            lines.append("")
+
+        if benign:
+            lines.append("### 🟢 健全基础设施 (良性工具放行)")
+            for b in benign[:4]:
+                lbl = b["label"]
+                sfile = Path(b["source_file"]).name if b.get("source_file") else "unknown"
+                lines.append(f"- **`{lbl}`** (`{sfile}`, 连接度 {b['degree']}) — 职责单一或纯基础设施，安全放行无需手术。")
+    except Exception:
+        # Fail-safe: 异常静默，绝不阻断正常报告生成
+        pass
+
+
 def generate(
     G: nx.Graph,
     communities: dict[int, list[str]],
@@ -379,5 +422,8 @@ def generate(
                 if q.get("question"):
                     lines.append(f"- **{q['question']}**")
                     lines.append(f"  _{q['why']}_")
+
+    # --- Jev 架构健康雷达与重构导航 ---
+    _architecture_health_radar_section(lines, G)
 
     return "\n".join(lines)

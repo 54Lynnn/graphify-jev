@@ -90,6 +90,36 @@ class TestJevArchitectureNavigator(unittest.TestCase):
         self.assertIn("verify_token", callee_labels)
         self.assertIn("execute_payment", callee_labels)
 
+    @patch("graphify.jev_audit.is_available", return_value=True)
+    @patch("graphify.jev_audit._call_jev_choice")
+    def test_report_includes_health_radar(self, mock_choice, mock_avail):
+        # 验证 generate_report 是否成功挂载 Jev 架构健康雷达
+        def side_effect(state_desc, instructions, criteria):
+            if "代码符号：OrderGodManager" in state_desc:
+                return ("MALIGNANT_GOD_CLASS", 0.95, {"MALIGNANT_GOD_CLASS": 0.95, "BENIGN_INFRA": 0.05})
+            return ("BENIGN_INFRA", 0.92, {"BENIGN_INFRA": 0.92, "MALIGNANT_GOD_CLASS": 0.08})
+        mock_choice.side_effect = side_effect
+
+        from graphify.report import generate
+        communities = {1: ["node_order_god", "node_api"], 2: ["node_get_db"]}
+        report_md = generate(
+            self.G,
+            communities=communities,
+            cohesion_scores={},
+            community_labels={1: "Order", 2: "Database"},
+            god_node_list=[],
+            surprise_list=[],
+            detection_result={"total_files": 2, "total_words": 100},
+            token_cost={},
+            root="test_project",
+        )
+        
+        self.assertIn("Jev 架构健康雷达", report_md)
+        self.assertIn("OrderGodManager", report_md)
+        self.assertIn("健全基础设施", report_md)
+        self.assertIn("get_db", report_md)
+        self.assertIn("Agent 导航指令", report_md)
+
 
 if __name__ == "__main__":
     unittest.main()
