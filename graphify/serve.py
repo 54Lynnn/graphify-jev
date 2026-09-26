@@ -1389,7 +1389,17 @@ def _query_graph_text(
         best_seed_by_term = {
             t: nid for t, nid in best_seed_by_term.items() if t not in intent
         }
-    start_nodes = _pick_seeds(qs.ranked, G=G, best_seed_by_term=best_seed_by_term)
+    
+    # Optional JEV two-stage semantic seed navigation (fail-open)
+    jev_seeds = None
+    try:
+        from graphify.jev_bridge import pick_seeds_with_jev, is_available as _jev_available
+        if _jev_available():
+            jev_seeds = pick_seeds_with_jev(G, question)
+    except Exception:
+        jev_seeds = None
+
+    start_nodes = jev_seeds if jev_seeds else _pick_seeds(qs.ranked, G=G, best_seed_by_term=best_seed_by_term)
     if not start_nodes:
         return "No matching nodes found."
     resolved_filters, filter_source = _resolve_context_filters(question, context_filters)
