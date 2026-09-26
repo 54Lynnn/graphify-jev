@@ -152,3 +152,195 @@ def analyze_blast_radius(G: nx.Graph, symbol_query: str, max_depth: int = 2, act
         "severity": "HIGH_RISK" if total_affected >= 5 else ("MODERATE_RISK" if total_affected >= 2 else "LOW_RISK"),
         "chains": formatted_chains
     }
+
+
+def scan_project_architecture_health(G: nx.Graph, top_n: int = 10) -> Dict[str, Any]:
+    """
+    全库核心中枢健康雷达扫描：
+    按度数提取全库 Top-N 枢纽节点，由 Jev 连续决策引擎快速进行良恶性体检。
+    支持 Fail-safe 离线启发式降级。
+    """
+    if len(G) == 0:
+        return {
+            "mode": "empty_graph",
+            "total_scanned": 0,
+            "malignant_nodes": [],
+            "benign_nodes": [],
+            "summary": "图谱为空"
+        }
+
+    # 1. 筛选候选枢纽节点：优先保留有明确源码归属的节点
+    valid_nodes = [n for n in G.nodes() if G.nodes[n].get("source_file")]
+    if not valid_nodes:
+        valid_nodes = list(G.nodes())
+
+    # 按度数降序排序
+    sorted_nodes = sorted(valid_nodes, key=lambda n: G.degree(n), reverse=True)
+    candidate_nodes = sorted_nodes[:top_n]
+
+    # 2. 检查 Jev 是否可用，不可用时启用 Fail-safe 启发式降级
+    if not is_available():
+        malignant_list = []
+        benign_list = []
+        for nid in candidate_nodes:
+            ndata = G.nodes[nid]
+            deg = G.degree(nid)
+            lbl = ndata.get("label", nid)
+            sfile = ndata.get("source_file", "")
+            in_deg = G.in_degree(nid) if G.is_directed() else deg
+            out_deg = G.out_degree(nid) if G.is_directed() else deg
+            
+            # 纯拓扑启发式：入度高且出度高（既当数据又当分发中心）倾向于高危
+            is_mal = (deg >= 5 and in_deg >= 2 and out_deg >= 2)
+            item = {
+                "node_id": nid,
+                "label": lbl,
+                "source_file": sfile,
+                "degree": deg,
+                "in_degree": in_deg,
+                "out_degree": out_deg,
+                "is_malignant": is_mal,
+                "diagnosis": "HEURISTIC_NEEDS_REVIEW" if is_mal else "HEURISTIC_BENIGN",
+                "explanation": "拓扑出入度均较高，可能承担过多样务职责" if is_mal else "度数处于合理范围或以单向依赖为主",
+                "actionable_prompt": f"分析并解耦节点 {lbl}"
+            }
+            if is_mal:
+                malignant_list.append(item)
+            else:
+                benign_list.append(item)
+
+        return {
+            "mode": "failsafe_heuristic",
+            "total_scanned": len(candidate_nodes),
+            "failsafe_note": "未配置 JEV API Key，已切换为拓扑启发式分析",
+            "malignant_nodes": malignant_list,
+            "benign_nodes": benign_list,
+            "summary": f"体检完成（启发式）：共扫描 {len(candidate_nodes)} 个中枢节点，发现 {len(malignant_list)} 个疑似耦合病灶"
+        }
+
+    # 3. Jev 决策可用时，逐个进行精确定性体检
+    malignant_list = []
+    benign_list = []
+
+    for nid in candidate_nodes:
+        diag = audit_god_node_health(G, nid)
+        ndata = G.nodes[nid]
+        lbl = diag.get("node", ndata.get("label", nid))
+        sfile = diag.get("location", ndata.get("source_file", ""))
+        deg = diag.get("degree", G.degree(nid))
+        in_deg = G.in_degree(nid) if G.is_directed() else deg
+        out_deg = G.out_degree(nid) if G.is_directed() else deg
+        is_mal = diag.get("is_malignant", False)
+
+        item = {
+            "node_id": nid,
+            "label": lbl,
+            "source_file": sfile,
+            "degree": deg,
+            "in_degree": in_deg,
+            "out_degree": out_deg,
+            "is_malignant": is_mal,
+            "diagnosis": diag.get("diagnosis", "UNKNOWN"),
+            "confidence": diag.get("confidence", 0.0),
+            "explanation": diag.get("explanation", ""),
+            "actionable_prompt": f"请为我生成 {lbl} 的重构解耦方案"
+        }
+        if is_mal:
+            malignant_list.append(item)
+        else:
+            benign_list.append(item)
+
+    return {
+        "mode": "jev_system_one",
+        "total_scanned": len(candidate_nodes),
+        "malignant_nodes": malignant_list,
+        "benign_nodes": benign_list,
+        "summary": f"体检完成（Jev 深度诊断）：共扫描 {len(candidate_nodes)} 个中枢节点，确诊 {len(malignant_list)} 个恶性上帝病灶，放行 {len(benign_list)} 个良性基础设施"
+    }
+
+
+def get_refactor_context(G: nx.Graph, symbol_query: str) -> Dict[str, Any]:
+    """
+    为上层 Agent 提取指定病灶节点的精准拓扑依赖切片，
+    供 Agent 直接生成架构解耦与重构处方。
+    """
+    matched_nid = None
+    # 优先全字精确匹配，再进行不区分大小写匹配
+    for nid in G.nodes():
+        lbl = G.nodes[nid].get("label", "")
+        if symbol_query == lbl or symbol_query == nid:
+            matched_nid = nid
+            break
+
+    if not matched_nid:
+        for nid in G.nodes():
+            lbl = G.nodes[nid].get("label", "")
+            if symbol_query.lower() in lbl.lower():
+                matched_nid = nid
+                break
+
+    if not matched_nid or matched_nid not in G:
+        return {"error": f"在图谱中未找到与【{symbol_query}】匹配的代码符号"}
+
+    ndata = G.nodes[matched_nid]
+    target_label = ndata.get("label", matched_nid)
+    target_file = ndata.get("source_file", "")
+    docstring = ndata.get("docstring", "")
+    community = ndata.get("community", 0)
+
+    # 提取上游调用方 (Callers / Predecessors)
+    callers = []
+    if G.is_directed():
+        for p in G.predecessors(matched_nid):
+            callers.append({
+                "node_id": p,
+                "label": G.nodes[p].get("label", p),
+                "source_file": G.nodes[p].get("source_file", ""),
+                "community": G.nodes[p].get("community", 0)
+            })
+    else:
+        for n in G.neighbors(matched_nid):
+            callers.append({
+                "node_id": n,
+                "label": G.nodes[n].get("label", n),
+                "source_file": G.nodes[n].get("source_file", ""),
+                "community": G.nodes[n].get("community", 0)
+            })
+
+    # 提取下游依赖方 (Callees / Successors)
+    callees = []
+    if G.is_directed():
+        for s in G.successors(matched_nid):
+            callees.append({
+                "node_id": s,
+                "label": G.nodes[s].get("label", s),
+                "source_file": G.nodes[s].get("source_file", ""),
+                "community": G.nodes[s].get("community", 0)
+            })
+
+    # 统计涉及跨越的模块与文件跨度
+    related_files = set()
+    if target_file:
+        related_files.add(target_file)
+    for c in callers:
+        if c.get("source_file"):
+            related_files.add(c["source_file"])
+    for c in callees:
+        if c.get("source_file"):
+            related_files.add(c["source_file"])
+
+    return {
+        "target_node_id": matched_nid,
+        "target_label": target_label,
+        "target_file": target_file,
+        "docstring": docstring,
+        "community": community,
+        "degree": G.degree(matched_nid),
+        "callers_count": len(callers),
+        "callees_count": len(callees),
+        "callers": callers,
+        "callees": callees,
+        "spanning_files_count": len(related_files),
+        "spanning_files": sorted(list(related_files))
+    }
+
