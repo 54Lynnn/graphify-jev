@@ -68,9 +68,11 @@ git clone https://github.com/54Lynnn/graphify-jev.git
 cd graphify-jev
 pip install -e .
 
-# 配置 Jev 连续决策引擎（兼容 TypeSafe 官方与国内 OpenCode Zen）
-export TYPESAFE_API_KEY="your-api-key"
-# 或写入当前工程目录的 .env 文件
+# 配置 Jev 连续决策引擎（国内推荐 OpenCode Zen 免费版，亦兼容 TypeSafe 官方）
+# 在当前工程目录的 .env 文件中添加（或直接 export）：
+OPENCODE_API_KEY="sk-..."
+OPENCODE_API_URL="https://opencode.ai/zen/v1/systemone"
+OPENCODE_MODEL="jev-1.13-free"
 ```
 
 ### 2. 注册为全平台 Coding Agent Skill
