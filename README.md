@@ -43,18 +43,20 @@
 
 ---
 
-## 🩺 实战案例：Graphify-Jev 如何诊断并重构自身的 400 行上帝函数
+## 🩺 工业级实战案例：真实业务项目中的两大战役
 
-> **真正的工业级产品敢于吃自己的狗粮 (Dogfooding)。**
+> **真正的工业级产品敢于吃自己的狗粮 (Dogfooding)，并在真实复杂业务中经受检验。**
 
-在扫描自身仓库（546 个源码文件、14,596 个节点、31,470 条调用边）时，Jev 架构健康雷达立即确诊了自身全库第一大恶性病灶：
-- **确诊病灶**：`build_from_json()`（位于 `graphify/build.py`，度数 246，牵连 53 个文件）；
-- **病因分析**：单一函数堆砌了 400 余行代码，同时承担了输入预检、Schema 容错、AST 与 LLM 幽灵孪生节点合并（Pass 1/2/2b）以及 NetworkX 图组装四重异构职责；
-- **解耦重构**：我们按照给出的处方，引入**管道-过滤器模式**，新建 `graphify/build_pipeline.py` 将其拆解为三大高内聚处理器：
-  - `ExtractionPreflight`：输入防御与规范化；
-  - `GhostNodeResolver`：幽灵节点消解器；
-  - `GraphAssembler`：纯净拓扑装配器。
-- **成效验收**：`build.py` 内部瘦身为 25 行极简门面（Facade），**94 个现有测试用例 100% 一次性全绿通过**，对外 227 处调用零破坏兼容！
+### 战役一：全栈商业客户端 `fullstack-project` (Go + Python + JS，2400+ 节点) 深度重构
+- **扫描规模**：193 个源码文件，2,467 个实体节点，8,204 条关系边，94 个功能社群；
+- **战果一（前端巨石瓦解）**：Jev 架构雷达一眼确诊前端恶性病灶 `app.js`（连接度 68，2542 行单体脚本），指导开发者拆分为 5 个清晰领域子模块，22 项契约测试 100% 绿灯；
+- **战果二（后端隐蔽解耦）**：扩大扫描至 Top 30 核心中枢，Jev 敏锐捕捉到 `handlers.go`（连接度 62）隐蔽强耦合了直连转发与 300 行流式状态机，指导开发者瘦身 62% 抽离 `stream.go`；
+- **最终成果**：全库 Top 30 恶性上帝病灶彻底清零（0 Malignant Gods），所有测试无缝通过！详细复盘见 [docs/DOGFOOD-REPORT-FULLSTACK-PROJECT.md](docs/DOGFOOD-REPORT-FULLSTACK-PROJECT.md)。
+
+### 战役二：Graphify-Jev 自身 400 行怪兽函数的治愈
+- **确诊病灶**：自身核心 `build_from_json()`（度数 246，牵连 53 个文件）；
+- **解耦重构**：引入**管道-过滤器模式**，新建 `graphify/build_pipeline.py` 拆解为 `ExtractionPreflight`、`GhostNodeResolver` 与 `GraphAssembler` 三大处理器；
+- **成效验收**：核心函数瘦身为 25 行极简门面（Facade），**96 个测试用例 100% 一次性全绿通过**，对外 227 处调用零破坏兼容！
 
 ---
 

@@ -1458,6 +1458,84 @@ def dispatch_command(cmd: str) -> None:
             print("God nodes (most connected):")
             for rank, n in enumerate(gods, 1):
                 print(f"  {rank}. {_sanitize_label(str(n['label']))} - {n['degree']} edges")
+    elif cmd in ("audit", "health", "doctor"):
+        # 一级原生指令：调用 Jev 架构健康雷达扫描全库中枢，直出恶性上帝病灶与良性工具
+        from graphify.affected import load_graph
+        from graphify.jev_audit import scan_project_architecture_health
+        graph_path = _default_graph_path()
+        top_n = 10
+        as_json = "--json" in sys.argv
+        args = sys.argv[2:]
+        i = 0
+        while i < len(args):
+            a = args[i]
+            if a == "--top" and i + 1 < len(args):
+                try:
+                    top_n = int(args[i + 1])
+                except ValueError:
+                    top_n = 10
+                i += 2
+            elif a.startswith("--top="):
+                try:
+                    top_n = int(a.split("=", 1)[1])
+                except ValueError:
+                    top_n = 10
+                i += 1
+            elif a == "--graph" and i + 1 < len(args):
+                graph_path = args[i + 1]; i += 2
+            elif a.startswith("--graph="):
+                graph_path = a.split("=", 1)[1]; i += 1
+            elif not a.startswith("-"):
+                # 如果传入的是项目目录路径，如 graphify audit /path/to/project
+                p_cand = Path(a).resolve()
+                if p_cand.is_dir():
+                    graph_path = str(p_cand / _GRAPHIFY_OUT / "graph.json")
+                elif p_cand.is_file() and p_cand.suffix == ".json":
+                    graph_path = str(p_cand)
+                i += 1
+            else:
+                i += 1
+
+        gp = Path(graph_path).resolve()
+        if not gp.exists():
+            print(f"error: graph file not found: {gp}\n提示: 请先运行 'graphify extract <项目路径> --code-only' 生成图谱。", file=sys.stderr)
+            sys.exit(1)
+
+        try:
+            G = load_graph(gp)
+        except Exception as exc:
+            print(f"error: could not load graph: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+        report = scan_project_architecture_health(G, top_n=top_n)
+        if as_json:
+            print(json.dumps(report, indent=2, ensure_ascii=False))
+        else:
+            print(f"\n=======================================================")
+            print(f" 🩺 Graphify-Jev 架构健康雷达 (Architecture Radar)")
+            print(f"=======================================================")
+            mode_desc = "Jev 连续决策引擎 (150ms 连续直出)" if report.get("mode") == "jev_system_one" else "纯拓扑启发式 (未配置Key降级模式)"
+            print(f"引擎状态: {mode_desc}")
+            print(f"已扫描核心中枢: {report.get('total_scanned', 0)} 个\n")
+
+            malignant = report.get("malignant_nodes", [])
+            benign = report.get("benign_nodes", [])
+
+            if malignant:
+                print(f"🚨 【恶性高危上帝节点】(需优先解耦开刀): {len(malignant)} 个")
+                for m in malignant:
+                    deg_str = f"{m['degree']}度 ({m.get('out_degree', 0)}出 / {m.get('in_degree', 0)}入)"
+                    print(f"  • \033[1;31m{m['label']}\033[0m ({m.get('source_file', '-')}) - {deg_str}")
+                    print(f"    风险说明: {m.get('explanation', '-')}")
+                    print(f"    导航开刀指令: \033[1;36m{m.get('actionable_prompt', '-')}\033[0m\n")
+            else:
+                print("🎉 【恭喜】未检测到恶性上帝类，架构处于健康状态！\n")
+
+            if benign:
+                print(f"🟢 【健全基础设施】(良性工具安全放行): {len(benign)} 个")
+                for b in benign[:5]:
+                    print(f"  ✓ {b['label']} ({b.get('source_file', '-')}) - 连接度 {b['degree']}")
+            print(f"=======================================================\n")
     elif cmd == "save-result":
         # graphify save-result --question Q --answer A [--type T] [--nodes N1 N2 ...]
         #                      [--outcome useful|dead_end|corrected] [--correction TEXT]
@@ -3240,15 +3318,20 @@ def dispatch_command(cmd: str) -> None:
             )
             sys.exit(1)
 
-        has_path = True
-        if sys.argv[2].startswith("-"):
-            has_path = False
-            target = Path(".").resolve()
-        else:
-            target = Path(sys.argv[2]).resolve()
-            if not target.exists():
-                print(f"error: path not found: {target}", file=sys.stderr)
-                sys.exit(1)
+        # 智能参数解析：位置无关支持，允许 flags 放在路径前面或后面
+        target_path_str: str | None = None
+        args: list[str] = []
+        for raw_a in sys.argv[2:]:
+            if not raw_a.startswith("-") and target_path_str is None:
+                target_path_str = raw_a
+            else:
+                args.append(raw_a)
+
+        has_path = bool(target_path_str)
+        target = Path(target_path_str or ".").resolve()
+        if has_path and not target.exists():
+            print(f"error: path not found: {target}", file=sys.stderr)
+            sys.exit(1)
 
         backend: str | None = None
         model: str | None = None
@@ -3307,7 +3390,6 @@ def dispatch_command(cmd: str) -> None:
                 sys.exit(2)
             return v
 
-        args = sys.argv[3:] if has_path else sys.argv[2:]
         i = 0
         while i < len(args):
             a = args[i]

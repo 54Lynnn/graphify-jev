@@ -709,9 +709,11 @@ Before traversal, expand the question against the graph's own vocabulary so a wo
 ### 执行流程：
 
 1. **提取拓扑依赖切片**：
-   在后台通过 Python 脚本加载现有 `graphify-out/graph.json` 并调用 `jev_audit`：
-   - 若用户询问全局坏味道或 `/graphify navigate`：调用 `scan_project_architecture_health(G, top_n=6)` 获取体检结果；
-   - 若用户指定特定符号或要拆分某个类：调用 `get_refactor_context(G, symbol)` 获取该病灶的上游调用者（Callers）、下游依赖（Callees）及跨模块文件跨度。
+   在后台通过运行原生命令快速获取结构化诊断（无需编写临时 Python 脚本）：
+   - 若用户询问全局架构坏味道或 `/graphify-jev navigate`：
+     直接执行后台驱动命令：`graphify audit . --json`（或 `graphify audit <path> --json`）；
+   - 若用户指定特定符号或要拆分某个类：
+     在 Python 内部调用 `get_refactor_context(G, symbol)` 获取该病灶的上游调用者（Callers）、下游依赖（Callees）及跨模块文件跨度。
 
 2. **Agent 专家现场开具重构处方**：
    Agent 结合提取到的结构化拓扑切片与本地真实源码，为开发者输出结构化重构方案：

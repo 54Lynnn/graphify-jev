@@ -37,11 +37,16 @@ def _get_trusted_project_root() -> str | None:
 
 
 def _load_env_file() -> None:
-    """安全加载 .env 文件：仅限受信任的当前工作目录或显式项目根目录"""
+    """安全加载 .env 文件：优先查找项目目录，若无则回退全局 ~/.graphify/.env 目录"""
     try:
         from pathlib import Path
         trusted_root = _get_trusted_project_root()
         search_dirs = [Path(trusted_root)] if trusted_root else [Path.cwd()]
+        # 增加全局回退目录 ~/.graphify
+        global_dir = Path.home() / ".graphify"
+        if global_dir.is_dir() and global_dir not in search_dirs:
+            search_dirs.append(global_dir)
+
         for base in search_dirs:
             env_file = base / ".env"
             if env_file.is_file():
@@ -54,7 +59,9 @@ def _load_env_file() -> None:
                     val = val.strip().strip("\"'")
                     if key and key not in os.environ:
                         os.environ[key] = val
-                break
+                # 如果已经读取到了 API Key，则不再遍历后续回退目录
+                if os.environ.get("OPENCODE_API_KEY") or os.environ.get("TYPESAFE_API_KEY"):
+                    break
     except Exception:
         pass
 
