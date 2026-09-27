@@ -44,3 +44,7 @@ paper/
 
 # macOS Finder metadata
 .DS_Store
+
+# Git worktrees
+.worktrees/
+worktrees/
