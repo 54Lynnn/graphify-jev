@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Graphify-Jev 架构解耦前/后全量星云画卷卷帘对比中心</title>
-    <!-- 引入 ECharts 5 现代拓扑图表库 -->
+    <title>Graphify-Jev 架构解耦前/后纯正 ComfyUI 激光卷帘对比中心</title>
+    <!-- 引入 ECharts 5 -->
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
     <style>
         :root {
@@ -51,60 +51,125 @@
         .score-val-old { color: #f87171; text-decoration: line-through; }
         .score-val-new { color: #34d399; font-weight: 800; }
 
-        /* 卷帘主视口容器 */
+        /* 外部主视口 */
         #viewport-wrapper {
-            flex: 1; position: relative; overflow: hidden; width: 100%; height: 100%;
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+            cursor: grab;
+        }
+        #viewport-wrapper:active {
+            cursor: grabbing;
         }
 
-        /* 底层：Before 改造前画布 (铺底实色背景，140 个全景节点) */
+        /* 统一的摄像机变换舞台 (Unified Camera Stage) */
+        /* 两个画布都画在这个舞台里，缩放平移直接作用在舞台上，在数学上 100% 绝对锁死对齐！ */
+        #camera-stage {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            transform-origin: 0 0;
+            will-change: transform;
+        }
+
+        /* 底层 Before 画布 (铺底实色背景) */
         #layer-before {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: #080c14; z-index: 10;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #080c14;
+            z-index: 10;
         }
 
-        /* 顶层：After 改造后画布 (实色背景，靠 clip-path 物理切除，pointer-events: none 确保滚轮由底层统一感知驱动) */
+        /* 顶层 After 容器 (带实色背景，由 clip-path 物理切除！) */
+        #layer-after-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 20;
+            /* 由 JS 实时根据鼠标位置更新 clip-path: polygon(splitX 0, 100% 0, 100% 100%, splitX 100%) */
+        }
+
         #layer-after {
-            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: #080c14; z-index: 20;
+            width: 100%;
+            height: 100%;
+            background: #080c14;
         }
 
         /* 激光分割线轴 (Laser Divider) */
         #laser-line {
-            position: absolute; top: 0; bottom: 0; width: 2px;
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 2px;
             background: linear-gradient(180deg, #38bdf8, #a855f7, #38bdf8);
             box-shadow: 0 0 16px var(--laser-glow), 0 0 32px rgba(56, 189, 248, 0.7);
-            z-index: 50; pointer-events: none;
+            z-index: 50;
+            pointer-events: none;
         }
         #laser-handle {
-            position: absolute; top: 50%; left: 50%;
+            position: absolute;
+            top: 50%;
+            left: 50%;
             transform: translate(-50%, -50%) rotate(45deg);
-            width: 24px; height: 24px; background: #0f172a;
-            border: 2px solid #38bdf8; box-shadow: 0 0 14px #38bdf8;
+            width: 24px;
+            height: 24px;
+            background: #0f172a;
+            border: 2px solid #38bdf8;
+            box-shadow: 0 0 14px #38bdf8;
         }
 
         .floating-label {
-            position: absolute; top: 20px; padding: 6px 14px; border-radius: 16px;
-            font-size: 12px; font-weight: 700; z-index: 60; pointer-events: none;
+            position: absolute;
+            top: 20px;
+            padding: 6px 14px;
+            border-radius: 16px;
+            font-size: 12px;
+            font-weight: 700;
+            z-index: 60;
+            pointer-events: none;
         }
         #label-before {
-            left: 24px; background: rgba(239, 68, 68, 0.2); border: 1px solid var(--accent-red); color: #fca5a5;
+            left: 24px;
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid var(--accent-red);
+            color: #fca5a5;
         }
         #label-after {
-            right: 24px; background: rgba(16, 185, 129, 0.2); border: 1px solid var(--accent-green); color: #6ee7b7;
+            right: 24px;
+            background: rgba(16, 185, 129, 0.2);
+            border: 1px solid var(--accent-green);
+            color: #6ee7b7;
         }
         #hint-bar {
-            position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
-            background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 5px 16px; border-radius: 20px; font-size: 11px; color: var(--text-muted);
-            z-index: 60; pointer-events: none;
+            position: absolute;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(15, 23, 42, 0.9);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 5px 16px;
+            border-radius: 20px;
+            font-size: 11px;
+            color: var(--text-muted);
+            z-index: 60;
+            pointer-events: none;
         }
     </style>
 </head>
 <body>
     <header>
         <div class="brand">
-            <span class="badge-comfy">COMFYUI SWIPE</span>
-            <div class="title">Graphify-Jev 架构解耦前/后全量星云画卷卷帘对比中心</div>
+            <span class="badge-comfy">COMFYUI UNIFIED CAMERA</span>
+            <div class="title">Graphify-Jev 架构解耦前/后纯正 ComfyUI 激光卷帘对比中心</div>
         </div>
         <div class="scoreboard">
             <div>恶性病灶: <span class="score-val-old">1 个</span> ➔ <span class="score-val-new">0 (清零)</span></div>
@@ -118,17 +183,22 @@
         <div class="floating-label" id="label-before">🔴 改造前 (Before: 居中猩红上帝病灶 + 错综红线纠缠)</div>
         <div class="floating-label" id="label-after">🟢 改造后 (After: 上帝病灶彻底瓦解 ➔ 蓝绿微模块流水线)</div>
 
-        <!-- 底层：改造前 -->
-        <div id="layer-before"></div>
+        <!-- 统一的摄像机变换舞台 -->
+        <div id="camera-stage">
+            <!-- 底层：Before 改造前画布 -->
+            <div id="layer-before"></div>
 
-        <!-- 顶层：改造后 (实色背景，带 140 节点全景星系，由 clip-path 物理切除！) -->
-        <div id="layer-after"></div>
+            <!-- 顶层：After 改造后画布容器 (由 clip-path 物理切除) -->
+            <div id="layer-after-container">
+                <div id="layer-after"></div>
+            </div>
+        </div>
 
         <!-- 激光分割线 -->
         <div id="laser-line"><div id="laser-handle"></div></div>
 
         <div id="hint-bar">
-            ↔ <b>鼠标在屏幕上左右滑动</b> 即刻展开/闭合画卷对比 · <b>全量 140 个中枢节点 + 650+ 条发光连线完整呈现</b>
+            ↔ <b>鼠标在屏幕上左右移动</b> 激光画卷即时对比 · <b>鼠标滚轮缩放 / 按住拖拽平移</b> 双画布 100% 绝对物理镜像锁死！
         </div>
     </div>
 
@@ -147,109 +217,36 @@
 
             const optionBefore = {
                 backgroundColor: '#080c14',
-                tooltip: {
-                    trigger: 'item',
-                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                    borderColor: '#334155',
-                    textStyle: { color: '#f8fafc', fontSize: 12 },
-                    formatter: function(params) {
-                        if (params.dataType === 'edge') return `调用链路: ${params.data.source} → ${params.data.target}`;
-                        return `<b>${params.data.name}</b><br>拓扑连接度: ${params.data.value || params.data.degree} 度`;
-                    }
-                },
                 series: [{
                     type: 'graph',
                     layout: 'none',
                     data: NODES_BEFORE,
                     links: LINKS_BEFORE,
-                    roam: true,
-                    scaleLimit: { min: 0.1, max: 5.0 },
-                    label: {
-                        show: true,
-                        position: 'right',
-                        formatter: '{b}',
-                        color: '#cbd5e1',
-                        fontSize: 10
-                    },
+                    roam: false, // 禁用 ECharts 内部 roam，交由统一 Camera 舞台驱动！
+                    label: { show: true, position: 'right', color: '#fca5a5', fontSize: 10 },
                     edgeSymbol: ['none', 'arrow'],
                     edgeSymbolSize: [0, 6],
-                    lineStyle: { curveness: 0.12 },
-                    emphasis: {
-                        focus: 'adjacency',
-                        lineStyle: { width: 3, color: '#ef4444' }
-                    }
+                    lineStyle: { curveness: 0.12 }
                 }]
             };
 
             const optionAfter = {
-                backgroundColor: '#080c14', // 实色背景防穿透重影！
-                tooltip: {
-                    trigger: 'item',
-                    backgroundColor: 'rgba(15, 23, 42, 0.95)',
-                    borderColor: '#334155',
-                    textStyle: { color: '#f8fafc', fontSize: 12 },
-                    formatter: function(params) {
-                        if (params.dataType === 'edge') return `调用链路: ${params.data.source} → ${params.data.target}`;
-                        return `<b>${params.data.name}</b><br>拓扑连接度: ${params.data.value || params.data.degree} 度`;
-                    }
-                },
+                backgroundColor: '#080c14',
                 series: [{
                     type: 'graph',
                     layout: 'none',
                     data: NODES_AFTER,
                     links: LINKS_AFTER,
-                    roam: true,
-                    scaleLimit: { min: 0.1, max: 5.0 },
-                    label: {
-                        show: true,
-                        position: 'right',
-                        formatter: '{b}',
-                        color: '#cbd5e1',
-                        fontSize: 10
-                    },
+                    roam: false, // 禁用 ECharts 内部 roam，交由统一 Camera 舞台驱动！
+                    label: { show: true, position: 'right', color: '#6ee7b7', fontSize: 10 },
                     edgeSymbol: ['none', 'arrow'],
                     edgeSymbolSize: [0, 6],
-                    lineStyle: { curveness: 0.12 },
-                    emphasis: {
-                        focus: 'adjacency',
-                        lineStyle: { width: 3, color: '#38bdf8' }
-                    }
+                    lineStyle: { curveness: 0.12 }
                 }]
             };
 
             chartBefore.setOption(optionBefore);
             chartAfter.setOption(optionAfter);
-
-            // 视口镜像绝对同步：让滚轮放大缩小、鼠标拖拽完全镜像锁死
-            let isSyncing = false;
-            function syncRoam(sourceChart, targetChart, params) {
-                if (isSyncing) return;
-                isSyncing = true;
-                try {
-                    const action = {
-                        type: 'graphRoam'
-                    };
-                    if (params.zoom !== undefined) {
-                        action.zoom = params.zoom;
-                        action.originX = params.originX;
-                        action.originY = params.originY;
-                    }
-                    if (params.dx !== undefined) {
-                        action.dx = params.dx;
-                        action.dy = params.dy;
-                    }
-                    targetChart.dispatchAction(action);
-                } finally {
-                    isSyncing = false;
-                }
-            }
-
-            chartBefore.on('graphRoam', function(params) {
-                syncRoam(chartBefore, chartAfter, params);
-            });
-            chartAfter.on('graphRoam', function(params) {
-                syncRoam(chartAfter, chartBefore, params);
-            });
 
             window.addEventListener('resize', () => {
                 chartBefore.resize();
@@ -257,32 +254,95 @@
             });
         }
 
-        // 激光卷帘滑动控制器 (ComfyUI Curtain Swipe)
-        function initCurtainSwipe() {
+        // 统一摄像机与激光卷帘控制器 (Unified Camera & ComfyUI Curtain Swipe)
+        function initUnifiedController() {
             const wrapper = document.getElementById('viewport-wrapper');
-            const layerAfter = document.getElementById('layer-after');
+            const stage = document.getElementById('camera-stage');
+            const afterContainer = document.getElementById('layer-after-container');
             const laserLine = document.getElementById('laser-line');
 
-            function updateCurtain(xPercent) {
-                const pct = Math.max(0, Math.min(100, xPercent));
-                // 顶层 After 仅展示右侧区域
-                layerAfter.style.clipPath = `polygon(${pct}% 0, 100% 0, 100% 100%, ${pct}% 100%)`;
-                laserLine.style.left = `${pct}%`;
+            // 摄像机物理状态 (Camera Matrix)
+            let panX = 0;
+            let panY = 0;
+            let scale = 1.0;
+            let isDragging = false;
+            let lastMouseX = 0;
+            let lastMouseY = 0;
+
+            function updateCamera() {
+                stage.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
             }
 
-            wrapper.addEventListener('mousemove', function(e) {
+            // 激光卷帘：根据鼠标在主视口的绝对 X 百分比进行裁剪
+            function updateCurtain(clientX) {
                 const rect = wrapper.getBoundingClientRect();
-                const x = e.clientX - rect.left;
-                updateCurtain((x / rect.width) * 100);
+                const xInWrapper = clientX - rect.left;
+                const pct = Math.max(0, Math.min(100, (xInWrapper / rect.width) * 100));
+
+                // 激光线位置
+                laserLine.style.left = `${pct}%`;
+
+                // 重点：由于 afterContainer 位于进行了 transform 的 stage 内部，
+                // 我们直接将 clip-path 作用在视口坐标系上，使激光线与切片完全无缝吻合！
+                // 将视口 xInWrapper 反向映射到 stage 内部坐标：
+                const stageX = (xInWrapper - panX) / scale;
+                afterContainer.style.clipPath = `polygon(${stageX}px -10000px, 20000px -10000px, 20000px 20000px, ${stageX}px 20000px)`;
+            }
+
+            // 1. 鼠标移动：实时滑动激光卷帘
+            wrapper.addEventListener('mousemove', function(e) {
+                if (isDragging) {
+                    const dx = e.clientX - lastMouseX;
+                    const dy = e.clientY - lastMouseY;
+                    panX += dx;
+                    panY += dy;
+                    lastMouseX = e.clientX;
+                    lastMouseY = e.clientY;
+                    updateCamera();
+                }
+                updateCurtain(e.clientX);
             });
 
-            // 初始应用 50% 分割
-            updateCurtain(50);
+            // 2. 鼠标拖拽平移 (Drag Pan)
+            wrapper.addEventListener('mousedown', function(e) {
+                if (e.button === 0 || e.button === 1 || e.button === 2) {
+                    isDragging = true;
+                    lastMouseX = e.clientX;
+                    lastMouseY = e.clientY;
+                }
+            });
+            window.addEventListener('mouseup', function() {
+                isDragging = false;
+            });
+            wrapper.addEventListener('contextmenu', e => e.preventDefault());
+
+            // 3. 鼠标滚轮统一缩放 (Unified Wheel Zoom - 以当前鼠标为绝对锚点缩放！)
+            wrapper.addEventListener('wheel', function(e) {
+                e.preventDefault();
+                const rect = wrapper.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+
+                const zoomFactor = e.deltaY < 0 ? 1.12 : 0.88;
+                const newScale = Math.max(0.15, Math.min(8.0, scale * zoomFactor));
+
+                // 保持鼠标下的世界坐标绝对不动 (Anchor Zoom)
+                panX = mouseX - (mouseX - panX) * (newScale / scale);
+                panY = mouseY - (mouseY - panY) * (newScale / scale);
+                scale = newScale;
+
+                updateCamera();
+                updateCurtain(e.clientX);
+            }, { passive: false });
+
+            // 初始应用 50% 居中分割
+            const initRect = wrapper.getBoundingClientRect();
+            updateCurtain(initRect.left + initRect.width * 0.5);
         }
 
         window.onload = function() {
             initCharts();
-            initCurtainSwipe();
+            initUnifiedController();
         };
     </script>
 </body>
