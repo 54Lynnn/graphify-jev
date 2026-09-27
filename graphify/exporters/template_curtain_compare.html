@@ -191,6 +191,7 @@
                 },
                 series: [{
                     ...commonSeries,
+                    id: 'graph_main',
                     data: NODES_BEFORE,
                     links: LINKS_BEFORE,
                     label: { show: true, position: 'right', color: '#fca5a5', fontSize: 10 }
@@ -212,15 +213,20 @@
                 },
                 series: [{
                     ...commonSeries,
+                    id: 'graph_main',
                     data: NODES_AFTER,
                     links: LINKS_AFTER,
                     label: { show: true, position: 'right', color: '#6ee7b7', fontSize: 10 }
                 }]
             });
 
-            // 绝对单向同频驱动：底层作为主导，顶层 100% 同帧镜像跟随
+            // 绝对单向同频驱动：底层作为主导，显式指定 seriesIndex: 0 驱动顶层 100% 绝对同频移动！
             chartBefore.on('graphRoam', function (params) {
-                const action = { type: 'graphRoam' };
+                const action = {
+                    type: 'graphRoam',
+                    seriesIndex: 0,
+                    seriesId: 'graph_main'
+                };
                 if (params.dx !== undefined) {
                     action.dx = params.dx;
                     action.dy = params.dy;
