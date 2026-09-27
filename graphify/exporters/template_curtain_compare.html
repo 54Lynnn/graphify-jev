@@ -3,20 +3,30 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Graphify-Jev 架构解耦前/后纯正 ComfyUI 激光卷帘对比中心 (超清 Canvas 引擎)</title>
+    <title>Graphify-Jev · 架构解耦激光卷帘对比中心 (Canvas 60FPS)</title>
     <style>
         :root {
             --bg-color: #080c14;
-            --panel-bg: rgba(15, 23, 42, 0.94);
-            --border-color: #1e293b;
+            --panel-bg: rgba(13, 17, 23, 0.75);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --border-subtle: rgba(255, 255, 255, 0.05);
             --accent-cyan: #38bdf8;
             --accent-red: #ef4444;
             --accent-green: #34d399;
-            --laser-glow: #38bdf8;
             --text-main: #f8fafc;
-            --text-muted: #94a3b8;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --font-sans: -apple-system, BlinkMacSystemFont, "Geist", "Inter", "SF Pro Text", -apple-system, "Segoe UI", Roboto, sans-serif;
+            --font-mono: "Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
         }
-        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: var(--font-sans);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
         body {
             background: var(--bg-color);
             color: var(--text-main);
@@ -27,27 +37,132 @@
             user-select: none;
         }
         header {
-            height: 60px;
+            height: 52px;
             background: var(--panel-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
             border-bottom: 1px solid var(--border-color);
             display: flex;
             align-items: center;
             justify-content: space-between;
-            padding: 0 24px;
+            padding: 0 20px;
             z-index: 100;
         }
-        .brand { display: flex; align-items: center; gap: 10px; }
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
         .badge-comfy {
-            background: linear-gradient(135deg, #38bdf8, #6366f1);
-            color: #fff; font-size: 11px; font-weight: 800; padding: 3px 8px; border-radius: 4px;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.09);
+            border-radius: 6px;
+            padding: 3px 8px;
+            font-family: var(--font-mono);
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            letter-spacing: 0.02em;
         }
-        .title { font-size: 16px; font-weight: 700; }
+        .badge-comfy .pulse-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #34d399;
+            box-shadow: 0 0 6px rgba(52, 211, 153, 0.6);
+        }
+        .title {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+        }
+        .title-brand {
+            font-weight: 600;
+            color: #f8fafc;
+            letter-spacing: -0.01em;
+        }
+        .title-sep {
+            color: #475569;
+            font-weight: 400;
+        }
+        .title-sub {
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
         .scoreboard {
-            display: flex; align-items: center; gap: 16px; background: rgba(30, 41, 59, 0.7);
-            border: 1px solid rgba(255, 255, 255, 0.08); padding: 5px 16px; border-radius: 20px; font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
-        .score-val-old { color: #f87171; text-decoration: line-through; }
-        .score-val-new { color: #34d399; font-weight: 800; }
+        .metric-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 4px 10px;
+            font-size: 12px;
+            transition: border-color 0.15s ease;
+        }
+        .metric-pill:hover {
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+        .metric-dot {
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+        .dot-emerald {
+            background: #34d399;
+            box-shadow: 0 0 5px rgba(52, 211, 153, 0.6);
+        }
+        .dot-cyan {
+            background: #38bdf8;
+            box-shadow: 0 0 5px rgba(56, 189, 248, 0.6);
+        }
+        .metric-label {
+            color: var(--text-muted);
+            font-size: 11px;
+            font-weight: 500;
+            letter-spacing: 0.02em;
+        }
+        .metric-val {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            font-family: var(--font-mono);
+            font-size: 12px;
+        }
+        .score-val-old {
+            color: var(--text-muted);
+            text-decoration: line-through;
+            opacity: 0.8;
+            font-weight: 400;
+        }
+        .score-arrow {
+            color: #475569;
+            font-size: 10px;
+        }
+        .score-val-new {
+            color: #34d399;
+            font-weight: 600;
+        }
+        .metric-badge-rating {
+            background: rgba(52, 211, 153, 0.1);
+            border: 1px solid rgba(52, 211, 153, 0.25);
+            color: #34d399;
+            font-family: var(--font-mono);
+            font-weight: 600;
+            font-size: 11px;
+            padding: 1px 6px;
+            border-radius: 4px;
+        }
 
         #viewport-wrapper {
             flex: 1;
@@ -56,6 +171,7 @@
             width: 100%;
             height: 100%;
             cursor: grab;
+            background: radial-gradient(circle at 50% 50%, #0d1527 0%, #060911 100%);
         }
         #viewport-wrapper.dragging {
             cursor: grabbing;
@@ -63,70 +179,230 @@
 
         #main-canvas {
             position: absolute;
-            top: 0; left: 0; width: 100%; height: 100%;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
             display: block;
         }
 
         .floating-label {
-            position: absolute; top: 20px; padding: 6px 14px; border-radius: 16px;
-            font-size: 12px; font-weight: 700; z-index: 60; pointer-events: none;
+            position: absolute;
+            top: 16px;
+            z-index: 60;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            padding: 8px 14px;
+            border-radius: 8px;
+            background: rgba(10, 14, 23, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
         }
         #label-before {
-            left: 24px; background: rgba(239, 68, 68, 0.2); border: 1px solid var(--accent-red); color: #fca5a5;
+            left: 16px;
         }
         #label-after {
-            right: 24px; background: rgba(16, 185, 129, 0.2); border: 1px solid var(--accent-green); color: #6ee7b7;
+            right: 16px;
+            align-items: flex-end;
         }
+        .label-head {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .tag-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+        }
+        .dot-red {
+            background: #f87171;
+            box-shadow: 0 0 6px rgba(248, 113, 113, 0.6);
+        }
+        .dot-green {
+            background: #34d399;
+            box-shadow: 0 0 6px rgba(52, 211, 153, 0.6);
+        }
+        .label-title {
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            font-family: var(--font-mono);
+            text-transform: uppercase;
+        }
+        #label-before .label-title { color: #fca5a5; }
+        #label-after .label-title { color: #6ee7b7; }
+        .label-desc {
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-weight: 400;
+        }
+
         #lock-indicator {
-            position: absolute; top: 75px; left: 50%; transform: translateX(-50%);
-            background: rgba(15, 23, 42, 0.92); border: 1px solid #38bdf8; padding: 5px 16px;
-            border-radius: 20px; font-size: 12px; font-weight: 600; color: #38bdf8; z-index: 70;
-            pointer-events: none; transition: all 0.2s;
+            position: absolute;
+            top: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(10, 14, 23, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            padding: 0 12px;
+            height: 28px;
+            display: inline-flex;
+            align-items: center;
+            gap: 7px;
+            border-radius: 14px;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            z-index: 70;
+            pointer-events: none;
+            transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+        }
+        #lock-indicator .indicator-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--accent-cyan);
+            box-shadow: 0 0 6px rgba(56, 189, 248, 0.6);
+            transition: all 0.2s ease;
         }
         #lock-indicator.locked {
-            border-color: #fbbf24; color: #fbbf24; box-shadow: 0 0 15px rgba(251, 191, 36, 0.35);
+            border-color: rgba(245, 158, 11, 0.4);
+            background: rgba(20, 16, 10, 0.85);
+            color: #fbbf24;
+            box-shadow: 0 4px 18px rgba(245, 158, 11, 0.18);
         }
+        #lock-indicator.locked .indicator-dot {
+            background: #fbbf24;
+            box-shadow: 0 0 8px rgba(251, 191, 36, 0.8);
+        }
+
         #hint-bar {
-            position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
-            background: rgba(15, 23, 42, 0.9); border: 1px solid rgba(255, 255, 255, 0.1);
-            padding: 5px 16px; border-radius: 20px; font-size: 11px; color: var(--text-muted);
-            z-index: 60; pointer-events: none;
+            position: absolute;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(10, 14, 23, 0.75);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-color);
+            padding: 4px 14px;
+            border-radius: 20px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            z-index: 60;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        }
+        #hint-bar kbd {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 4px;
+            padding: 1px 5px;
+            font-family: var(--font-mono);
+            font-size: 10px;
+            color: #e2e8f0;
+        }
+        .hint-sep {
+            color: #475569;
+            font-size: 10px;
         }
 
         #node-tooltip {
             position: absolute;
             display: none;
-            background: rgba(15, 23, 42, 0.96);
-            border: 1px solid #38bdf8;
-            padding: 8px 14px;
+            background: rgba(9, 13, 22, 0.92);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            padding: 10px 14px;
             border-radius: 8px;
             font-size: 12px;
-            color: #fff;
+            color: #f8fafc;
             pointer-events: none;
             z-index: 120;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.05);
             line-height: 1.5;
+            min-width: 170px;
         }
     </style>
 </head>
 <body>
     <header>
         <div class="brand">
-            <span class="badge-comfy">SUPERIOR CANVAS 60FPS</span>
-            <div class="title">Graphify-Jev 架构解耦前/后纯正 ComfyUI 激光卷帘对比中心</div>
+            <span class="badge-comfy"><span class="pulse-dot"></span>60 FPS · CANVAS</span>
+            <div class="title">
+                <span class="title-brand">Graphify-Jev</span>
+                <span class="title-sep">/</span>
+                <span class="title-sub">架构解耦激光卷帘对比中心</span>
+            </div>
         </div>
         <div class="scoreboard">
-            <div>恶性病灶: <span class="score-val-old">1 个</span> ➔ <span class="score-val-new">0 (清零)</span></div>
-            <div>最高连接度: <span class="score-val-old">246 度</span> ➔ <span class="score-val-new">35 度</span></div>
-            <div>解耦度提升: <span class="score-val-new">85.7%</span></div>
-            <div>架构评级: <span class="score-val-new">A+ (极致健康)</span></div>
+            <div class="metric-pill">
+                <span class="metric-dot dot-emerald"></span>
+                <span class="metric-label">恶性病灶</span>
+                <div class="metric-val">
+                    <span class="score-val-old">1</span>
+                    <span class="score-arrow">→</span>
+                    <span class="score-val-new">0</span>
+                </div>
+            </div>
+            <div class="metric-pill">
+                <span class="metric-dot dot-emerald"></span>
+                <span class="metric-label">最高连接度</span>
+                <div class="metric-val">
+                    <span class="score-val-old">246</span>
+                    <span class="score-arrow">→</span>
+                    <span class="score-val-new">35</span>
+                </div>
+            </div>
+            <div class="metric-pill">
+                <span class="metric-dot dot-cyan"></span>
+                <span class="metric-label">解耦度</span>
+                <div class="metric-val">
+                    <span class="score-val-new">+85.7%</span>
+                </div>
+            </div>
+            <div class="metric-pill">
+                <span class="metric-dot dot-emerald"></span>
+                <span class="metric-label">评级</span>
+                <div class="metric-val">
+                    <span class="metric-badge-rating">A+ HEALTHY</span>
+                </div>
+            </div>
         </div>
     </header>
 
     <div id="viewport-wrapper">
-        <div class="floating-label" id="label-before">🔴 改造前 (Before: 居中猩红上帝病灶 + 错综红线纠缠)</div>
-        <div class="floating-label" id="label-after">🟢 改造后 (After: 上帝病灶彻底瓦解 ➔ 蓝绿微模块流水线)</div>
-        <div id="lock-indicator">🔓 卷帘漫游中 · 任意长按拖动画布 · 单击鼠标左键锁定位置自由悬停节点</div>
+        <div class="floating-label" id="label-before">
+            <div class="label-head">
+                <span class="tag-dot dot-red"></span>
+                <span class="label-title">BEFORE</span>
+            </div>
+            <div class="label-desc">改造前 · 居中猩红上帝病灶 (246度恶性耦合)</div>
+        </div>
+        <div class="floating-label" id="label-after">
+            <div class="label-head">
+                <span class="tag-dot dot-green"></span>
+                <span class="label-title">AFTER</span>
+            </div>
+            <div class="label-desc">改造后 · 上帝病灶彻底瓦解 (蓝绿管道微模块)</div>
+        </div>
+
+        <div id="lock-indicator">
+            <span class="indicator-dot"></span>
+            <span>卷帘跟随中 · 单击画布定格</span>
+        </div>
 
         <!-- 唯一全屏 Canvas，绝对居中，绝对同频，极致性能！ -->
         <canvas id="main-canvas"></canvas>
@@ -134,7 +410,13 @@
         <div id="node-tooltip"></div>
 
         <div id="hint-bar">
-            🖱️ <b>长按拖动/滚轮缩放</b> 绝对零延迟统一平移 · <b>单击左键</b> 锁定画卷自由悬停查阅节点名 · <b>移动鼠标</b> 展开卷帘
+            <span><kbd>拖拽</kbd> 平移画布</span>
+            <span class="hint-sep">/</span>
+            <span><kbd>滚轮</kbd> 缩放</span>
+            <span class="hint-sep">/</span>
+            <span><kbd>单击</kbd> 定格锁定</span>
+            <span class="hint-sep">/</span>
+            <span><kbd>移动</kbd> 卷帘漫游</span>
         </div>
     </div>
 
@@ -214,7 +496,7 @@
         }
 
         function drawGraph(nodes, links, nodeMap, cx, cy, zoom, isBefore) {
-            // 1. 绘制纯净无箭头的端点微弧度连线 (彻底对齐 ECharts 优雅质感！)
+            // 1. 绘制纯净无箭头的端点微弧度连线 (二次贝塞尔曲线 0.12 微弧度)
             for (const l of links) {
                 const s = nodeMap.get(l.source);
                 const t = nodeMap.get(l.target);
@@ -227,7 +509,6 @@
 
                 ctx.beginPath();
                 ctx.moveTo(sx, sy);
-                // 使用二次贝塞尔曲线产生 ECharts 0.12 同款优雅微弧度！
                 const midX = (sx + tx) * 0.5 - (ty - sy) * 0.08;
                 const midY = (sy + ty) * 0.5 + (tx - sx) * 0.08;
                 ctx.quadraticCurveTo(midX, midY, tx, ty);
@@ -250,8 +531,6 @@
                 const nx = cx + n.x * zoom;
                 const ny = cy + n.y * zoom;
 
-                // 适度微缩 25%，让球与球之间间距清晰拉开，告别重叠！
-                // 上帝巨星 r=15px，核心中枢 r=9.5px，微模块 r=8px，普通节点 r=5.5~7.5px
                 let baseR = n.is_mal ? 15 : (n.name && n.name.includes('[🟢健康门面]') ? 10 : (n.id && n.id.startsWith('pipeline_') ? 8 : Math.max(5.2, Math.min(8.0, n.deg * 0.04 + 4.8))));
                 const nr = Math.max(4.0, baseR * Math.pow(zoom, 0.65));
 
@@ -282,9 +561,8 @@
                 ctx.fillStyle = n.innerColor;
                 ctx.fill();
 
-                // 3. 所有节点 100% 全部展示函数名称与类名！
-                ctx.font = `${n.is_mal ? 'bold 11px' : '9.5px'} -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-                // 改造前 Before 是粉红/红字，改造后 After 是健康青绿字！
+                // 3. 所有节点 100% 全部展示函数名称与类名
+                ctx.font = `${n.is_mal ? 'bold 11px' : '9.5px'} "Geist Mono", "JetBrains Mono", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
                 ctx.fillStyle = isBefore ? '#fca5a5' : '#6ee7b7';
                 ctx.fillText(n.name, nx + nr + 4, ny + 3.5);
             }
@@ -292,25 +570,61 @@
 
         function drawLaser(x, H, locked) {
             ctx.save();
+            const color = locked ? 'rgba(245, 158, 11, 0.85)' : 'rgba(56, 189, 248, 0.75)';
+            const glowColor = locked ? 'rgba(245, 158, 11, 0.4)' : 'rgba(56, 189, 248, 0.35)';
+
+            // 1. 极简精密 1px 细线 + 微弱柔和辉光
             ctx.beginPath();
             ctx.moveTo(x, 0);
             ctx.lineTo(x, H);
-            ctx.strokeStyle = locked ? '#fbbf24' : '#38bdf8';
-            ctx.lineWidth = 2.5;
-            ctx.shadowColor = locked ? '#fbbf24' : '#38bdf8';
-            ctx.shadowBlur = 18;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.0;
+            ctx.shadowColor = glowColor;
+            ctx.shadowBlur = locked ? 6 : 4;
             ctx.stroke();
 
+            // 2. 居中垂直胶囊把手 (Figma / ComfyUI 极简精密风格)
             const my = H * 0.5;
+            const handleW = 6;
+            const handleH = 36;
+            const handleR = 3;
+
             ctx.save();
-            ctx.translate(x, my);
-            ctx.rotate(Math.PI / 4);
-            ctx.fillStyle = '#0f172a';
-            ctx.strokeStyle = locked ? '#fbbf24' : '#38bdf8';
-            ctx.lineWidth = 2;
-            ctx.fillRect(-12, -12, 24, 24);
-            ctx.strokeRect(-12, -12, 24, 24);
+            ctx.shadowColor = glowColor;
+            ctx.shadowBlur = 8;
+
+            ctx.beginPath();
+            if (ctx.roundRect) {
+                ctx.roundRect(x - handleW * 0.5, my - handleH * 0.5, handleW, handleH, handleR);
+            } else {
+                ctx.rect(x - handleW * 0.5, my - handleH * 0.5, handleW, handleH);
+            }
+            ctx.fillStyle = '#090d16';
+            ctx.fill();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.2;
+            ctx.stroke();
+
+            // 把手内部微刻度抓手纹理 (两条精密水平微细线)
+            ctx.beginPath();
+            ctx.moveTo(x - 1.5, my - 3);
+            ctx.lineTo(x + 1.5, my - 3);
+            ctx.moveTo(x - 1.5, my + 3);
+            ctx.lineTo(x + 1.5, my + 3);
+            ctx.strokeStyle = locked ? 'rgba(251, 191, 36, 0.7)' : 'rgba(226, 232, 240, 0.6)';
+            ctx.lineWidth = 1.0;
+            ctx.stroke();
             ctx.restore();
+
+            // 3. 顶部与底部精密刻度指示线
+            ctx.beginPath();
+            ctx.moveTo(x - 3, 8);
+            ctx.lineTo(x + 3, 8);
+            ctx.moveTo(x - 3, H - 8);
+            ctx.lineTo(x + 3, H - 8);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 1.0;
+            ctx.stroke();
 
             ctx.restore();
         }
@@ -366,11 +680,11 @@
 
                     if (isLocked) {
                         lockIndicator.classList.add('locked');
-                        lockIndicator.innerHTML = '🔒 画卷已定格 · 光标可自由移出画卷悬停查阅节点函数名 · 再次单击解除';
+                        lockIndicator.innerHTML = '<span class="indicator-dot"></span><span>画卷已定格 · 自由悬停查阅节点 · 单击解除</span>';
                         curtainSplitX = lockedX;
                     } else {
                         lockIndicator.classList.remove('locked');
-                        lockIndicator.innerHTML = '🔓 卷帘漫游中 · 任意长按拖动画布 · 单击鼠标左键锁定位置自由悬停节点';
+                        lockIndicator.innerHTML = '<span class="indicator-dot"></span><span>卷帘跟随中 · 单击画布定格</span>';
                         curtainSplitX = e.clientX - rect.left;
                     }
                     render();
@@ -421,10 +735,21 @@
 
             if (found) {
                 tooltip.style.display = 'block';
-                tooltip.style.left = (mx + 16) + 'px';
-                tooltip.style.top = (my + 16) + 'px';
-                const malBadge = found.is_mal ? '<span style="color:#ef4444;font-weight:bold;">🚨 恶性上帝类</span><br>' : '';
-                tooltip.innerHTML = `<b>${found.name}</b><br>${malBadge}连接度: ${found.deg} 度`;
+                const tipX = Math.min(wrapper.clientWidth - 220, mx + 16);
+                const tipY = Math.min(wrapper.clientHeight - 90, my + 16);
+                tooltip.style.left = tipX + 'px';
+                tooltip.style.top = tipY + 'px';
+                const malBadge = found.is_mal
+                    ? '<div style="display:inline-flex;align-items:center;gap:4px;color:#f87171;font-size:10px;font-weight:600;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.25);border-radius:4px;padding:1px 6px;margin-top:4px;">🚨 恶性上帝类</div>'
+                    : '';
+                tooltip.innerHTML = `
+                    <div style="font-family:'Geist Mono',Menlo,monospace;font-size:12px;font-weight:600;color:#f8fafc;word-break:break-all;">${found.name}</div>
+                    ${malBadge}
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:6px;padding-top:6px;border-top:1px solid rgba(255,255,255,0.08);font-size:11px;color:#94a3b8;">
+                        <span>连接度</span>
+                        <span style="font-family:'Geist Mono',Menlo,monospace;font-weight:600;color:#e2e8f0;">${found.deg} 度</span>
+                    </div>
+                `;
             } else {
                 tooltip.style.display = 'none';
             }
@@ -433,6 +758,19 @@
         window.onload = function() {
             resizeCanvas();
             window.addEventListener('resize', resizeCanvas);
+            const params = new URLSearchParams(window.location.search);
+            if (params.get('test') === 'locked') {
+                isLocked = true;
+                lockIndicator.classList.add('locked');
+                lockIndicator.innerHTML = '<span class="indicator-dot"></span><span>画卷已定格 · 自由悬停查阅节点 · 单击解除</span>';
+                render();
+            } else if (params.get('test') === 'hover') {
+                isLocked = true;
+                lockIndicator.classList.add('locked');
+                lockIndicator.innerHTML = '<span class="indicator-dot"></span><span>画卷已定格 · 自由悬停查阅节点 · 单击解除</span>';
+                render();
+                checkNodeHover(wrapper.clientWidth * 0.5, wrapper.clientHeight * 0.5 - 35);
+            }
         };
     </script>
 </body>
