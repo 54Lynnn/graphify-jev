@@ -3,7 +3,7 @@
   <p align="center"><b>AI 代码智能导航仪与上帝类重构向导 (Code GPS & Refactoring Co-pilot)</b></p>
   <p align="center">
     告别只能看不能用的被动代码地图。融合本地零成本 Tree-sitter AST 与 TypeSafe Jev 150ms 连续决策直出，<br>
-    为 Coding Agent 提供语义穿透寻种、因果拓扑修枝、恶性上帝类体检、自动化双模战情大屏与 ComfyUI 风格激光卷帘对比。
+    为 Coding Agent 提供语义穿透寻种、因果拓扑修枝、恶性上帝类体检、自动化双模战情大屏与架构卷帘对比大屏。
   </p>
 </p>
 
@@ -11,7 +11,7 @@
   <img src="https://img.shields.io/badge/Python-3.10%2B-blue?style=flat&logo=python" alt="Python 3.10+"/>
   <img src="https://img.shields.io/badge/Decision%20Engine-Jev%20System%20One%20(150ms)-ef4444?style=flat" alt="Jev"/>
   <img src="https://img.shields.io/badge/Visual%20Engine-Pure%20Canvas%2060FPS-38bdf8?style=flat" alt="Canvas 60FPS"/>
-  <img src="https://img.shields.io/badge/Comparison-ComfyUI%20Curtain%20Swipe-a855f7?style=flat" alt="ComfyUI Swipe"/>
+  <img src="https://img.shields.io/badge/Comparison-Curtain%20Compare-0284c7?style=flat" alt="Curtain Compare"/>
   <img src="https://img.shields.io/badge/License-Apache--2.0-green?style=flat" alt="License"/>
   <img src="https://img.shields.io/badge/Agent%20Ready-ZCode%20%7C%20Claude%20%7C%20Cursor-purple?style=flat" alt="Agent"/>
 </p>
@@ -28,7 +28,7 @@
 - **无获得感**：改动前后缺少直观、震撼的架构对比感知。
 
 **Graphify-Jev 把地图升级为“实时代码导航仪（Code GPS）”**：
-由 **Jev（连续决策模型，150ms 前向直出，输出 Token 免费）** 充当极速心电图，在本地物理图谱中实施两阶段穿透寻种并确诊高危病灶；再由宿主 **Coding Agent** 就地开具可落地的代码解耦与分步重构处方；最终通过 **ComfyUI 风格激光卷帘对比大屏** 见证上帝类瓦解，让架构成果看得见、摸得着！
+由 **Jev（连续决策模型，150ms 前向直出，输出 Token 免费）** 充当极速心电图，在本地物理图谱中实施两阶段穿透寻种并确诊高危病灶；再由宿主 **Coding Agent** 就地开具可落地的代码解耦与分步重构处方；最终通过 **架构卷帘对比大屏** 见证上帝类瓦解，让架构成果看得见、摸得着！
 
 ---
 
@@ -42,7 +42,7 @@
 | **架构异味诊断** | 仅输出冷冰冰的度数统计（如 Degree: 25） | **Jev 架构健康雷达**（精准确诊恶性病灶，安全放行良性基础设施） |
 | **重构行动力** | 静态图谱，用户无从下手 | **Skill 动态解耦向导**（Agent 现场生成设计模式、迁移路径与代码 Diff） |
 | **术前大屏呈现** | vis.js 挤压扁平铁饼图 | **ECharts 5 顶级暗黑星云大屏**（同心圆雷达核芯，点击一键复制重构指令） |
-| **术后对比获得感** | 零对比机制，用户无感知 | **ComfyUI 风格无限画布激光卷帘大屏**（鼠标左右滑动平滑揭开 Before/After，双层同频锁死） |
+| **术后对比获得感** | 零对比机制，用户无感知 | **单 Canvas 架构卷帘对比大屏**（鼠标左右滑动平滑揭开 Before/After，双层同频锁死） |
 
 ---
 
@@ -74,7 +74,7 @@ flowchart TD
 
     subgraph S5 ["Step 5 · 隔离开刀 ➔ 卷帘验收"]
         direction LR
-        E["↔️ <b>独立 Worktree 隔离开刀重构</b><br/>• 严格执行全量回归测试，100% 绿灯后合入 main<br/>• <b>自动呈上 ComfyUI 风格激光卷帘对比大屏</b> (curtain_compare.html)<br/>• 左右滑动鼠标见证上帝病灶平滑解构为健康微模块！"]
+        E["↔️ <b>独立 Worktree 隔离开刀重构</b><br/>• 严格执行全量回归测试，100% 绿灯后合入 main<br/>• <b>自动合成架构卷帘对比图</b> (curtain_compare.html)<br/>• 左右滑动鼠标见证上帝病灶平滑解构为健康微模块！"]
     end
 
     S1 --> S2 --> S3 --> S4 --> S5
@@ -102,7 +102,7 @@ flowchart TD
 - **确诊病灶**：自身核心 `build_from_json()`（度数 246，牵连 53 个文件）；
 - **解耦重构**：引入**管道-过滤器模式**，新建 `graphify/build_pipeline.py` 拆解为 `ExtractionPreflight`、`GhostNodeResolver` 与 `GraphAssembler` 三大处理器；
 - **成效验收**：核心函数瘦身为 25 行极简门面（Facade），**96 个测试用例 100% 一次性全绿通过**，对外 227 处调用零破坏兼容！
-- **卷帘见证**：通过内置 ComfyUI 风格激光卷帘对比大屏（`curtain_compare.html`），实时呈现 246 度恶性病灶平滑瓦解为 35 度高内聚健康微模块（解耦度提升 85.7%，架构评级跃迁至 A+ 极致健康）！
+- **卷帘见证**：通过内置架构卷帘对比大屏（`curtain_compare.html`），实时呈现 246 度恶性病灶平滑瓦解为 35 度高内聚健康微模块（解耦度提升 85.7%，架构评级跃迁至 A+ 极致健康）！
 
 ---
 
@@ -145,7 +145,7 @@ graphify-jev install
 - **针对性解耦开方**：“*我想重构 OrderManager，它承担了什么职责？应该怎么拆分？*”
 - **变更影响面追踪**：“*如果我要修改 `verify_token` 的参数，会波及哪些上游控制器？*”
 - **完工数字化复查**：
-  ➔ **重构完成测试通过后，Agent 自动在完工总结中呈上 ComfyUI 风格激光卷帘对比大屏**：[http://localhost:8899/curtain_compare.html](http://localhost:8899/curtain_compare.html)
+  ➔ **重构完成测试通过后，Agent 自动在完工总结中呈上架构卷帘对比图**：[http://localhost:8899/curtain_compare.html](http://localhost:8899/curtain_compare.html)
 
 ### 姿势二：显式 Slash 指令
 ```bash

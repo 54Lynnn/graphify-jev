@@ -725,11 +725,11 @@ Before traversal, expand the question against the graph's own vocabulary so a wo
 
 3. **【重构完成自动呈现实战对比卷帘 (Before + After)】**：
    在完成代码开刀重构并通过全量测试后，**无需用户开口索要，Agent 必须主动生成并呈现实时对比大屏**：
-   - 自动基于重构前后的图谱生成 ComfyUI 风格卷帘对比页面 `graphify-out/curtain_compare.html`；
+   - 自动基于重构前后的图谱生成架构卷帘对比页面 `graphify-out/curtain_compare.html`；
    - **在完工汇报中自然呈现直达对比链接**：
      > “🎉 **重构已全部完成，全量测试 100% 绿灯通过！**  
-     > ↔ **为您自动生成了 ComfyUI 风格画卷对比大屏**：[http://localhost:8899/curtain_compare.html](http://localhost:8899/curtain_compare.html)  
-     > 您可以直接在浏览器中左右滑动发光激光线，亲自见证原本狰狞的恶性上帝病灶如何在全景星系中平滑消解为清爽的微模块流水线！”
+     > ↔ **为您自动生成了架构卷帘对比图**：[http://localhost:8899/curtain_compare.html](http://localhost:8899/curtain_compare.html)  
+     > 您可以直接在浏览器中左右滑动卷帘分割线，亲自见证原本臃肿的恶性上帝病灶如何在全景拓扑中平滑解构为清爽的微模块流水线！”
 
 ---
 

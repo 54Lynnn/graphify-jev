@@ -2546,7 +2546,7 @@ def dispatch_command(cmd: str) -> None:
             sys.exit(1)
 
     elif cmd == "serve":
-        # 原生轻量服务：启动架构战情大屏或 ComfyUI 风格卷帘对比中心
+        # 原生轻量服务：启动架构战情大屏或卷帘对比中心
         import http.server
         import socketserver
         port = 8899
@@ -2589,7 +2589,7 @@ def dispatch_command(cmd: str) -> None:
         print(f" 本地服务端口: http://localhost:{port}")
         print(f" 📂 托管静态根目录: {serve_root}")
         print(f" 🎯 战情大屏入口: http://localhost:{port}/graph_radar.html (或 radar.html)")
-        print(f" ↔  ComfyUI卷帘对比: http://localhost:{port}/curtain_compare.html")
+        print(f" ↔  架构卷帘对比: http://localhost:{port}/curtain_compare.html")
         print(f"=======================================================\n")
         print(f"按 Ctrl+C 即可退出服务...")
 

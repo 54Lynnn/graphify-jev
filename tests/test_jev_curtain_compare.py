@@ -1,5 +1,5 @@
 """
-单元测试：ComfyUI 风格无限画布激光卷帘对比导出器 (Curtain Compare Exporter Tests)
+单元测试：无限画布架构卷帘对比导出器 (Curtain Compare Exporter Tests)
 验证双层图数据打包、clip-path 硬件裁剪注入与战绩看板。
 """
 import os

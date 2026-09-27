@@ -1,5 +1,5 @@
 """
-Graphify-Jev 纯正单一 Canvas 60FPS ComfyUI 激光卷帘对比大屏导出器
+Graphify-Jev 纯正单一 Canvas 60FPS 架构卷帘对比大屏导出器
 """
 from __future__ import annotations
 import json
@@ -18,7 +18,7 @@ def to_curtain_compare_html(
     score_stats: Optional[Dict[str, Any]] = None
 ) -> bool:
     """
-    导出纯正单一 Canvas 60FPS ComfyUI 激光卷帘对比大屏 HTML。
+    导出纯正单一 Canvas 60FPS 架构卷帘对比大屏 HTML。
     """
     template_path = Path(__file__).parent / "template_curtain_compare.html"
     if template_path.is_file():
