@@ -37,7 +37,10 @@
 > Graphify-Jev 在自身核心模块实施自举吃狗粮（Dogfooding），并将治理战果完整呈现在本地双模战情中心与 **架构卷帘对比大屏** 中。
 
 <div align="center">
-  <img src="assets/curtain-compare-card.svg" alt="架构卷帘对比大屏" width="100%" />
+  <a href="http://localhost:8899/curtain_compare.html" target="_blank">
+    <img src="assets/curtain-swipe.gif" alt="架构卷帘对比真实动态效果" width="100%" />
+  </a>
+  <p><sub><i>↔️ 单画布物理视口镜像锁死，鼠标自由左右滑动平滑见证拓扑重构跃迁（本地服务端口 localhost:8899/curtain_compare.html）</i></sub></p>
 </div>
 
 <br>
@@ -90,7 +93,7 @@
 用户无需记忆繁琐的命令行参数，人类开发者用自然语言掌控全局，底层驱动全由 Agent 自动化流水线调度：
 
 <div align="center">
-  <img src="assets/workflow-pipeline.svg" alt="黄金五步工作流图解" width="100%" />
+  <img src="assets/workflow.svg" alt="用户视角黄金工作流" width="100%" />
 </div>
 
 <br>

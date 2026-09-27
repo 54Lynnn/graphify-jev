@@ -45,6 +45,8 @@
     .brand-desc { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif; font-weight: 400; font-size: 13.5px; fill: #cbd5e1; }
     .mono-pill { font-family: "JetBrains Mono", Menlo, Consolas, monospace; font-size: 11.5px; font-weight: 600; }
     .grid-line { stroke: rgba(255, 255, 255, 0.035); stroke-width: 1; }
+    .hero-tag-text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", "JetBrains Mono", sans-serif; font-size: 13.5px; font-weight: 700; letter-spacing: 0.2px; }
+    .hero-pill-bg { fill: #0f172a; fill-opacity: 0.92; stroke: rgba(255, 255, 255, 0.14); stroke-width: 1.2; }
   </style>
 
   <!-- Card Frame -->
@@ -94,27 +96,27 @@
     <text x="0" y="126" class="brand-desc">拒绝只看不动的被动代码地图。融合本地零成本 AST 拓扑与 Jev 150ms 连续决策直出，</text>
     <text x="0" y="148" class="brand-desc">为 Coding Agent 注入穿透寻种、修枝确诊、分步重构与 60FPS 架构卷帘见证全闭环能力。</text>
 
-    <!-- Quick Metrics Pills -->
-    <g transform="translate(0, 175)">
+    <!-- Quick Metrics Pills (Enlarged & High Legibility) -->
+    <g transform="translate(0, 172)">
       <!-- Pill 1 -->
-      <rect x="0" y="0" width="138" height="30" rx="8" fill="#0f172a" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>
-      <circle cx="14" cy="15" r="3.5" fill="#ef4444"/>
-      <text x="26" y="19" class="mono-pill" fill="#f8fafc">Jev 150ms 直出</text>
+      <rect x="0" y="0" width="144" height="36" rx="10" class="hero-pill-bg"/>
+      <circle cx="16" cy="18" r="4.5" fill="#ef4444"/>
+      <text x="28" y="23" class="hero-tag-text" fill="#f8fafc">Jev 150ms 直出</text>
 
       <!-- Pill 2 -->
-      <rect x="148" y="0" width="148" height="30" rx="8" fill="#0f172a" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>
-      <circle cx="162" cy="15" r="3.5" fill="#38bdf8"/>
-      <text x="174" y="19" class="mono-pill" fill="#f8fafc">单 Canvas 60FPS</text>
+      <rect x="154" y="0" width="162" height="36" rx="10" class="hero-pill-bg"/>
+      <circle cx="170" cy="18" r="4.5" fill="#38bdf8"/>
+      <text x="182" y="23" class="hero-tag-text" fill="#f8fafc">单 Canvas 60FPS</text>
 
       <!-- Pill 3 -->
-      <rect x="306" y="0" width="154" height="30" rx="8" fill="#0f172a" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>
-      <circle cx="320" cy="15" r="3.5" fill="#34d399"/>
-      <text x="332" y="19" class="mono-pill" fill="#f8fafc">112 Tests 100% 绿灯</text>
+      <rect x="326" y="0" width="176" height="36" rx="10" class="hero-pill-bg"/>
+      <circle cx="342" cy="18" r="4.5" fill="#34d399"/>
+      <text x="354" y="23" class="hero-tag-text" fill="#f8fafc">112 Tests 100% 绿灯</text>
 
       <!-- Pill 4 -->
-      <rect x="470" y="0" width="116" height="30" rx="8" fill="#0f172a" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>
-      <circle cx="484" cy="15" r="3.5" fill="#a855f7"/>
-      <text x="496" y="19" class="mono-pill" fill="#f8fafc">8899 本地大屏</text>
+      <rect x="512" y="0" width="144" height="36" rx="10" class="hero-pill-bg"/>
+      <circle cx="528" cy="18" r="4.5" fill="#a855f7"/>
+      <text x="540" y="23" class="hero-tag-text" fill="#f8fafc">8899 本地大屏</text>
     </g>
   </g>
 

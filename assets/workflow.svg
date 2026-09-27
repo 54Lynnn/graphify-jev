@@ -1,0 +1,320 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 440" width="100%" height="auto">
+  <defs>
+    <!-- Background & Glass Gradients -->
+    <linearGradient id="wfBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#080c14"/>
+      <stop offset="50%" stop-color="#0b1120"/>
+      <stop offset="100%" stop-color="#05080f"/>
+    </linearGradient>
+
+    <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="35%" stop-color="#818cf8"/>
+      <stop offset="70%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+
+    <!-- Card Background Gradients -->
+    <linearGradient id="cardBg" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#111827" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#0b1120" stop-opacity="0.95"/>
+    </linearGradient>
+
+    <!-- Step Color Gradients -->
+    <linearGradient id="step1Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+
+    <linearGradient id="step2Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+
+    <linearGradient id="step3Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34d399"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+
+    <linearGradient id="step4Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+
+    <linearGradient id="step5Grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f43f5e"/>
+      <stop offset="100%" stop-color="#be123c"/>
+    </linearGradient>
+
+    <!-- Arrow Gradient -->
+    <linearGradient id="arrowGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8"/>
+      <stop offset="100%" stop-color="#34d399" stop-opacity="0.8"/>
+    </linearGradient>
+
+    <!-- Shadow & Glow Filters -->
+    <filter id="cardShadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="6" stdDeviation="8" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+
+    <filter id="dotGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+
+    <pattern id="wfGrid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <path d="M 30 0 L 0 0 0 30" fill="none" stroke="#1e293b" stroke-width="0.5" stroke-opacity="0.3"/>
+    </pattern>
+  </defs>
+
+  <style>
+    .wf-sans { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif; }
+    .wf-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace; }
+  </style>
+
+  <!-- Background Base -->
+  <rect width="1200" height="440" rx="16" fill="url(#wfBg)" stroke="#1e293b" stroke-width="1.5"/>
+  <rect x="2" y="2" width="1196" height="436" rx="14" fill="url(#wfGrid)"/>
+
+  <!-- ========================================================== -->
+  <!-- HEADER SECTION                                             -->
+  <!-- ========================================================== -->
+  <g transform="translate(40, 24)">
+    <!-- Small Category Pill -->
+    <rect x="0" y="0" width="190" height="22" rx="11" fill="#0f172a" stroke="#334155" stroke-width="1"/>
+    <circle cx="12" cy="11" r="3.5" fill="#38bdf8" filter="url(#dotGlow)"/>
+    <text x="22" y="15" class="wf-mono" font-size="10" font-weight="700" fill="#94a3b8" letter-spacing="0.8">5-STEP WORKFLOW</text>
+
+    <!-- Main Title -->
+    <text x="0" y="48" class="wf-sans" font-size="22" font-weight="800" fill="#f8fafc" letter-spacing="-0.3">
+      用户视角黄金工作流 <tspan fill="url(#headerGrad)">(The Golden 5-Step Flow)</tspan>
+    </text>
+
+    <!-- Subtitle -->
+    <text x="0" y="70" class="wf-sans" font-size="13" font-weight="400" fill="#94a3b8">
+      人类开发者负责用自然语言掌控全局，底层由 Jev 决策直出与 Coding Agent 自适应闭环
+    </text>
+  </g>
+
+  <!-- ========================================================== -->
+  <!-- STEP 1: 极速准备                                          -->
+  <!-- ========================================================== -->
+  <g transform="translate(40, 115)" filter="url(#cardShadow)">
+    <rect x="0" y="0" width="208" height="295" rx="12" fill="url(#cardBg)" stroke="#38bdf8" stroke-width="1.2" stroke-opacity="0.5"/>
+    <rect x="0" y="0" width="208" height="3" rx="1.5" fill="url(#step1Grad)"/>
+
+    <!-- Step Badge & Dot -->
+    <circle cx="22" cy="24" r="5" fill="#38bdf8" filter="url(#dotGlow)"/>
+    <text x="34" y="28" class="wf-mono" font-size="11" font-weight="700" fill="#38bdf8">STEP 01</text>
+    <rect x="156" y="14" width="38" height="20" rx="10" fill="#082f49" stroke="#0ea5e9" stroke-width="1"/>
+    <text x="175" y="28" text-anchor="middle" class="wf-mono" font-size="10" font-weight="700" fill="#7dd3fc">INIT</text>
+
+    <!-- Step Title -->
+    <text x="16" y="60" class="wf-sans" font-size="16" font-weight="700" fill="#ffffff">极速准备</text>
+    <text x="16" y="78" class="wf-sans" font-size="11" font-weight="500" fill="#64748b">本地零成本就绪</text>
+
+    <!-- Command Snippet Box -->
+    <rect x="12" y="92" width="184" height="60" rx="8" fill="#050914" stroke="#1e293b" stroke-width="1"/>
+    <text x="22" y="114" class="wf-mono" font-size="11" fill="#7dd3fc">git clone ...</text>
+    <text x="22" y="136" class="wf-mono" font-size="11" fill="#38bdf8">pip install -e .</text>
+
+    <!-- Bullet Points -->
+    <g transform="translate(14, 168)">
+      <circle cx="4" cy="6" r="2.5" fill="#38bdf8"/>
+      <text x="14" y="10" class="wf-sans" font-size="11" fill="#cbd5e1">本地 Tree-sitter AST</text>
+      
+      <circle cx="4" cy="30" r="2.5" fill="#38bdf8"/>
+      <text x="14" y="34" class="wf-sans" font-size="11" fill="#cbd5e1">零重量级向量库依赖</text>
+
+      <circle cx="4" cy="54" r="2.5" fill="#38bdf8"/>
+      <text x="14" y="58" class="wf-sans" font-size="11" fill="#cbd5e1">毫秒级纯本地环境</text>
+    </g>
+
+    <!-- Bottom Tag -->
+    <rect x="12" y="254" width="184" height="26" rx="6" fill="#0c1e33" stroke="#0284c7" stroke-width="0.8"/>
+    <text x="104" y="271" text-anchor="middle" class="wf-mono" font-size="10.5" font-weight="600" fill="#38bdf8">AST Engine · Ready</text>
+  </g>
+
+  <!-- Connector 1 -> 2 -->
+  <g transform="translate(248, 252)">
+    <line x1="0" y1="0" x2="16" y2="0" stroke="#38bdf8" stroke-width="1.8" stroke-dasharray="3 3"/>
+    <polygon points="16,-4 22,0 16,4" fill="#38bdf8"/>
+  </g>
+
+  <!-- ========================================================== -->
+  <!-- STEP 2: 挂载 Skill                                         -->
+  <!-- ========================================================== -->
+  <g transform="translate(268, 115)" filter="url(#cardShadow)">
+    <rect x="0" y="0" width="208" height="295" rx="12" fill="url(#cardBg)" stroke="#818cf8" stroke-width="1.2" stroke-opacity="0.5"/>
+    <rect x="0" y="0" width="208" height="3" rx="1.5" fill="url(#step2Grad)"/>
+
+    <!-- Step Badge & Dot -->
+    <circle cx="22" cy="24" r="5" fill="#818cf8" filter="url(#dotGlow)"/>
+    <text x="34" y="28" class="wf-mono" font-size="11" font-weight="700" fill="#818cf8">STEP 02</text>
+    <rect x="146" y="14" width="48" height="20" rx="10" fill="#1e1b4b" stroke="#6366f1" stroke-width="1"/>
+    <text x="170" y="28" text-anchor="middle" class="wf-mono" font-size="10" font-weight="700" fill="#a5b4fc">SKILL</text>
+
+    <!-- Step Title -->
+    <text x="16" y="60" class="wf-sans" font-size="16" font-weight="700" fill="#ffffff">挂载 Skill</text>
+    <text x="16" y="78" class="wf-sans" font-size="11" font-weight="500" fill="#64748b">全平台 Coding Agent</text>
+
+    <!-- Command Snippet Box -->
+    <rect x="12" y="92" width="184" height="60" rx="8" fill="#050914" stroke="#1e293b" stroke-width="1"/>
+    <text x="22" y="116" class="wf-mono" font-size="11" font-weight="600" fill="#a5b4fc">graphify-jev</text>
+    <text x="22" y="136" class="wf-mono" font-size="11" font-weight="600" fill="#818cf8">  install</text>
+
+    <!-- Bullet Points -->
+    <g transform="translate(14, 168)">
+      <circle cx="4" cy="6" r="2.5" fill="#818cf8"/>
+      <text x="14" y="10" class="wf-sans" font-size="11" fill="#cbd5e1">一行自动完成全局挂载</text>
+      
+      <circle cx="4" cy="30" r="2.5" fill="#818cf8"/>
+      <text x="14" y="34" class="wf-sans" font-size="11" fill="#cbd5e1">支持 ZCode / Claude</text>
+
+      <circle cx="4" cy="54" r="2.5" fill="#818cf8"/>
+      <text x="14" y="58" class="wf-sans" font-size="11" fill="#cbd5e1">适配 Cursor / OpenCode</text>
+    </g>
+
+    <!-- Bottom Tag -->
+    <rect x="12" y="254" width="184" height="26" rx="6" fill="#1e1b4b" stroke="#4f46e5" stroke-width="0.8"/>
+    <text x="104" y="271" text-anchor="middle" class="wf-mono" font-size="10.5" font-weight="600" fill="#a5b4fc">Agent Registered</text>
+  </g>
+
+  <!-- Connector 2 -> 3 -->
+  <g transform="translate(476, 252)">
+    <line x1="0" y1="0" x2="16" y2="0" stroke="#818cf8" stroke-width="1.8" stroke-dasharray="3 3"/>
+    <polygon points="16,-4 22,0 16,4" fill="#818cf8"/>
+  </g>
+
+  <!-- ========================================================== -->
+  <!-- STEP 3: 大白话扫描                                         -->
+  <!-- ========================================================== -->
+  <g transform="translate(496, 115)" filter="url(#cardShadow)">
+    <rect x="0" y="0" width="208" height="295" rx="12" fill="url(#cardBg)" stroke="#34d399" stroke-width="1.2" stroke-opacity="0.5"/>
+    <rect x="0" y="0" width="208" height="3" rx="1.5" fill="url(#step3Grad)"/>
+
+    <!-- Step Badge & Dot -->
+    <circle cx="22" cy="24" r="5" fill="#34d399" filter="url(#dotGlow)"/>
+    <text x="34" y="28" class="wf-mono" font-size="11" font-weight="700" fill="#34d399">STEP 03</text>
+    <rect x="144" y="14" width="50" height="20" rx="10" fill="#064e3b" stroke="#10b981" stroke-width="1"/>
+    <text x="169" y="28" text-anchor="middle" class="wf-mono" font-size="10" font-weight="700" fill="#6ee7b7">SCAN</text>
+
+    <!-- Step Title -->
+    <text x="16" y="60" class="wf-sans" font-size="16" font-weight="700" fill="#ffffff">大白话扫描</text>
+    <text x="16" y="78" class="wf-sans" font-size="11" font-weight="500" fill="#64748b">自然语言驱动诊断</text>
+
+    <!-- Prompt Box -->
+    <rect x="12" y="92" width="184" height="60" rx="8" fill="#050914" stroke="#1e293b" stroke-width="1"/>
+    <text x="20" y="115" class="wf-sans" font-size="11" fill="#6ee7b7">“扫描我的项目架构，</text>
+    <text x="20" y="135" class="wf-sans" font-size="11" fill="#34d399">有没有恶性上帝类？”</text>
+
+    <!-- Bullet Points -->
+    <g transform="translate(14, 168)">
+      <circle cx="4" cy="6" r="2.5" fill="#34d399"/>
+      <text x="14" y="10" class="wf-sans" font-size="11" fill="#cbd5e1">毫秒 AST + Jev 连续决策</text>
+      
+      <circle cx="4" cy="30" r="2.5" fill="#34d399"/>
+      <text x="14" y="34" class="wf-sans" font-size="11" fill="#cbd5e1">精准确诊系统恶性病灶</text>
+
+      <circle cx="4" cy="54" r="2.5" fill="#34d399"/>
+      <text x="14" y="58" class="wf-sans" font-size="11" fill="#cbd5e1">自动拉起战情雷达大屏</text>
+    </g>
+
+    <!-- Bottom Tag -->
+    <rect x="12" y="254" width="184" height="26" rx="6" fill="#052e24" stroke="#059669" stroke-width="0.8"/>
+    <text x="104" y="271" text-anchor="middle" class="wf-mono" font-size="10.5" font-weight="600" fill="#34d399">Jev 150ms · Radar</text>
+  </g>
+
+  <!-- Connector 3 -> 4 -->
+  <g transform="translate(704, 252)">
+    <line x1="0" y1="0" x2="16" y2="0" stroke="#34d399" stroke-width="1.8" stroke-dasharray="3 3"/>
+    <polygon points="16,-4 22,0 16,4" fill="#34d399"/>
+  </g>
+
+  <!-- ========================================================== -->
+  <!-- STEP 4: 专家现场开方                                       -->
+  <!-- ========================================================== -->
+  <g transform="translate(724, 115)" filter="url(#cardShadow)">
+    <rect x="0" y="0" width="208" height="295" rx="12" fill="url(#cardBg)" stroke="#fbbf24" stroke-width="1.2" stroke-opacity="0.5"/>
+    <rect x="0" y="0" width="208" height="3" rx="1.5" fill="url(#step4Grad)"/>
+
+    <!-- Step Badge & Dot -->
+    <circle cx="22" cy="24" r="5" fill="#fbbf24" filter="url(#dotGlow)"/>
+    <text x="34" y="28" class="wf-mono" font-size="11" font-weight="700" fill="#fbbf24">STEP 04</text>
+    <rect x="146" y="14" width="48" height="20" rx="10" fill="#451a03" stroke="#f59e0b" stroke-width="1"/>
+    <text x="170" y="28" text-anchor="middle" class="wf-mono" font-size="10" font-weight="700" fill="#fde68a">DIFF</text>
+
+    <!-- Step Title -->
+    <text x="16" y="60" class="wf-sans" font-size="16" font-weight="700" fill="#ffffff">专家现场开方</text>
+    <text x="16" y="78" class="wf-sans" font-size="11" font-weight="500" fill="#64748b">单一职责解耦处方</text>
+
+    <!-- Prompt Box -->
+    <rect x="12" y="92" width="184" height="60" rx="8" fill="#050914" stroke="#1e293b" stroke-width="1"/>
+    <text x="20" y="115" class="wf-sans" font-size="11" fill="#fde68a">“针对查出的上帝节点，</text>
+    <text x="20" y="135" class="wf-sans" font-size="11" fill="#fbbf24">给我分步解耦计划”</text>
+
+    <!-- Bullet Points -->
+    <g transform="translate(14, 168)">
+      <circle cx="4" cy="6" r="2.5" fill="#fbbf24"/>
+      <text x="14" y="10" class="wf-sans" font-size="11" fill="#cbd5e1">上下游拓扑切片提取</text>
+      
+      <circle cx="4" cy="30" r="2.5" fill="#fbbf24"/>
+      <text x="14" y="34" class="wf-sans" font-size="11" fill="#cbd5e1">明确单一职责目标模式</text>
+
+      <circle cx="4" cy="54" r="2.5" fill="#fbbf24"/>
+      <text x="14" y="58" class="wf-sans" font-size="11" fill="#cbd5e1">结构化重构代码骨架 Diff</text>
+    </g>
+
+    <!-- Bottom Tag -->
+    <rect x="12" y="254" width="184" height="26" rx="6" fill="#2d1704" stroke="#d97706" stroke-width="0.8"/>
+    <text x="104" y="271" text-anchor="middle" class="wf-mono" font-size="10.5" font-weight="600" fill="#fbbf24">Agent Plan &amp; Diff</text>
+  </g>
+
+  <!-- Connector 4 -> 5 -->
+  <g transform="translate(932, 252)">
+    <line x1="0" y1="0" x2="16" y2="0" stroke="#fbbf24" stroke-width="1.8" stroke-dasharray="3 3"/>
+    <polygon points="16,-4 22,0 16,4" fill="#fbbf24"/>
+  </g>
+
+  <!-- ========================================================== -->
+  <!-- STEP 5: 隔离开刀 ➔ 卷帘验收                                -->
+  <!-- ========================================================== -->
+  <g transform="translate(952, 115)" filter="url(#cardShadow)">
+    <rect x="0" y="0" width="208" height="295" rx="12" fill="url(#cardBg)" stroke="#f43f5e" stroke-width="1.2" stroke-opacity="0.5"/>
+    <rect x="0" y="0" width="208" height="3" rx="1.5" fill="url(#step5Grad)"/>
+
+    <!-- Step Badge & Dot -->
+    <circle cx="22" cy="24" r="5" fill="#f43f5e" filter="url(#dotGlow)"/>
+    <text x="34" y="28" class="wf-mono" font-size="11" font-weight="700" fill="#f43f5e">STEP 05</text>
+    <rect x="138" y="14" width="56" height="20" rx="10" fill="#4c0519" stroke="#e11d48" stroke-width="1"/>
+    <text x="166" y="28" text-anchor="middle" class="wf-mono" font-size="10" font-weight="700" fill="#fecdd3">VERIFY</text>
+
+    <!-- Step Title -->
+    <text x="16" y="60" class="wf-sans" font-size="16" font-weight="700" fill="#ffffff">隔离开刀·卷帘</text>
+    <text x="16" y="78" class="wf-sans" font-size="11" font-weight="500" fill="#64748b">Worktree 重构验收</text>
+
+    <!-- Action Box -->
+    <rect x="12" y="92" width="184" height="60" rx="8" fill="#050914" stroke="#1e293b" stroke-width="1"/>
+    <text x="20" y="115" class="wf-sans" font-size="11" font-weight="600" fill="#fecdd3">Worktree 隔离开刀</text>
+    <text x="20" y="135" class="wf-mono" font-size="10.5" fill="#34d399">100% 绿灯合入 main</text>
+
+    <!-- Bullet Points -->
+    <g transform="translate(14, 168)">
+      <circle cx="4" cy="6" r="2.5" fill="#f43f5e"/>
+      <text x="14" y="10" class="wf-sans" font-size="11" fill="#cbd5e1">严格执行全量回归测试</text>
+      
+      <circle cx="4" cy="30" r="2.5" fill="#f43f5e"/>
+      <text x="14" y="34" class="wf-sans" font-size="11" fill="#cbd5e1">自动合成架构卷帘对比图</text>
+
+      <circle cx="4" cy="54" r="2.5" fill="#f43f5e"/>
+      <text x="14" y="58" class="wf-sans" font-size="11" fill="#cbd5e1">左右平滑滑动见证解构</text>
+    </g>
+
+    <!-- Bottom Tag -->
+    <rect x="12" y="254" width="184" height="26" rx="6" fill="#360a14" stroke="#be123c" stroke-width="0.8"/>
+    <text x="104" y="271" text-anchor="middle" class="wf-mono" font-size="10.5" font-weight="600" fill="#f43f5e">架构卷帘对比大屏</text>
+  </g>
+</svg>
