@@ -372,8 +372,13 @@
                 }
             }}, {{ passive: false }});
 
-            // 初始应用 50% 分割
+            // 初始视口自动居中定位到屏幕正中央！
             const initRect = wrapper.getBoundingClientRect();
+            panX = initRect.width * 0.5;
+            panY = initRect.height * 0.5;
+            scale = 1.0;
+            updateCamera();
+
             lockedClientX = initRect.left + initRect.width * 0.5;
             updateCurtain(lockedClientX);
         }
@@ -381,7 +386,9 @@
 
         window.onload = function() {
             initCharts();
-            initUnifiedController();
+            setTimeout(function() {
+                initUnifiedController();
+            }, 60);
         };
     </script>
 </body>
