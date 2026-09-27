@@ -216,10 +216,8 @@
             drawLaser(curtainSplitX, H, isLocked);
         }
 
-        function drawGraph(nodes, links, nodeMap, cx, cy, zoom, isBefore) {
-            const sizeScale = Math.pow(zoom, 0.45); // 亚线性缩放：放大画布时球体不会爆炸式变大，保持极致灵动！
-
-            // 1. 绘制轻盈通透的星云光轨连线
+                function drawGraph(nodes, links, nodeMap, cx, cy, zoom, isBefore) {
+            // 1. 绘制带箭头的发光调用连线 (100% 对齐原版 ECharts 连线质感)
             for (const l of links) {
                 const s = nodeMap.get(l.source);
                 const t = nodeMap.get(l.target);
@@ -234,62 +232,85 @@
                 ctx.moveTo(sx, sy);
                 ctx.lineTo(tx, ty);
                 if (l.is_hot) {
-                    ctx.strokeStyle = 'rgba(239, 68, 68, 0.65)';
+                    ctx.strokeStyle = 'rgba(239, 68, 68, 0.7)';
                     ctx.lineWidth = 1.8;
                 } else if (l.is_pipe) {
-                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
+                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
                     ctx.lineWidth = 2.0;
                 } else {
-                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.15)'; // 细微半透明丝线
-                    ctx.lineWidth = 0.8;
+                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.28)';
+                    ctx.lineWidth = 1.2;
                 }
                 ctx.stroke();
+
+                // 绘制方向箭头
+                const angle = Math.atan2(ty - sy, tx - sx);
+                const arrowDist = 12 * Math.min(1.2, zoom);
+                const ax = tx - arrowDist * Math.cos(angle);
+                const ay = ty - arrowDist * Math.sin(angle);
+                ctx.beginPath();
+                ctx.moveTo(ax, ay);
+                ctx.lineTo(ax - 6 * Math.cos(angle - Math.PI / 6), ay - 6 * Math.sin(angle - Math.PI / 6));
+                ctx.lineTo(ax - 6 * Math.cos(angle + Math.PI / 6), ay - 6 * Math.sin(angle + Math.PI / 6));
+                ctx.closePath();
+                ctx.fillStyle = l.is_hot ? '#ef4444' : '#38bdf8';
+                ctx.fill();
             }
 
-            // 2. 绘制灵动精致的节点星尘 (恢复 fullstack-project 灵动微型粒子质感)
+            // 2. 绘制节点球体 (完全对齐原版 ECharts 黄金尺寸与发光立体质感！)
             for (const n of nodes) {
                 const nx = cx + n.x * zoom;
                 const ny = cy + n.y * zoom;
 
-                // 重新精算半径：恶性上帝巨星半径 13px (带强烈光晕)，普通节点严格控制在 3px ~ 6px！
-                let baseR = n.is_mal ? 13 : Math.max(3.2, Math.min(6.5, n.deg * 0.035));
-                if (n.id && n.id.startsWith('pipeline_')) baseR = 7.5;
-                const nr = Math.max(3.0, baseR * sizeScale);
-
-                // 恶性上帝类强烈呼吸光晕
+                // 精准半径对齐 ECharts symbolSize/2：
+                // 上帝类 r=22px，良性中枢 r=13px，微模块 r=10px，普通节点 r=7~9px
+                let r = 8;
                 if (n.is_mal) {
-                    ctx.save();
-                    ctx.shadowColor = 'rgba(239, 68, 68, 0.95)';
-                    ctx.shadowBlur = 28;
-                    ctx.fillStyle = '#ef4444';
-                    ctx.beginPath();
-                    ctx.arc(nx, ny, nr * 1.25, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.restore();
+                    r = 22;
                 } else if (n.name && n.name.includes('[🟢健康门面]')) {
-                    ctx.save();
-                    ctx.shadowColor = 'rgba(52, 211, 153, 0.9)';
-                    ctx.shadowBlur = 20;
-                    ctx.fillStyle = '#10b981';
-                    ctx.beginPath();
-                    ctx.arc(nx, ny, nr * 1.15, 0, Math.PI * 2);
-                    ctx.fill();
-                    ctx.restore();
+                    r = 13;
+                } else if (n.id && n.id.startsWith('pipeline_')) {
+                    r = 10.5;
+                } else if (n.deg >= 200) {
+                    r = 13;
+                } else if (n.deg >= 100) {
+                    r = 10;
+                } else {
+                    r = 7.5;
                 }
 
+                const nr = r * Math.min(1.4, Math.max(0.7, Math.sqrt(zoom)));
+
+                // 节点外发光
+                ctx.save();
+                if (n.is_mal) {
+                    ctx.shadowColor = 'rgba(239, 68, 68, 0.95)';
+                    ctx.shadowBlur = 24;
+                } else if (n.name && n.name.includes('[🟢健康门面]')) {
+                    ctx.shadowColor = 'rgba(16, 185, 129, 0.7)';
+                    ctx.shadowBlur = 18;
+                } else if (n.deg >= 100) {
+                    ctx.shadowColor = 'rgba(56, 189, 248, 0.5)';
+                    ctx.shadowBlur = 12;
+                }
                 ctx.beginPath();
                 ctx.arc(nx, ny, nr, 0, Math.PI * 2);
                 ctx.fillStyle = n.color;
                 ctx.fill();
-                ctx.strokeStyle = n.is_mal ? '#ffffff' : (n.name && n.name.includes('[🟢健康门面]') ? '#a7f3d0' : '#1e293b');
-                ctx.lineWidth = n.is_mal ? 2.0 : 1.0;
+                ctx.restore();
+
+                // 节点精致描边 (ECharts 同款 borderWidth)
+                ctx.beginPath();
+                ctx.arc(nx, ny, nr, 0, Math.PI * 2);
+                ctx.strokeStyle = n.is_mal ? '#ffffff' : (n.name && n.name.includes('[🟢健康门面]') ? '#ffffff' : '#1e293b');
+                ctx.lineWidth = n.is_mal || (n.name && n.name.includes('[🟢健康门面]')) ? 2.5 : 1.5;
                 ctx.stroke();
 
-                // 3. 标签精细化展示：只标注核心风暴节点与大中枢，杜绝文字重叠打架！
-                const isKeyNode = n.is_mal || (n.name && (n.name.includes('[🟢健康门面]') || n.id.startsWith('pipeline_'))) || n.deg > 250;
-                if (isKeyNode || (hoveredNode && hoveredNode.id === n.id)) {
-                    ctx.font = `${n.is_mal || isKeyNode ? 'bold 11px' : '10px'} sans-serif`;
-                    ctx.fillStyle = n.is_mal ? '#fca5a5' : (n.name && n.name.includes('[🟢健康门面]') ? '#6ee7b7' : '#cbd5e1');
+                // 3. 文字标签排布 (11px清晰字号)
+                const isProminent = n.is_mal || (n.name && (n.name.includes('[🟢健康门面]') || n.id.startsWith('pipeline_'))) || n.deg >= 120;
+                if (isProminent || (hoveredNode && hoveredNode.id === n.id)) {
+                    ctx.font = `${n.is_mal ? 'bold 12px' : '11px'} -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+                    ctx.fillStyle = n.is_mal ? '#fca5a5' : (n.name && n.name.includes('[🟢健康门面]') ? '#6ee7b7' : '#e2e8f0');
                     ctx.fillText(n.name, nx + nr + 6, ny + 4);
                 }
             }
