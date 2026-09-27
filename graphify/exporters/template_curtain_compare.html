@@ -64,30 +64,27 @@
             cursor: grabbing;
         }
 
-        /* 统一的摄像机变换舞台 (Unified Camera Stage) */
-        /* 两个画布都画在这个舞台里，缩放平移直接作用在舞台上，在数学上 100% 绝对锁死对齐！ */
-        #camera-stage {
+        .camera-stage {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            transform-origin: 0 0;
+            transform-origin: center center;
             will-change: transform;
         }
 
-        /* 底层 Before 画布 (铺底实色背景) */
-        #layer-before {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: #080c14;
+        #camera-stage-before {
             z-index: 10;
         }
 
-        /* 顶层 After 容器 (带实色背景，由 clip-path 物理切除！) */
+        .canvas-layer {
+            width: 100%;
+            height: 100%;
+            background: #080c14;
+        }
+
+        /* 顶层 After 容器：全屏绝对定位遮罩，由 clip-path 硬件裁剪 */
         #layer-after-container {
             position: absolute;
             top: 0;
@@ -95,13 +92,8 @@
             width: 100%;
             height: 100%;
             z-index: 20;
-            /* 由 JS 实时根据鼠标位置更新 clip-path: polygon(splitX 0, 100% 0, 100% 100%, splitX 100%) */
-        }
-
-        #layer-after {
-            width: 100%;
-            height: 100%;
-            background: #080c14;
+            overflow: hidden;
+            pointer-events: none;
         }
 
         /* 激光分割线轴 (Laser Divider) */
@@ -183,14 +175,15 @@
         <div class="floating-label" id="label-before">🔴 改造前 (Before: 居中猩红上帝病灶 + 错综红线纠缠)</div>
         <div class="floating-label" id="label-after">🟢 改造后 (After: 上帝病灶彻底瓦解 ➔ 蓝绿微模块流水线)</div>
 
-        <!-- 统一的摄像机变换舞台 -->
-        <div id="camera-stage">
-            <!-- 底层：Before 改造前画布 -->
-            <div id="layer-before"></div>
+        <!-- 底层：Before 摄像机舞台 -->
+        <div id="camera-stage-before" class="camera-stage">
+            <div id="layer-before" class="canvas-layer"></div>
+        </div>
 
-            <!-- 顶层：After 改造后画布容器 (由 clip-path 物理切除) -->
-            <div id="layer-after-container">
-                <div id="layer-after"></div>
+        <!-- 顶层：After 卷帘视口遮罩 (独立于舞台外，直接裁切屏幕像素！) -->
+        <div id="layer-after-container">
+            <div id="camera-stage-after" class="camera-stage">
+                <div id="layer-after" class="canvas-layer"></div>
             </div>
         </div>
 
@@ -224,6 +217,7 @@
                 series: [{
                     type: 'graph',
                     layout: 'none',
+                    center: ['50%', '50%'],
                     data: NODES_BEFORE,
                     links: LINKS_BEFORE,
                     roam: false, // 禁用 ECharts 内部 roam，交由统一 Camera 舞台驱动！
@@ -239,6 +233,7 @@
                 series: [{
                     type: 'graph',
                     layout: 'none',
+                    center: ['50%', '50%'],
                     data: NODES_AFTER,
                     links: LINKS_AFTER,
                     roam: false, // 禁用 ECharts 内部 roam，交由统一 Camera 舞台驱动！
@@ -278,8 +273,12 @@
             let isLocked = false;
             let lockedClientX = 0;
 
+            const stageBefore = document.getElementById('camera-stage-before');
+            const stageAfter = document.getElementById('camera-stage-after');
             function updateCamera() {
-                stage.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
+                const t = `translate(${panX}px, ${panY}px) scale(${scale})`;
+                stageBefore.style.transform = t;
+                stageAfter.style.transform = t;
             }
 
             // 更新激光分割线和裁剪多边形
@@ -289,8 +288,8 @@
                 const pct = Math.max(0, Math.min(100, (xInWrapper / rect.width) * 100));
 
                 laserLine.style.left = `${pct}%`;
-                const stageX = (xInWrapper - panX) / scale;
-                afterContainer.style.clipPath = `polygon(${stageX}px -10000px, 20000px -10000px, 20000px 20000px, ${stageX}px 20000px)`;
+                // 顶层容器直接在视口坐标系上裁切右半侧
+                afterContainer.style.clipPath = `polygon(${pct}% 0, 100% 0, 100% 100%, ${pct}% 100%)`;
             }
 
             // 1. 鼠标移动事件
@@ -372,10 +371,10 @@
                 }
             }, { passive: false });
 
-            // 初始视口自动居中定位到屏幕正中央！
+            // ECharts 已天然 center: ['50%', '50%'] 居中对齐，初始偏移为 0！
             const initRect = wrapper.getBoundingClientRect();
-            panX = initRect.width * 0.5;
-            panY = initRect.height * 0.5;
+            panX = 0;
+            panY = 0;
             scale = 1.0;
             updateCamera();
 
