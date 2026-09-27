@@ -706,22 +706,30 @@ Before traversal, expand the question against the graph's own vocabulary so a wo
 - 自然语言问询：“*帮我看看这个项目架构有什么坏味道？*”、“*有哪些恶性上帝节点需要重构？*”、“*如何解耦/拆分 `<符号名称>`？*”
 - 显式命令：`/graphify navigate` 或 `/graphify navigate <symbol>`
 
-### 执行流程：
+### 自动化闭环执行流程 (用户零门槛，Agent 全自动)：
 
-1. **提取拓扑依赖切片**：
-   在后台通过运行原生命令快速获取结构化诊断（无需编写临时 Python 脚本）：
-   - 若用户询问全局架构坏味道或 `/graphify-jev navigate`：
-     直接执行后台驱动命令：`graphify audit . --json`（或 `graphify audit <path> --json`）；
-   - 若用户指定特定符号或要拆分某个类：
-     在 Python 内部调用 `get_refactor_context(G, symbol)` 获取该病灶的上游调用者（Callers）、下游依赖（Callees）及跨模块文件跨度。
+1. **【扫描阶段自动展示战情大屏 (Before)】**：
+   在后台执行 `graphify-jev audit . --json` 提取结构化体检数据，并**自动确保本地展示服务处于就绪状态**：
+   - 自动生成 `graphify-out/graph_radar.html`；
+   - 检查并拉起 `graphify-jev serve . --port 8899`（若服务已在运行则直接复用）；
+   - **在回答开头主动、自然地向用户呈现实时大屏入口**：
+     > “🌐 **已为您开启当前架构战情大屏**：[http://localhost:8899/graph_radar.html](http://localhost:8899/graph_radar.html)  
+     > 您可直观查看当前全库的核心中枢与恶性上帝病灶分布。”
 
-2. **Agent 专家现场开具重构处方与对比战情中心**：
-   Agent 结合提取到的结构化拓扑切片与本地真实源码，为开发者输出结构化重构方案：
+2. **Agent 专家现场开具重构处方**：
+   结合结构化拓扑切片与本地真实源码，为开发者输出结构化重构方案：
    - 🔴 **病灶成因诊断**：指出违背单一职责原则（SRP）的具体证据（如“同时被 5 个不同社区的 12 个模块依赖”）；
-   - 🛡️ **目标架构与解耦模式**：推荐具体的重构模式（如防腐层 Facade、策略模式 Strategy、领域事件驱动 Domain Event 等）；
+   - 🛡️ **目标架构与解耦模式**：推荐具体的重构模式（如防腐层 Facade、策略模式 Strategy、管道过滤器 Pipeline 等）；
    - 📋 **分步安全实施路径**：第 1 步先抽离公共接口/契约，第 2 步迁移子逻辑，第 3 步平滑切换调用方；
-   - 💻 **重构伪代码 / 代码骨架 Diff**：直接给出拆分后的模块骨架示例；
-   - 🌐 **唤醒大屏对比**：提示用户已就绪的 Web 战情大屏或 ComfyUI 风格卷帘对比链接（`http://localhost:8899/curtain_compare.html`），让用户直观检视重构前后上帝节点消解的视觉成果。
+   - 💻 **重构伪代码 / 代码骨架 Diff**：直接给出拆分后的模块骨架示例。
+
+3. **【重构完成自动呈现实战对比卷帘 (Before + After)】**：
+   在完成代码开刀重构并通过全量测试后，**无需用户开口索要，Agent 必须主动生成并呈现实时对比大屏**：
+   - 自动基于重构前后的图谱生成 ComfyUI 风格卷帘对比页面 `graphify-out/curtain_compare.html`；
+   - **在完工汇报中自然呈现直达对比链接**：
+     > “🎉 **重构已全部完成，全量测试 100% 绿灯通过！**  
+     > ↔ **为您自动生成了 ComfyUI 风格画卷对比大屏**：[http://localhost:8899/curtain_compare.html](http://localhost:8899/curtain_compare.html)  
+     > 您可以直接在浏览器中左右滑动发光激光线，亲自见证原本狰狞的恶性上帝病灶如何在全景星系中平滑消解为清爽的微模块流水线！”
 
 ---
 
