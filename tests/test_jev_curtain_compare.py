@@ -41,9 +41,9 @@ class TestCurtainCompareExporter(unittest.TestCase):
                 content = f.read()
 
             # 验证关键元素注入
-            self.assertIn("COMFYUI STYLE", content)
-            self.assertIn("clipPath", content)
-            self.assertIn("laser-line", content)
+            self.assertIn("badge-comfy", content)
+            self.assertIn("main-canvas", content)
+            self.assertIn("drawLaser", content)
             self.assertIn("NODES_BEFORE", content)
             self.assertIn("NODES_AFTER", content)
             self.assertIn("build_from_json()", content)
