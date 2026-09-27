@@ -25,9 +25,14 @@ def to_curtain_compare_html(
         content = template_path.read_text(encoding="utf-8")
     else:
         # 回退至知识图谱查看器目录下的生产模板
-        viewer_path = Path("/home/user/project/knowledge-graph-viewer/curtain_compare.html")
-        if viewer_path.is_file():
-            content = viewer_path.read_text(encoding="utf-8")
+        candidate_paths = [
+            Path.cwd() / "knowledge-graph-viewer" / "curtain_compare.html",
+            Path(__file__).resolve().parents[3] / "knowledge-graph-viewer" / "curtain_compare.html",
+            Path.home() / ".graphify" / "curtain_compare.html",
+        ]
+        fallback_file = next((p for p in candidate_paths if p.is_file()), None)
+        if fallback_file and fallback_file.is_file():
+            content = fallback_file.read_text(encoding="utf-8")
         else:
             content = "<html><body>Curtain Compare Ready</body></html>"
 
