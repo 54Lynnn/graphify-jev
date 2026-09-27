@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 170" width="100%" height="100%" fill="none">
+  <defs>
+    <linearGradient id="wfBgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16"/>
+      <stop offset="100%" stop-color="#0b111e"/>
+    </linearGradient>
+
+    <linearGradient id="stepBorderGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.3"/>
+      <stop offset="50%" stop-color="#818cf8" stop-opacity="0.2"/>
+      <stop offset="100%" stop-color="#34d399" stop-opacity="0.3"/>
+    </linearGradient>
+
+    <filter id="stepShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="4" flood-color="#000000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <style>
+    .step-num { font-family: "JetBrains Mono", Menlo, Consolas, monospace; font-size: 11px; font-weight: 700; fill: #38bdf8; }
+    .step-title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif; font-size: 13px; font-weight: 700; fill: #f8fafc; }
+    .step-desc { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Inter", sans-serif; font-size: 11px; fill: #94a3b8; }
+    .step-cmd { font-family: "JetBrains Mono", Menlo, Consolas, monospace; font-size: 10px; fill: #cbd5e1; }
+  </style>
+
+  <!-- Container Box -->
+  <rect x="1" y="1" width="958" height="168" rx="14" fill="url(#wfBgGrad)" stroke="url(#stepBorderGrad)" stroke-width="1.2"/>
+
+  <!-- Horizontal Connector Line behind cards -->
+  <line x1="80" y1="85" x2="880" y2="85" stroke="#1e293b" stroke-width="2"/>
+  <line x1="80" y1="85" x2="880" y2="85" stroke="rgba(56, 189, 248, 0.4)" stroke-width="1.5" stroke-dasharray="6 6"/>
+
+  <!-- STEP 1 -->
+  <g transform="translate(18, 18)" filter="url(#stepShadow)">
+    <rect x="0" y="0" width="172" height="134" rx="10" fill="#0f172a" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>
+    <rect x="10" y="10" width="46" height="18" rx="9" fill="#1e293b"/>
+    <text x="17" y="23" class="step-num">01</text>
+    <text x="64" y="24" class="step-title">极速准备</text>
+    <text x="12" y="52" class="step-desc">克隆与本地安装</text>
+    <rect x="10" y="72" width="152" height="50" rx="6" fill="#090d16" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+    <text x="18" y="92" class="step-cmd">git clone ...</text>
+    <text x="18" y="108" class="step-cmd">pip install -e .</text>
+  </g>
+
+  <!-- STEP 2 -->
+  <g transform="translate(204, 18)" filter="url(#stepShadow)">
+    <rect x="0" y="0" width="172" height="134" rx="10" fill="#0f172a" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>
+    <rect x="10" y="10" width="46" height="18" rx="9" fill="#1e293b"/>
+    <text x="17" y="23" class="step-num">02</text>
+    <text x="64" y="24" class="step-title">挂载 Skill</text>
+    <text x="12" y="52" class="step-desc">全平台 Agent 自动注号</text>
+    <rect x="10" y="72" width="152" height="50" rx="6" fill="#090d16" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+    <text x="18" y="92" class="step-cmd">graphify-jev</text>
+    <text x="18" y="108" class="step-cmd">  install</text>
+  </g>
+
+  <!-- STEP 3 -->
+  <g transform="translate(390, 18)" filter="url(#stepShadow)">
+    <rect x="0" y="0" width="176" height="134" rx="10" fill="#0f172a" stroke="rgba(56, 189, 248, 0.3)" stroke-width="1.2"/>
+    <rect x="10" y="10" width="46" height="18" rx="9" fill="rgba(56, 189, 248, 0.15)"/>
+    <text x="17" y="23" class="step-num">03</text>
+    <text x="64" y="24" class="step-title">扫描问诊</text>
+    <text x="12" y="52" class="step-desc">AST 拓扑 + Jev 体检</text>
+    <rect x="10" y="72" width="156" height="50" rx="6" fill="#090d16" stroke="rgba(56, 189, 248, 0.2)" stroke-width="1"/>
+    <text x="18" y="92" class="step-cmd" fill="#38bdf8">“扫描我的项目”</text>
+    <text x="18" y="108" class="step-cmd" fill="#64748b">➔ 8899 雷达战情</text>
+  </g>
+
+  <!-- STEP 4 -->
+  <g transform="translate(580, 18)" filter="url(#stepShadow)">
+    <rect x="0" y="0" width="172" height="134" rx="10" fill="#0f172a" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1"/>
+    <rect x="10" y="10" width="46" height="18" rx="9" fill="#1e293b"/>
+    <text x="17" y="23" class="step-num">04</text>
+    <text x="64" y="24" class="step-title">开具处方</text>
+    <text x="12" y="52" class="step-desc">提取调用切片与模式</text>
+    <rect x="10" y="72" width="152" height="50" rx="6" fill="#090d16" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+    <text x="18" y="92" class="step-cmd">“给出解耦方案”</text>
+    <text x="18" y="108" class="step-cmd">➔ 管道模式 Diff</text>
+  </g>
+
+  <!-- STEP 5 -->
+  <g transform="translate(766, 18)" filter="url(#stepShadow)">
+    <rect x="0" y="0" width="176" height="134" rx="10" fill="#0f172a" stroke="rgba(52, 211, 153, 0.3)" stroke-width="1.2"/>
+    <rect x="10" y="10" width="46" height="18" rx="9" fill="rgba(52, 211, 153, 0.15)"/>
+    <text x="17" y="23" class="step-num" fill="#34d399">05</text>
+    <text x="64" y="24" class="step-title">卷帘验收</text>
+    <text x="12" y="52" class="step-desc">隔离重构与 60FPS 卷帘</text>
+    <rect x="10" y="72" width="156" height="50" rx="6" fill="#090d16" stroke="rgba(52, 211, 153, 0.2)" stroke-width="1"/>
+    <text x="18" y="92" class="step-cmd" fill="#34d399">测试 100% 绿灯合入</text>
+    <text x="18" y="108" class="step-cmd" fill="#34d399">➔ 架构卷帘对比图</text>
+  </g>
+</svg>
