@@ -23,8 +23,7 @@
   <a href="#-核心痛点与代差-why-it-matters"><b>💡 痛点与核心代差</b></a> •
   <a href="#-用户视角黄金工作流-the-golden-5-step-flow"><b>🌟 黄金五步工作流</b></a> •
   <a href="#-快速上手-quickstart"><b>🚀 极速上手</b></a> •
-  <a href="#-工业级实战案例"><b>🩺 实战案例</b></a> •
-  <a href="#-可视化工程与设计标准"><b>🎨 视觉设计标准</b></a>
+  <a href="#-工业级实战案例"><b>🩺 实战案例</b></a>
 </p>
 
 </div>
@@ -36,12 +35,10 @@
 > **拒绝概念包装，以真实代码库的架构治理硬指标说话。**  
 > Graphify-Jev 在自身核心模块实施自举吃狗粮（Dogfooding），并将治理战果完整呈现在本地双模战情中心与 **架构卷帘对比大屏** 中。
 
-<div align="center">
-  <a href="http://localhost:8899/curtain_compare.html" target="_blank">
-    <img src="assets/curtain-swipe.gif" alt="架构卷帘对比真实动态效果" width="100%" />
-  </a>
-  <p><sub><i>↔️ 单画布物理视口镜像锁死，鼠标自由左右滑动平滑见证拓扑重构跃迁（本地服务端口 localhost:8899/curtain_compare.html）</i></sub></p>
-</div>
+<p align="center">
+  <img src="assets/curtain-swipe.gif" alt="架构卷帘对比真实动态效果" width="100%" />
+</p>
+<p align="center"><sub><i>↔️ 单画布物理视口镜像锁死，鼠标自由左右滑动平滑见证拓扑重构跃迁（本地服务端口：<a href="http://localhost:8899/curtain_compare.html" target="_blank">http://localhost:8899/curtain_compare.html</a>）</i></sub></p>
 
 <br>
 
@@ -242,24 +239,6 @@ graphify-jev serve . --port 8899
 - **重构方案**：采用**管道-过滤器模式**，新建 `graphify/build_pipeline.py`，提炼为 `ExtractionPreflight`（输入预检）、`GhostNodeResolver`（孤魂节点处理）与 `GraphAssembler`（拓扑组装）三大管道处理器；
 - **战绩验收**：核心函数瘦身为 25 行极简门面（Facade），**112 个测试用例 100% 一次性全绿通过**，对外 227 处调用零破坏兼容；
 - **卷帘验证**：在架构卷帘对比大屏中清晰见证 246° 上帝节点平滑分解为 35° 健康微模块集群（耦合度降幅 85.7%，架构评级跃迁为 A+）。
-
----
-
-## 🎨 可视化工程与设计标准
-
-本项目严格贯彻专业暗黑开发者工具的设计语言与性能标准（完整工程规范详见 [docs/VISUAL-DESIGN-STANDARD.md](docs/VISUAL-DESIGN-STANDARD.md)）：
-
-1. **纯单 Canvas 统一物理视口（Unified Viewport Camera）**：  
-   彻底弃用多实例图表同步方案，全屏采用唯一全尺寸 HTML5 2D Canvas。维护全局视口矩阵（`cameraX`、`cameraY`、`cameraZoom`），在单一 `render()` 循环内通过 `ctx.clip()` 同频绘制改造前与改造后图谱，**数学级镜像绝对锁死，0 延迟、0 掉帧、60 FPS 丝滑顺畅**；
-2. **双层嵌套立体环小球 (Dual-Ring Layering)**：  
-   外围高亮发光环包裹饱满内胆实色，呈现精致水滴立体质感；严格控制黄金呼吸间距，杜绝大球挤贴；
-3. **纯净微弧光轨 (Curved Smooth Trails)**：  
-   摒弃粗糙的三角箭头，采用二次贝塞尔曲线（`curveness: 0.12`）与半透明细光轨；仅对恶性病灶调用链强化告警色彩；
-4. **100% 标签覆盖与状态同轴跃迁**：  
-   全量节点完整标注符号名。分割线左侧（Before）文字呈现警示红，分割线右侧（After）文字同轴跃迁为健康翠绿；
-5. **长按平移漫游 vs 原地单击定格**：  
-   - 长按拖拽（位移 > 3px）：画布视口自由漫游，松开后保持当前锁定状态；
-   - 原地单击（位移 < 3px）：分割线原地定格锁定为暖金琥珀色，光标移出画卷自由悬停查阅小球 Tooltip 详情。
 
 ---
 
