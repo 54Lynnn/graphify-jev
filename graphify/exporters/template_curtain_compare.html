@@ -72,7 +72,7 @@
         #chart-after {
             z-index: 20;
             background: #080c14;
-            /* 由 JS 实时通过 clip-path 物理切片 */
+            pointer-events: none; /* 彻底穿透给底层统一处理拖拽与缩放，绝无脱节！ */
         }
 
         #laser-line {
@@ -218,20 +218,19 @@
                 }]
             });
 
-            // 彻底解决拖拽与缩放同步：双向瞬时镜像派发
-            let isSyncing = false;
-            function syncRoam(fromChart, toChart, params) {
-                if (isSyncing) return;
-                isSyncing = true;
-                toChart.dispatchAction(Object.assign({ type: 'graphRoam' }, params));
-                isSyncing = false;
-            }
-
+            // 绝对单向同频驱动：底层作为主导，顶层 100% 同帧镜像跟随
             chartBefore.on('graphRoam', function (params) {
-                syncRoam(chartBefore, chartAfter, params);
-            });
-            chartAfter.on('graphRoam', function (params) {
-                syncRoam(chartAfter, chartBefore, params);
+                const action = { type: 'graphRoam' };
+                if (params.dx !== undefined) {
+                    action.dx = params.dx;
+                    action.dy = params.dy;
+                }
+                if (params.zoom !== undefined) {
+                    action.zoom = params.zoom;
+                    action.originX = params.originX;
+                    action.originY = params.originY;
+                }
+                chartAfter.dispatchAction(action);
             });
 
             window.addEventListener('resize', () => {
