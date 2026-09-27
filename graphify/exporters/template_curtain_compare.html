@@ -241,21 +241,8 @@
             });
         }
 
-        // 统一调度引擎：以 60 FPS 瞬时同步双画布的平移与缩放（0 延迟、完全同频！）
-        function syncBothCharts(center, zoom) {
-            currentCenter = center;
-            currentZoom = zoom;
-
-            // 两个图表同时同步更新，使用 setOption batch，绝对同一帧落地！
-            chartBefore.setOption({
-                series: [{ center: center, zoom: zoom }]
-            });
-            chartAfter.setOption({
-                series: [{ center: center, zoom: zoom }]
-            });
-        }
-
-        // 激光卷帘与鼠标交互控制器
+        
+        // 激光卷帘与鼠标交互控制器 (原子级同时驱动双图)
         function initCurtainSwipe() {
             const wrapper = document.getElementById('viewport-wrapper');
             const chartAfterEl = document.getElementById('chart-after');
@@ -264,16 +251,12 @@
 
             let isLocked = false;
             let lockedClientX = 0;
-
-            // 拖拽与点击判定状态
             let isMouseDown = false;
             let hasMovedSignificantly = false;
-            let startClientX = 0;
-            let startClientY = 0;
-
-            // 物理像素偏移量累加器
-            let pixelOffsetX = 0;
-            let pixelOffsetY = 0;
+            let lastX = 0;
+            let lastY = 0;
+            let startX = 0;
+            let startY = 0;
 
             function updateCurtain(clientX) {
                 const rect = wrapper.getBoundingClientRect();
@@ -284,87 +267,92 @@
                 chartAfterEl.style.clipPath = `polygon(${pct}% 0, 100% 0, 100% 100%, ${pct}% 100%)`;
             }
 
-            // 1. 鼠标移动：未锁定时滑动画卷；按住时无论锁不锁定都可以自由拖动画布！
+            // 1. 鼠标移动：同时派发平移增量 dx, dy 给两个图表，绝对同一帧！
             wrapper.addEventListener('mousemove', function(e) {
                 if (isMouseDown) {
-                    const dx = e.clientX - startClientX;
-                    const dy = e.clientY - startClientY;
-                    if (Math.hypot(dx, dy) > 4) {
+                    const dx = e.clientX - lastX;
+                    const dy = e.clientY - lastY;
+                    lastX = e.clientX;
+                    lastY = e.clientY;
+
+                    if (Math.hypot(e.clientX - startX, e.clientY - startY) > 4) {
                         hasMovedSignificantly = true;
                         wrapper.classList.add('dragging');
                     }
 
-                    // 实时将像素偏移转为中心百分比位移
-                    const rect = wrapper.getBoundingClientRect();
-                    const newCenter = [
-                        (rect.width * 0.5 + pixelOffsetX + dx),
-                        (rect.height * 0.5 + pixelOffsetY + dy)
-                    ];
-                    syncBothCharts(newCenter, currentZoom);
+                    // 原子级同时向两张画布派发物理平移！
+                    const roamAction = { type: 'graphRoam', dx: dx, dy: dy };
+                    chartBefore.dispatchAction(roamAction);
+                    chartAfter.dispatchAction(roamAction);
                 }
 
-                // 未锁定时，激光卷帘随时跟随光标漫游
                 if (!isLocked) {
                     updateCurtain(e.clientX);
                 }
             });
 
-            // 2. 鼠标按下：开始记录拖拽起点
+            // 2. 鼠标按下：记录起始点
             wrapper.addEventListener('mousedown', function(e) {
-                if (e.button === 0 || e.button === 1) {
+                if (e.button === 0 || e.button === 1 || e.button === 2) {
                     isMouseDown = true;
                     hasMovedSignificantly = false;
-                    startClientX = e.clientX;
-                    startClientY = e.clientY;
+                    startX = e.clientX;
+                    startY = e.clientY;
+                    lastX = e.clientX;
+                    lastY = e.clientY;
                 }
             });
 
-            // 3. 鼠标抬起：判定是“长按拖拽”还是“短按单击”
+            // 3. 鼠标抬起：判定是拖拽平移还是单击定格
             window.addEventListener('mouseup', function(e) {
                 if (isMouseDown) {
                     isMouseDown = false;
                     wrapper.classList.remove('dragging');
 
-                    if (hasMovedSignificantly) {
-                        // 说明是拖拽平移：提交位移累加，不触发锁定切换！
-                        const dx = e.clientX - startClientX;
-                        const dy = e.clientY - startClientY;
-                        pixelOffsetX += dx;
-                        pixelOffsetY += dy;
-                    } else {
-                        // 说明是短按点击单击：切换锁定/解锁状态！
-                        if (e.button === 0 && wrapper.contains(e.target)) {
-                            isLocked = !isLocked;
-                            lockedClientX = e.clientX;
-
-                            if (isLocked) {
-                                laserLine.classList.add('locked');
-                                lockIndicator.classList.add('locked');
-                                lockIndicator.innerHTML = '🔒 画卷已定格 · 光标可自由移出画卷悬停查阅节点函数名 · 再次单击解除';
-                                updateCurtain(lockedClientX);
-                            } else {
-                                laserLine.classList.remove('locked');
-                                lockIndicator.classList.remove('locked');
-                                lockIndicator.innerHTML = '🔓 卷帘漫游中 · 任意长按拖动画布 · 单击鼠标左键锁定位置自由悬停节点';
-                                updateCurtain(e.clientX);
-                            }
+                    if (!hasMovedSignificantly && e.button === 0 && wrapper.contains(e.target)) {
+                        // 单击切换锁定
+                        isLocked = !isLocked;
+                        lockedClientX = e.clientX;
+                        if (isLocked) {
+                            laserLine.classList.add('locked');
+                            lockIndicator.classList.add('locked');
+                            lockIndicator.innerHTML = '🔒 画卷已定格 · 光标可自由移出画卷悬停查阅节点函数名 · 再次单击解除';
+                            updateCurtain(lockedClientX);
+                        } else {
+                            laserLine.classList.remove('locked');
+                            lockIndicator.classList.remove('locked');
+                            lockIndicator.innerHTML = '🔓 卷帘漫游中 · 任意长按拖动画布 · 单击鼠标左键锁定位置自由悬停节点';
+                            updateCurtain(e.clientX);
                         }
                     }
                 }
             });
 
-            // 4. 滚轮统一同心缩放
+            wrapper.addEventListener('contextmenu', e => e.preventDefault());
+
+            // 4. 滚轮统一同轴缩放：同时向两张画布派发绝对同心缩放！
             wrapper.addEventListener('wheel', function(e) {
                 e.preventDefault();
+                const rect = wrapper.getBoundingClientRect();
                 const zoomFactor = e.deltaY < 0 ? 1.15 : 0.85;
-                const newZoom = Math.max(0.2, Math.min(6.0, currentZoom * zoomFactor));
-                syncBothCharts(currentCenter, newZoom);
+                const originX = e.clientX - rect.left;
+                const originY = e.clientY - rect.top;
+
+                const zoomAction = {
+                    type: 'graphRoam',
+                    zoom: zoomFactor,
+                    originX: originX,
+                    originY: originY
+                };
+
+                // 原子同帧派发给双画布！
+                chartBefore.dispatchAction(zoomAction);
+                chartAfter.dispatchAction(zoomAction);
             }, { passive: false });
 
-            // 初始应用 50% 居中分割与自适应居中对齐
+            // 初始应用 50% 居中分割
             const rect = wrapper.getBoundingClientRect();
             updateCurtain(rect.left + rect.width * 0.5);
-            syncBothCharts([rect.width * 0.5, rect.height * 0.5], 1.0);
         }
 
         window.onload = function() {
