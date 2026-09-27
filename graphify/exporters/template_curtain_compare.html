@@ -194,11 +194,15 @@
             </div>
         </div>
 
+        
+        <!-- 卷帘锚定状态指示 -->
+        <div id="lock-indicator">🔓 卷帘联动中 · 点击鼠标左键即可锁定位置自由探索节点</div>
+
         <!-- 激光分割线 -->
         <div id="laser-line"><div id="laser-handle"></div></div>
 
         <div id="hint-bar">
-            ↔ <b>鼠标在屏幕上左右移动</b> 激光画卷即时对比 · <b>鼠标滚轮缩放 / 按住拖拽平移</b> 双画布 100% 绝对物理镜像锁死！
+            🖱️ <b>点击鼠标左键</b> 锁定/解锁画卷 · <b>鼠标移动</b> 漫游画卷 · <b>滚轮缩放/拖拽</b> 双画布镜像锁死 · <b>悬停节点</b> 查阅函数名与指标
         </div>
     </div>
 
@@ -254,70 +258,100 @@
             });
         }
 
-        // 统一摄像机与激光卷帘控制器 (Unified Camera & ComfyUI Curtain Swipe)
+
+        // 统一摄像机与激光卷帘控制器 (带左键锁定/自由探索模式)
         function initUnifiedController() {
             const wrapper = document.getElementById('viewport-wrapper');
             const stage = document.getElementById('camera-stage');
             const afterContainer = document.getElementById('layer-after-container');
             const laserLine = document.getElementById('laser-line');
+            const lockIndicator = document.getElementById('lock-indicator');
 
-            // 摄像机物理状态 (Camera Matrix)
+            // 状态
             let panX = 0;
             let panY = 0;
             let scale = 1.0;
             let isDragging = false;
+            let dragMoved = false;
             let lastMouseX = 0;
             let lastMouseY = 0;
+            let isLocked = false;
+            let lockedClientX = 0;
 
             function updateCamera() {
                 stage.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
             }
 
-            // 激光卷帘：根据鼠标在主视口的绝对 X 百分比进行裁剪
+            // 更新激光分割线和裁剪多边形
             function updateCurtain(clientX) {
                 const rect = wrapper.getBoundingClientRect();
                 const xInWrapper = clientX - rect.left;
                 const pct = Math.max(0, Math.min(100, (xInWrapper / rect.width) * 100));
 
-                // 激光线位置
                 laserLine.style.left = `${pct}%`;
-
-                // 重点：由于 afterContainer 位于进行了 transform 的 stage 内部，
-                // 我们直接将 clip-path 作用在视口坐标系上，使激光线与切片完全无缝吻合！
-                // 将视口 xInWrapper 反向映射到 stage 内部坐标：
                 const stageX = (xInWrapper - panX) / scale;
                 afterContainer.style.clipPath = `polygon(${stageX}px -10000px, 20000px -10000px, 20000px 20000px, ${stageX}px 20000px)`;
             }
 
-            // 1. 鼠标移动：实时滑动激光卷帘
+            // 1. 鼠标移动事件
             wrapper.addEventListener('mousemove', function(e) {
                 if (isDragging) {
                     const dx = e.clientX - lastMouseX;
                     const dy = e.clientY - lastMouseY;
+                    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+                        dragMoved = true;
+                    }
                     panX += dx;
                     panY += dy;
                     lastMouseX = e.clientX;
                     lastMouseY = e.clientY;
                     updateCamera();
+                    // 拖拽平移时，若已锁定则保持在视口当前比例，更新内部切片
+                    if (isLocked) {
+                        updateCurtain(lockedClientX);
+                    }
                 }
-                updateCurtain(e.clientX);
+
+                // 若未锁定，画卷轴跟随鼠标移动
+                if (!isLocked) {
+                    updateCurtain(e.clientX);
+                }
             });
 
-            // 2. 鼠标拖拽平移 (Drag Pan)
+            // 2. 鼠标按下 (平移起始)
             wrapper.addEventListener('mousedown', function(e) {
-                if (e.button === 0 || e.button === 1 || e.button === 2) {
-                    isDragging = true;
-                    lastMouseX = e.clientX;
-                    lastMouseY = e.clientY;
+                // 左键 (0)、中键 (1)、右键 (2) 均支持平移
+                isDragging = true;
+                dragMoved = false;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+            });
+
+            // 3. 鼠标抬起：判断是否为纯点击 (Click) 切换锁定状态
+            window.addEventListener('mouseup', function(e) {
+                isDragging = false;
+                // 只有左键在未产生大幅拖拽平移时，判定为点击切换锁定
+                if (e.button === 0 && !dragMoved && wrapper.contains(e.target)) {
+                    isLocked = !isLocked;
+                    lockedClientX = e.clientX;
+                    if (isLocked) {
+                        laserLine.classList.add('locked');
+                        lockIndicator.classList.add('locked');
+                        lockIndicator.innerHTML = '🔒 画卷已定格 · 光标可自由移出画卷悬停查阅节点函数名 · 再次点击左键解除';
+                        updateCurtain(lockedClientX);
+                    } else {
+                        laserLine.classList.remove('locked');
+                        lockIndicator.classList.remove('locked');
+                        lockIndicator.innerHTML = '🔓 卷帘联动中 · 点击鼠标左键即可锁定位置自由探索节点';
+                        updateCurtain(e.clientX);
+                    }
                 }
             });
-            window.addEventListener('mouseup', function() {
-                isDragging = false;
-            });
+
             wrapper.addEventListener('contextmenu', e => e.preventDefault());
 
-            // 3. 鼠标滚轮统一缩放 (Unified Wheel Zoom - 以当前鼠标为绝对锚点缩放！)
-            wrapper.addEventListener('wheel', function(e) {
+            // 4. 鼠标滚轮统一缩放 (Anchor Zoom)
+            wrapper.addEventListener('wheel', function(e) {{
                 e.preventDefault();
                 const rect = wrapper.getBoundingClientRect();
                 const mouseX = e.clientX - rect.left;
@@ -326,19 +360,24 @@
                 const zoomFactor = e.deltaY < 0 ? 1.12 : 0.88;
                 const newScale = Math.max(0.15, Math.min(8.0, scale * zoomFactor));
 
-                // 保持鼠标下的世界坐标绝对不动 (Anchor Zoom)
                 panX = mouseX - (mouseX - panX) * (newScale / scale);
                 panY = mouseY - (mouseY - panY) * (newScale / scale);
                 scale = newScale;
 
                 updateCamera();
-                updateCurtain(e.clientX);
-            }, { passive: false });
+                if (isLocked) {
+                    updateCurtain(lockedClientX);
+                } else {
+                    updateCurtain(e.clientX);
+                }
+            }}, {{ passive: false }});
 
-            // 初始应用 50% 居中分割
+            // 初始应用 50% 分割
             const initRect = wrapper.getBoundingClientRect();
-            updateCurtain(initRect.left + initRect.width * 0.5);
+            lockedClientX = initRect.left + initRect.width * 0.5;
+            updateCurtain(lockedClientX);
         }
+
 
         window.onload = function() {
             initCharts();
