@@ -217,7 +217,9 @@
         }
 
         function drawGraph(nodes, links, nodeMap, cx, cy, zoom, isBefore) {
-            // 绘制连线
+            const sizeScale = Math.pow(zoom, 0.45); // 亚线性缩放：放大画布时球体不会爆炸式变大，保持极致灵动！
+
+            // 1. 绘制轻盈通透的星云光轨连线
             for (const l of links) {
                 const s = nodeMap.get(l.source);
                 const t = nodeMap.get(l.target);
@@ -231,25 +233,46 @@
                 ctx.beginPath();
                 ctx.moveTo(sx, sy);
                 ctx.lineTo(tx, ty);
-                ctx.strokeStyle = l.is_hot ? 'rgba(239, 68, 68, 0.7)' : (l.is_pipe ? '#38bdf8' : 'rgba(56, 189, 248, 0.25)');
-                ctx.lineWidth = l.is_hot || l.is_pipe ? 2.2 : 1.0;
+                if (l.is_hot) {
+                    ctx.strokeStyle = 'rgba(239, 68, 68, 0.65)';
+                    ctx.lineWidth = 1.8;
+                } else if (l.is_pipe) {
+                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.9)';
+                    ctx.lineWidth = 2.0;
+                } else {
+                    ctx.strokeStyle = 'rgba(56, 189, 248, 0.15)'; // 细微半透明丝线
+                    ctx.lineWidth = 0.8;
+                }
                 ctx.stroke();
             }
 
-            // 绘制节点
+            // 2. 绘制灵动精致的节点星尘 (恢复 fullstack-project 灵动微型粒子质感)
             for (const n of nodes) {
                 const nx = cx + n.x * zoom;
                 const ny = cy + n.y * zoom;
-                const nr = Math.max(4, n.r * zoom);
 
-                // 发光阴影
+                // 重新精算半径：恶性上帝巨星半径 13px (带强烈光晕)，普通节点严格控制在 3px ~ 6px！
+                let baseR = n.is_mal ? 13 : Math.max(3.2, Math.min(6.5, n.deg * 0.035));
+                if (n.id && n.id.startsWith('pipeline_')) baseR = 7.5;
+                const nr = Math.max(3.0, baseR * sizeScale);
+
+                // 恶性上帝类强烈呼吸光晕
                 if (n.is_mal) {
                     ctx.save();
-                    ctx.shadowColor = 'rgba(239, 68, 68, 0.9)';
-                    ctx.shadowBlur = 24;
+                    ctx.shadowColor = 'rgba(239, 68, 68, 0.95)';
+                    ctx.shadowBlur = 28;
                     ctx.fillStyle = '#ef4444';
                     ctx.beginPath();
-                    ctx.arc(nx, ny, nr, 0, Math.PI * 2);
+                    ctx.arc(nx, ny, nr * 1.25, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                } else if (n.name && n.name.includes('[🟢健康门面]')) {
+                    ctx.save();
+                    ctx.shadowColor = 'rgba(52, 211, 153, 0.9)';
+                    ctx.shadowBlur = 20;
+                    ctx.fillStyle = '#10b981';
+                    ctx.beginPath();
+                    ctx.arc(nx, ny, nr * 1.15, 0, Math.PI * 2);
                     ctx.fill();
                     ctx.restore();
                 }
@@ -258,15 +281,16 @@
                 ctx.arc(nx, ny, nr, 0, Math.PI * 2);
                 ctx.fillStyle = n.color;
                 ctx.fill();
-                ctx.strokeStyle = n.is_mal ? '#ffffff' : '#1e293b';
-                ctx.lineWidth = n.is_mal ? 2.5 : 1;
+                ctx.strokeStyle = n.is_mal ? '#ffffff' : (n.name && n.name.includes('[🟢健康门面]') ? '#a7f3d0' : '#1e293b');
+                ctx.lineWidth = n.is_mal ? 2.0 : 1.0;
                 ctx.stroke();
 
-                // 节点文字标注
-                if (n.is_mal || nr > 10 || zoom > 1.2) {
-                    ctx.font = `${Math.max(10, Math.min(13, 10 * zoom))}px sans-serif`;
-                    ctx.fillStyle = isBefore ? '#fca5a5' : '#cbd5e1';
-                    ctx.fillText(n.name, nx + nr + 4, ny + 4);
+                // 3. 标签精细化展示：只标注核心风暴节点与大中枢，杜绝文字重叠打架！
+                const isKeyNode = n.is_mal || (n.name && (n.name.includes('[🟢健康门面]') || n.id.startsWith('pipeline_'))) || n.deg > 250;
+                if (isKeyNode || (hoveredNode && hoveredNode.id === n.id)) {
+                    ctx.font = `${n.is_mal || isKeyNode ? 'bold 11px' : '10px'} sans-serif`;
+                    ctx.fillStyle = n.is_mal ? '#fca5a5' : (n.name && n.name.includes('[🟢健康门面]') ? '#6ee7b7' : '#cbd5e1');
+                    ctx.fillText(n.name, nx + nr + 6, ny + 4);
                 }
             }
         }
