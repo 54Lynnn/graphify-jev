@@ -245,47 +245,48 @@
                 ctx.stroke();
             }
 
-            // 2. 绘制立体分层小球 (完全复刻 ECharts 截图：内部色 + 外围发光立体描边环！)
+            // 2. 绘制立体分层小球 (黄金尺寸 + 间距呼吸感 + 100% 全量展示函数名)
             for (const n of nodes) {
                 const nx = cx + n.x * zoom;
                 const ny = cy + n.y * zoom;
-                const nr = Math.max(5.0, n.r * Math.pow(zoom, 0.7));
+
+                // 适度微缩 25%，让球与球之间间距清晰拉开，告别重叠！
+                // 上帝巨星 r=15px，核心中枢 r=9.5px，微模块 r=8px，普通节点 r=5.5~7.5px
+                let baseR = n.is_mal ? 15 : (n.name && n.name.includes('[🟢健康门面]') ? 10 : (n.id && n.id.startsWith('pipeline_') ? 8 : Math.max(5.2, Math.min(8.0, n.deg * 0.04 + 4.8))));
+                const nr = Math.max(4.0, baseR * Math.pow(zoom, 0.65));
 
                 // A. 外层柔和霓虹发光晕
                 ctx.save();
                 if (n.is_mal) {
                     ctx.shadowColor = 'rgba(239, 68, 68, 0.95)';
-                    ctx.shadowBlur = 24;
+                    ctx.shadowBlur = 20;
                 } else if (n.name && n.name.includes('[🟢健康门面]')) {
                     ctx.shadowColor = 'rgba(52, 211, 153, 0.85)';
-                    ctx.shadowBlur = 18;
+                    ctx.shadowBlur = 15;
                 } else {
-                    ctx.shadowColor = 'rgba(56, 189, 248, 0.35)';
-                    ctx.shadowBlur = 10;
+                    ctx.shadowColor = 'rgba(56, 189, 248, 0.25)';
+                    ctx.shadowBlur = 8;
                 }
 
-                // B. 外围光环描边 (截图里那一圈高亮有质感的环！)
+                // B. 外围光环描边 (高亮有层次的双层立体环)
                 ctx.beginPath();
                 ctx.arc(nx, ny, nr, 0, Math.PI * 2);
                 ctx.fillStyle = n.ringColor || '#ffffff';
                 ctx.fill();
                 ctx.restore();
 
-                // C. 核心内胆球体 (中间有独立颜色，形成绝美分层立体感！)
-                const innerR = Math.max(3.5, nr - 2.8);
+                // C. 核心内胆球体 (中间有独立颜色，外圈裹光环)
+                const innerR = Math.max(2.8, nr - 2.0);
                 ctx.beginPath();
                 ctx.arc(nx, ny, innerR, 0, Math.PI * 2);
                 ctx.fillStyle = n.innerColor;
                 ctx.fill();
 
-                // 3. 文字颜色严格区分：Before 用粉红，After 用清新绿！
-                const isProminent = n.is_mal || (n.name && (n.name.includes('[🟢健康门面]') || n.id.startsWith('pipeline_'))) || n.deg >= 130;
-                if (isProminent || (hoveredNode && hoveredNode.id === n.id)) {
-                    ctx.font = `${n.is_mal ? 'bold 11px' : '10px'} -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
-                    // 彻底对齐：Before 改造前的文字是红色/粉红，After 改造后的文字是淡绿！
-                    ctx.fillStyle = isBefore ? '#fca5a5' : '#6ee7b7';
-                    ctx.fillText(n.name, nx + nr + 6, ny + 4);
-                }
+                // 3. 所有节点 100% 全部展示函数名称与类名！
+                ctx.font = `${n.is_mal ? 'bold 11px' : '9.5px'} -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
+                // 改造前 Before 是粉红/红字，改造后 After 是健康青绿字！
+                ctx.fillStyle = isBefore ? '#fca5a5' : '#6ee7b7';
+                ctx.fillText(n.name, nx + nr + 4, ny + 3.5);
             }
         }
 
