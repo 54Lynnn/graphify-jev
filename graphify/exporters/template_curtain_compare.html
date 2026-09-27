@@ -351,7 +351,7 @@
             wrapper.addEventListener('contextmenu', e => e.preventDefault());
 
             // 4. 鼠标滚轮统一缩放 (Anchor Zoom)
-            wrapper.addEventListener('wheel', function(e) {{
+            wrapper.addEventListener('wheel', function(e) {
                 e.preventDefault();
                 const rect = wrapper.getBoundingClientRect();
                 const mouseX = e.clientX - rect.left;
@@ -370,7 +370,7 @@
                 } else {
                     updateCurtain(e.clientX);
                 }
-            }}, {{ passive: false }});
+            }, { passive: false });
 
             // 初始视口自动居中定位到屏幕正中央！
             const initRect = wrapper.getBoundingClientRect();
