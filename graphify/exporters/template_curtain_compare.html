@@ -96,17 +96,21 @@
         .scoreboard {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 10px;
+            flex-wrap: nowrap;
+            flex-shrink: 0;
         }
         .metric-pill {
-            display: flex;
+            display: inline-flex;
             align-items: center;
             gap: 8px;
             background: rgba(255, 255, 255, 0.03);
             border: 1px solid var(--border-color);
             border-radius: 6px;
-            padding: 4px 10px;
+            padding: 4px 12px;
             font-size: 12px;
+            white-space: nowrap;
+            flex-shrink: 0;
             transition: border-color 0.15s ease;
         }
         .metric-pill:hover {
@@ -350,34 +354,34 @@
         <div class="scoreboard">
             <div class="metric-pill">
                 <span class="metric-dot dot-emerald"></span>
-                <span class="metric-label">恶性病灶</span>
+                <span class="metric-label">恶性病灶:</span>
                 <div class="metric-val">
-                    <span class="score-val-old">1</span>
-                    <span class="score-arrow">→</span>
-                    <span class="score-val-new">0</span>
+                    <span class="score-val-old">1 个</span>
+                    <span class="score-arrow">➔</span>
+                    <span class="score-val-new">0 (清零)</span>
                 </div>
             </div>
             <div class="metric-pill">
                 <span class="metric-dot dot-emerald"></span>
-                <span class="metric-label">最高连接度</span>
+                <span class="metric-label">最高连接度:</span>
                 <div class="metric-val">
-                    <span class="score-val-old">246</span>
-                    <span class="score-arrow">→</span>
-                    <span class="score-val-new">35</span>
+                    <span class="score-val-old">246 度</span>
+                    <span class="score-arrow">➔</span>
+                    <span class="score-val-new">35 度</span>
                 </div>
             </div>
             <div class="metric-pill">
                 <span class="metric-dot dot-cyan"></span>
-                <span class="metric-label">解耦度</span>
+                <span class="metric-label">解耦度提升:</span>
                 <div class="metric-val">
-                    <span class="score-val-new">+85.7%</span>
+                    <span class="score-val-new">85.7%</span>
                 </div>
             </div>
             <div class="metric-pill">
                 <span class="metric-dot dot-emerald"></span>
-                <span class="metric-label">评级</span>
+                <span class="metric-label">架构评级:</span>
                 <div class="metric-val">
-                    <span class="metric-badge-rating">A+ HEALTHY</span>
+                    <span class="metric-badge-rating">A+ (极致健康)</span>
                 </div>
             </div>
         </div>
